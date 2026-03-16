@@ -41,19 +41,39 @@ The flagship app is a retro terminal UI inspired by 1980s/90s bulletin board sys
 
 ### Three-Pane Layout
 
+Here's what the BBS interface looks like in the terminal:
+
 ```
-╔══ PROMPT BROWSER ═══════╦══ AGENT TERMINAL ═══════════════╗
-║                         ║                                 ║
-║  Your refined prompt    ║  ≈≈≈ SENDING ≈≈≈                ║
-║  appears here, ready    ║  ◄══════════════►               ║
-║  to review or edit.     ║                                 ║
-╠══ DICTATION BUFFER ═════╣  Protocol: ZMODEM-VOICE/1.0     ║
-║                         ║  [████████████░░░░░░░] 64%      ║
-║  ◌ voice fragments      ║                                 ║
-║  ◌ accumulate here      ║  ═══ INCOMING TRANSMISSION ═══  ║
-║  ◌ as you speak...      ║  Agent response streams here    ║
-║                         ║  with a typewriter effect...    ║
-╚═════════════════════════╩═════════════════════════════════╝
+ VOICECODE BBS v2.0                     Voice: hfc_female  SysOp: falken  21:37:42
+──Session v3 │ Saved: 12 │ History: 5 │ Frags: 3 │ Agent: IDLE────────────────────
+┌── PROMPT BROWSER ────────────────┐┌── AGENT TERMINAL ──────────────────────────┐
+│                                  ││                                            │
+│  Write a Python function that    ││  ═══ INCOMING TRANSMISSION ═══             │
+│  implements a binary search      ││                                            │
+│  algorithm with the following    ││  Here's a binary search implementation     │
+│  requirements:                   ││  that handles all the edge cases you       │
+│                                  ││  mentioned:                                │
+│  1. Accept a sorted list and    E>│                                            │
+│     a target value               ││  ```python                                │
+│  2. Return the index if found    ││  def binary_search(arr, target,            │
+│  3. Return -1 if not found       ││      return_nearest=False):                │
+│                                  ││      if not arr:                           │
+│  Include type hints and handle   ││          return -1                         │
+│  edge cases (empty list, single  ││      lo, hi = 0, len(arr) - 1             │
+│  element).                       ││      while lo <= hi:                       │
+├──────────=^R^=───────────────────┤│          mid = (lo + hi) // 2             │
+┌── DICTATION BUFFER ──────────────┐│          if arr[mid] == target:            │
+│                                  ││              return mid                    │
+│  ◌ write a binary search         ││          elif arr[mid] < target:           │
+│  ◌ in python                     ││              lo = mid + 1                  │
+│  ◌ handle edge cases            D>│          else:                             │
+│  ◌ type hints please             ││              hi = mid - 1                  │
+│                                  ││      return -1                             │
+│                                  ││  ```                                       │
+│                                  ││                                            │
+└──────────────────────────────────┘└────────────────────────────────────────────┘
+ [Q]uit | [SPC]Rec [R]efine [E]xec [D]irect [S]ave [N]ew [←→]Browse | [ESC]Voice
+ Ready — 12 prompts saved                                    Protocol: ZMODEM/1.0
 ```
 
 - **Prompt Browser** (top-left) — View and browse your refined prompts

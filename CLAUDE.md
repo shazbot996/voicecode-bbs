@@ -62,6 +62,24 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 - Thread-safe UI updates via `queue.Queue`
 - No tests or CI currently
 
+## BBS App Three-Pane Layout
+
+```
+┌── PROMPT BROWSER ──────┐┌── AGENT TERMINAL ──────────────┐
+│  Refined prompt text    ││  Agent response streams here   │
+│  ready to review/edit  E>│  with typewriter effect...     │
+├────────=^R^=───────────┤│                                │
+┌── DICTATION BUFFER ────┐│                                │
+│  ◌ voice fragments    D>│                                │
+│  ◌ accumulate here     ││                                │
+└────────────────────────┘└────────────────────────────────┘
+```
+
+- **Prompt Browser** (top-left) — View and browse refined prompts
+- **Dictation Buffer** (bottom-left) — Voice fragments accumulate in real-time
+- **Agent Terminal** (right, full height) — ZMODEM animation, then typewriter-streamed responses
+- Data-flow hints: `=^R^=` (refine up), `E>` (execute right), `D>` (direct right)
+
 ## BBS App Keyboard Controls
 
 | Key | Action |
@@ -71,9 +89,17 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | E | Execute current prompt |
 | D | Direct execute (skip refinement) |
 | S | Save prompt |
-| N | New prompt |
+| N | New prompt (clear session) |
+| C | Clear dictation buffer |
 | ←/→ | Browse saved prompts |
+| ↑/↓ | Scroll prompt pane |
+| PgUp/PgDn | Scroll agent terminal |
 | O | Settings / voice config |
 | K | Kill running agent |
+| P | Replay TTS summary |
+| H | Help overlay |
+| A | About / title screen |
+| X | Restart application |
+| Home | Reset scroll position |
 | ESC | Voice command mode |
 | Q | Quit |

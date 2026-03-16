@@ -558,6 +558,7 @@ class BBSApp:
 
         # Help overlay state
         self.show_help_overlay = False
+        self.show_about_overlay = False
 
         # Settings overlay state
         self.show_settings_overlay = False
@@ -1079,7 +1080,7 @@ class BBSApp:
             help_text = " ◌ Agent working... [K] to kill"
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
-            keys = " [Q]uit [X]Restart | [SPC]Rec [R]efine [E]xec [D]irect [S]ave [N]ew [C]lear [K]ill [←→]Browse [↑↓]View [Home]Reset | [ESC]Voice [O]pt [H]elp"
+            keys = " [Q]uit [X]Restart | [SPC]Rec [R]efine [E]xec [D]irect [S]ave [N]ew [C]lear [K]ill [←→]Browse [↑↓]View [Home]Reset | [ESC]Voice [O]pt [H]elp [A]bout"
             self._draw_bar(help_y, keys, self.CP_HELP)
 
         # ── Status bar ──
@@ -1088,6 +1089,8 @@ class BBSApp:
         # ── Overlays (drawn last so they're on top) ──
         if self.show_help_overlay:
             self._draw_help_overlay()
+        if self.show_about_overlay:
+            self._draw_about_overlay()
         if self.show_settings_overlay:
             self._draw_settings_overlay()
 
@@ -1150,6 +1153,7 @@ class BBSApp:
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
             "  ESC    Voice command mode",
+            "  A      About / title screen",
             "  H      This help screen",
             "  Q      Quit",
             "",
@@ -1190,6 +1194,81 @@ class BBSApp:
                 self.stdscr.addnstr(row, start_x, empty_line, overlay_w, body_attr)
 
             # Bottom border
+            bottom = "╚" + "═" * inner_w + "╝"
+            self.stdscr.addnstr(start_y + overlay_h - 1, start_x, bottom, overlay_w, border_attr)
+        except curses.error:
+            pass
+
+    def _draw_about_overlay(self):
+        """Draw a BBS-style about / title screen overlay."""
+        h, w = self.stdscr.getmaxyx()
+
+        overlay_w = min(64, w - 6)
+        overlay_h = min(26, h - 4)
+        if overlay_w < 40 or overlay_h < 16:
+            return
+
+        start_y = max(1, (h - overlay_h) // 2)
+        start_x = max(2, (w - overlay_w) // 2)
+
+        border_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+        body_attr = curses.color_pair(self.CP_HELP)
+        accent_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+
+        inner_w = overlay_w - 2
+
+        content = [
+            "",
+            "  ╦  ╦╔═╗╦╔═╗╔═╗╔═╗╔═╗╔╦╗╔═╗",
+            "  ╚╗╔╝║ ║║║  ║╣ ║  ║ ║ ║║║╣ ",
+            "   ╚╝ ╚═╝╩╚═╝╚═╝╚═╝╚═╝═╩╝╚═╝",
+            "          B  B  S   v2.0",
+            "",
+            "  ── About ─────────────────────",
+            "  Voice-driven prompt workshop",
+            "  for interacting with AI agents.",
+            "  Dictate, refine, and execute",
+            "  prompts — all by voice.",
+            "",
+            "  ── Author ────────────────────",
+            "  Charles Schiele",
+            "  charles.schiele@gmail.com",
+            "  github.com/shazbot996/voicecode-bbs",
+            "",
+            "  ── Built With ────────────────",
+            "  Python, faster-whisper, Silero VAD",
+            "  Piper TTS, curses",
+            "",
+            "  Press A, ESC, or Q to close",
+        ]
+
+        content = content[:overlay_h - 2]
+
+        try:
+            top = "╔" + "═" * inner_w + "╗"
+            self.stdscr.addnstr(start_y, start_x, top, overlay_w, border_attr)
+
+            title = " ABOUT — VOICECODE BBS "
+            title_line = "║" + title.center(inner_w) + "║"
+            self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
+
+            sep = "╠" + "═" * inner_w + "╣"
+            self.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
+
+            for i, line in enumerate(content):
+                row = start_y + 3 + i
+                if row >= start_y + overlay_h - 1:
+                    break
+                padded = line + " " * max(0, inner_w - len(line))
+                body_line = "║" + padded[:inner_w] + "║"
+                self.stdscr.addnstr(row, start_x, body_line, overlay_w, body_attr)
+
+            for row in range(start_y + 3 + len(content), start_y + overlay_h - 1):
+                if row >= start_y + overlay_h - 1:
+                    break
+                empty_line = "║" + " " * inner_w + "║"
+                self.stdscr.addnstr(row, start_x, empty_line, overlay_w, body_attr)
+
             bottom = "╚" + "═" * inner_w + "╝"
             self.stdscr.addnstr(start_y + overlay_h - 1, start_x, bottom, overlay_w, border_attr)
         except curses.error:
@@ -1456,6 +1535,15 @@ class BBSApp:
             if ch in (ord("h"), ord("H"), ord("q"), ord("Q"), 27):
                 self.show_help_overlay = False
                 # Consume any follow-up byte from ESC sequence
+                if ch == 27:
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+            return
+
+        # Handle about overlay dismiss
+        if self.show_about_overlay:
+            if ch in (ord("a"), ord("A"), ord("q"), ord("Q"), 27):
+                self.show_about_overlay = False
                 if ch == 27:
                     self.stdscr.nodelay(True)
                     self.stdscr.getch()
@@ -1737,6 +1825,9 @@ class BBSApp:
 
         elif ch == ord("h") or ch == ord("H"):
             self.show_help_overlay = True
+
+        elif ch == ord("a") or ch == ord("A"):
+            self.show_about_overlay = not self.show_about_overlay
 
     # ─── Recording ─────────────────────────────────────────────────
 
