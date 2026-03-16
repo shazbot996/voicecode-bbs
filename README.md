@@ -19,6 +19,9 @@
 ## What Is This?
 
 VoiceCode is a voice-first CLI interface for working with Claude and other AI agents. Speak your ideas, let AI shape them into well-crafted prompts, then fire them off — no keyboard required.
+VoiceCode is a CLI voice dictation system that is built to dictate prompts for AI agents. It can be used to dictate direct commands to an AI agent, as well as to iteratively construct and refine a prompt.  Note: This system is not intended to produce a spec! This document replaces the hand prompt curation folder of my original prompt library design - the prompts/personal/ folder was where I usually do the majority of "new" thinking in building with AI.  I build prompts there to instruct code assist to build the specs themselves!  So my builds are always indirect: describe what I want in as much detail as I can, and ask code assist to generate either a spec for the solution, or a plan for the implementation of the idea.  In every case, my first step is the hard part, since sometimes I work directly with code assisst, and other times I write a prompt file. Prompt file histories are often important to have!  
+
+This application is intended to bridge the gap between hand prompt file editing and extemporaneous vibe code editing.
 
 It ships with two interfaces:
 
@@ -41,14 +44,14 @@ The flagship app is a retro terminal UI inspired by 1980s/90s bulletin board sys
 ```
 ╔══ PROMPT BROWSER ═══════╦══ AGENT TERMINAL ═══════════════╗
 ║                         ║                                 ║
-║  Your refined prompt    ║  ≈≈≈ SENDING ≈≈≈               ║
+║  Your refined prompt    ║  ≈≈≈ SENDING ≈≈≈                ║
 ║  appears here, ready    ║  ◄══════════════►               ║
 ║  to review or edit.     ║                                 ║
-╠══ DICTATION BUFFER ═════╣  Protocol: ZMODEM-VOICE/1.0    ║
-║                         ║  [████████████░░░░░░░] 64%     ║
+╠══ DICTATION BUFFER ═════╣  Protocol: ZMODEM-VOICE/1.0     ║
+║                         ║  [████████████░░░░░░░] 64%      ║
 ║  ◌ voice fragments      ║                                 ║
-║  ◌ accumulate here      ║  ═══ INCOMING TRANSMISSION ═══ ║
-║  ◌ as you speak...      ║  Agent response streams here   ║
+║  ◌ accumulate here      ║  ═══ INCOMING TRANSMISSION ═══  ║
+║  ◌ as you speak...      ║  Agent response streams here    ║
 ║                         ║  with a typewriter effect...    ║
 ╚═════════════════════════╩═════════════════════════════════╝
 ```

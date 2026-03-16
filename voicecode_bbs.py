@@ -3,17 +3,17 @@
 VoiceCode BBS - A retro BBS-style voice-driven prompt workshop & agent terminal.
 
           ╔═══════════════════════════════════════╗
-          ║  V O I C E C O D E   B B S   v2.0    ║
+          ║  V O I C E C O D E   B B S   v2.0     ║
           ║  "Your voice, your prompt, your way"  ║
           ╚═══════════════════════════════════════╝
 
 Layout:
   ┌─ Prompt Browser ─────┬─ Agent Terminal ──────┐
-  │  (view/edit prompts)  │  (full height)        │
-  ├─ Dictation Buffer ───┤│  ZMODEM download      │
-  │  (voice fragments)   ││  animation + Joshua   │
-  │                      ││  typewriter response   │
-  └──────────────────────┴────────────────────────┘
+  │  (view/edit prompts) │   (full height)       │
+  ├─ Dictation Buffer ───┤   ZMODEM download     │
+  │  (voice fragments)   │   animation + Joshua  │
+  │                      │   typewriter response │
+  └──────────────────────┴───────────────────────┘
 
 Workflow:
   1. Dictate fragments → [R]efine into prompt
@@ -479,12 +479,7 @@ BANNER = r"""
  ╚██╗ ██╔╝██║   ██║██║██║     ██╔══╝  ██║     ██║   ██║██║  ██║██╔══╝
   ╚████╔╝ ╚██████╔╝██║╚██████╗███████╗╚██████╗╚██████╔╝██████╔╝███████╗
    ╚═══╝   ╚═════╝ ╚═╝ ╚═════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
-          ███████╗ ██████╗██╗  ██╗██╗███████╗██╗     ███████╗
-          ██╔════╝██╔════╝██║  ██║██║██╔════╝██║     ██╔════╝
-          ███████╗██║     ███████║██║█████╗  ██║     █████╗
-          ╚════██║██║     ██╔══██║██║██╔══╝  ██║     ██╔══╝
-          ███████║╚██████╗██║  ██║██║███████╗███████╗███████╗
-          ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝
+                                                            @schiele
                   ╔════════════════════════════════╗
                   ║     B  ·  B  ·  S    v2.0      ║
                   ║  Voice-Driven Prompt Workshop  ║
@@ -546,9 +541,13 @@ class BBSApp:
                 "prompt_library", str(Path(args.save_dir).expanduser()))
         # Voicecode writes into a dedicated subfolder within the library
         self.save_base = Path(self.prompt_library).expanduser() / "voicecode"
+        self.history_base = self.save_base / "history"
         self.saved_prompts: list[Path] = []
+        self.history_prompts: list[Path] = []
         self.browser_index: int = -1
+        self.browser_view: str = "active"  # "active" or "history"
         self._scan_saved_prompts()
+        self._scan_history_prompts()
 
         # Prompt saved state
         self.prompt_saved = True  # no unsaved prompt at start
@@ -786,31 +785,59 @@ class BBSApp:
     # ─── Prompt browser ────────────────────────────────────────────
 
     def _scan_saved_prompts(self):
-        self.saved_prompts = sorted(self.save_base.rglob("prompt_*.md"))
+        self.saved_prompts = sorted(
+            p for p in self.save_base.rglob("prompt_*.md")
+            if not str(p).startswith(str(self.history_base))
+        )
+
+    def _scan_history_prompts(self):
+        self.history_prompts = sorted(self.history_base.rglob("prompt_*.md"))
+
+    def _current_browser_list(self) -> list[Path]:
+        """Return the prompt list for the current browser view."""
+        if self.browser_view == "history":
+            return self.history_prompts
+        return self.saved_prompts
 
     def _load_browser_prompt(self, width: int):
-        if self.browser_index < 0 or self.browser_index >= len(self.saved_prompts):
+        prompt_list = self._current_browser_list()
+        view_label = "HISTORY" if self.browser_view == "history" else "PROMPTS"
+
+        if self.browser_index < 0 or self.browser_index >= len(prompt_list):
             self.browser_index = -1
-            if self.current_prompt:
+            if self.browser_view == "history":
+                self.prompt_pane.title = f"HISTORY BROWSER"
+                self.prompt_pane.set_text(
+                    "(no history entry selected)\n\n"
+                    f"Executed prompts: {len(self.history_prompts)}  ←→ to browse\n"
+                    "↑ switch to active prompts\n"
+                    "HOME reset to new prompt", width)
+            elif self.current_prompt:
                 self.prompt_pane.title = f"PROMPT WORKSHOP — session v{self.prompt_version}"
                 self.prompt_pane.set_text(self.current_prompt, width)
             else:
-                self.prompt_pane.title = "PROMPT BROWSER"
+                self.prompt_pane.title = "NEW PROMPT — ready for dictation"
                 self.prompt_pane.set_text(
-                    "(no prompt yet)\n\n"
-                    "Dictate with SPACE, then [R]efine\n"
-                    f"Saved prompts: {len(self.saved_prompts)}  ←→ to browse", width)
+                    "╔══════════════════════════════════════╗\n"
+                    "║      ◆  NEW PROMPT  ◆                ║\n"
+                    "║  Press SPACE to start dictating...   ║\n"
+                    "╚══════════════════════════════════════╝\n\n"
+                    "  [SPACE] Record   [R] Refine   [D] Direct execute\n"
+                    "  [END] Clear working prompt & buffer\n\n"
+                    f"  Saved prompts: {len(self.saved_prompts)}  ←→ to browse\n"
+                    "  ↓ switch to history", width)
             self.prompt_pane.scroll_offset = 0
             return
 
-        path = self.saved_prompts[self.browser_index]
+        path = prompt_list[self.browser_index]
+        base = self.history_base if self.browser_view == "history" else self.save_base
         try:
-            rel = path.relative_to(self.save_base)
+            rel = path.relative_to(base)
         except ValueError:
             rel = path
-        n = len(self.saved_prompts)
+        n = len(prompt_list)
         idx = self.browser_index + 1
-        self.prompt_pane.title = f"[{idx}/{n}] {rel}"
+        self.prompt_pane.title = f"[{idx}/{n}] {view_label}: {rel}"
 
         try:
             content = path.read_text()
@@ -820,10 +847,28 @@ class BBSApp:
         self.prompt_pane.set_text(content, width)
         self.prompt_pane.scroll_offset = 0
 
+    def _set_dictation_info(self, width: int):
+        """Show info box in dictation buffer when it's empty."""
+        if self.dictation_pane.lines:
+            return  # don't overwrite existing content
+        self.dictation_pane.set_text(
+            "╔══════════════════════════════════════╗\n"
+            "║     ◆  DICTATION BUFFER  ◆           ║\n"
+            "║  Voice fragments appear here as      ║\n"
+            "║  you record with SPACE.              ║\n"
+            "╚══════════════════════════════════════╝\n\n"
+            "  This is your scratchpad for voice input.\n"
+            "  Fragments collect here, then:\n\n"
+            "  [R] Refine → merges into the Prompt above\n"
+            "  [D] Direct → sends straight to the Agent\n"
+            "  [C] Clear  → wipe and start over\n", width)
+        self.dictation_pane.scroll_offset = 0
+
     def _get_active_prompt_text(self) -> str | None:
         """Get the prompt text currently shown in the browser, for execution."""
-        if self.browser_index >= 0 and self.browser_index < len(self.saved_prompts):
-            path = self.saved_prompts[self.browser_index]
+        prompt_list = self._current_browser_list()
+        if self.browser_index >= 0 and self.browser_index < len(prompt_list):
+            path = prompt_list[self.browser_index]
             try:
                 raw = path.read_text()
                 # Strip comment headers
@@ -852,6 +897,7 @@ class BBSApp:
         time.sleep(0.5)
 
         self._load_browser_prompt(80)
+        self._set_dictation_info(80)
         self.agent_pane.set_text(
             "GREETINGS PROFESSOR FALKEN.\n\n"
             "READY TO RECEIVE TRANSMISSION.\n\n"
@@ -889,7 +935,7 @@ class BBSApp:
         block_x = max(0, (w - max_line_w) // 2)
         for i, line in enumerate(lines):
             try:
-                cp = self.CP_BANNER if i < 12 else self.CP_ACCENT
+                cp = self.CP_BANNER if i < 7 else self.CP_ACCENT
                 self.stdscr.addstr(start_y + i, block_x, line[:w-1],
                                    curses.color_pair(cp) | curses.A_BOLD)
             except curses.error:
@@ -930,11 +976,14 @@ class BBSApp:
             pass
 
         # ── Divider ──
+        prompt_list = self._current_browser_list()
+        view_label = "History" if self.browser_view == "history" else "Prompts"
         if self.browser_index >= 0:
-            browse_info = f"Viewing: {self.browser_index + 1}/{len(self.saved_prompts)}"
+            browse_info = f"{view_label}: {self.browser_index + 1}/{len(prompt_list)}"
         else:
             browse_info = f"Session v{self.prompt_version}"
         node_info = (f" {browse_info} │ Saved: {len(self.saved_prompts)} │ "
+                     f"History: {len(self.history_prompts)} │ "
                      f"Frags: {len(self.fragments)} │ Agent: {self.agent_state.upper()} ")
         divider = "─" * 2 + node_info + "─" * max(0, w - 2 - len(node_info))
         try:
@@ -1030,7 +1079,7 @@ class BBSApp:
             help_text = " ◌ Agent working... [K] to kill"
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
-            keys = " [SPC]Rec [S]ave [N]ew [O]ptions [C]lear [←→]Browse [[]Voice[]] [H]elp [Q]uit"
+            keys = " [Q]uit [X]Restart | [SPC]Rec [R]efine [E]xec [D]irect [S]ave [N]ew [C]lear [K]ill [←→]Browse [↑↓]View [Home]Reset | [ESC]Voice [O]pt [H]elp"
             self._draw_bar(help_y, keys, self.CP_HELP)
 
         # ── Status bar ──
@@ -1094,8 +1143,9 @@ class BBSApp:
             "  C      Clear dictation buffer",
             "  O      Settings / voice config",
             "  K      Kill running agent",
-            "  ←/→    Browse saved prompts",
-            "  ↑/↓    Scroll prompt pane",
+            "  ←/→    Browse within current view",
+            "  ↑/↓    Switch active/history views",
+            "  Home   Reset to new empty prompt",
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
@@ -1553,6 +1603,7 @@ class BBSApp:
             self.fragments.clear()
             self.dictation_pane.lines.clear()
             self.dictation_pane.scroll_offset = 0
+            self._set_dictation_info(self.stdscr.getmaxyx()[1] // 2)
             self._set_status("Dictation buffer cleared.")
 
         elif ch == ord("p") or ch == ord("P"):
@@ -1565,10 +1616,11 @@ class BBSApp:
                 self._set_status("No summary to replay.")
 
         elif ch == curses.KEY_LEFT:
-            if not self.saved_prompts:
-                self._set_status("No saved prompts to browse.")
+            prompt_list = self._current_browser_list()
+            if not prompt_list:
+                self._set_status(f"No {'history' if self.browser_view == 'history' else 'saved'} prompts to browse.")
             elif self.browser_index == -1:
-                self.browser_index = len(self.saved_prompts) - 1
+                self.browser_index = len(prompt_list) - 1
                 self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
             elif self.browser_index > 0:
                 self.browser_index -= 1
@@ -1577,9 +1629,10 @@ class BBSApp:
                 self._set_status("Already at oldest prompt.")
 
         elif ch == curses.KEY_RIGHT:
+            prompt_list = self._current_browser_list()
             if self.browser_index == -1:
                 self._set_status("Already at current session.")
-            elif self.browser_index < len(self.saved_prompts) - 1:
+            elif self.browser_index < len(prompt_list) - 1:
                 self.browser_index += 1
                 self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
             else:
@@ -1587,12 +1640,82 @@ class BBSApp:
                 self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
 
         elif ch == curses.KEY_UP:
-            self.prompt_pane.scroll_up(2)
+            if self.browser_view == "history":
+                if self.prompt_pane.scroll_offset == 0:
+                    # At top of history — wrap to active (bottom)
+                    self.browser_view = "active"
+                    self.browser_index = -1
+                    self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+                    h = self.stdscr.getmaxyx()[0]
+                    content_height = h - 4
+                    visible = content_height // 2 - 2
+                    max_off = max(0, len(self.prompt_pane.lines) - visible)
+                    self.prompt_pane.scroll_offset = max_off
+                    self._set_status("Switched to active prompts.")
+                else:
+                    self.prompt_pane.scroll_up(2)
+            else:
+                if self.prompt_pane.scroll_offset == 0:
+                    # At top of active — wrap to history (bottom)
+                    self._scan_history_prompts()
+                    self.browser_view = "history"
+                    self.browser_index = -1
+                    self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+                    h = self.stdscr.getmaxyx()[0]
+                    content_height = h - 4
+                    visible = content_height // 2 - 2
+                    max_off = max(0, len(self.prompt_pane.lines) - visible)
+                    self.prompt_pane.scroll_offset = max_off
+                    self._set_status(f"Switched to history. ({len(self.history_prompts)} entries)")
+                else:
+                    self.prompt_pane.scroll_up(2)
 
         elif ch == curses.KEY_DOWN:
-            h = self.stdscr.getmaxyx()[0]
-            content_height = h - 4
-            self.prompt_pane.scroll_down(content_height // 2 - 2, 2)
+            if self.browser_view == "active":
+                h = self.stdscr.getmaxyx()[0]
+                content_height = h - 4
+                visible = content_height // 2 - 2
+                max_off = max(0, len(self.prompt_pane.lines) - visible)
+                if self.prompt_pane.scroll_offset >= max_off:
+                    # At bottom of active — wrap to history
+                    self._scan_history_prompts()
+                    self.browser_view = "history"
+                    self.browser_index = -1
+                    self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+                    self._set_status(f"Switched to history. ({len(self.history_prompts)} entries)")
+                else:
+                    self.prompt_pane.scroll_down(visible, 2)
+            else:
+                h = self.stdscr.getmaxyx()[0]
+                content_height = h - 4
+                visible = content_height // 2 - 2
+                max_off = max(0, len(self.prompt_pane.lines) - visible)
+                if self.prompt_pane.scroll_offset >= max_off:
+                    # At bottom of history — wrap to active
+                    self.browser_view = "active"
+                    self.browser_index = -1
+                    self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+                    self._set_status("Switched to active prompts.")
+                else:
+                    self.prompt_pane.scroll_down(visible, 2)
+
+        elif ch == curses.KEY_HOME:
+            self.browser_view = "active"
+            self.browser_index = -1
+            self.current_prompt = None
+            self.prompt_version = 0
+            self.prompt_saved = True
+            self.fragments.clear()
+            self.dictation_pane.lines.clear()
+            self.dictation_pane.scroll_offset = 0
+            w = self.stdscr.getmaxyx()[1] // 2
+            self._load_browser_prompt(w)
+            self._set_dictation_info(w)
+            self._set_status("Reset to new prompt.")
+
+        elif ch == curses.KEY_END:
+            if not self.refining and not self.recording:
+                self._new_prompt()
 
         elif ch == curses.KEY_PPAGE:
             self.agent_pane.scroll_up(5)
@@ -1623,6 +1746,10 @@ class BBSApp:
         with self.audio_lock:
             self.audio_frames.clear()
         self._live_preview_text = ""  # current interim transcription
+
+        # Clear intro/info text from dictation buffer so it doesn't mix with real input
+        self.dictation_pane.lines.clear()
+        self.dictation_pane.scroll_offset = 0
 
         self._set_status("██ RECORDING — press SPACE to stop ██", self.CP_RECORDING)
 
@@ -1867,6 +1994,22 @@ class BBSApp:
         self.prompt_saved = True
         self._set_status(f"Saved: {filename}")
 
+    def _save_to_history(self, prompt_text):
+        """Auto-save every executed prompt to the history subfolder."""
+        if not prompt_text:
+            return
+        now = datetime.datetime.now()
+        date_dir = self.history_base / now.strftime("%Y/%m/%d")
+        date_dir.mkdir(parents=True, exist_ok=True)
+        existing = sorted(date_dir.glob("prompt_*.md"))
+        seq = len(existing) + 1
+        filename = date_dir / f"prompt_{seq:03d}.md"
+        with open(filename, "w") as f:
+            f.write(f"# Executed: {now.isoformat()}\n\n")
+            f.write(prompt_text)
+            f.write("\n")
+        self._scan_history_prompts()
+
     # ─── New prompt ─────────────────────────────────────────────────
 
     def _new_prompt(self):
@@ -1885,9 +2028,11 @@ class BBSApp:
         self.prompt_saved = True
         self.dictation_pane.lines.clear()
         self.dictation_pane.scroll_offset = 0
+        self.browser_view = "active"
         self.browser_index = -1
         w = self.stdscr.getmaxyx()[1] // 2
         self._load_browser_prompt(w)
+        self._set_dictation_info(w)
         self._set_status("New prompt started. Dictate away!")
 
     # ─── Direct execution (skip refinement) ────────────────────────
@@ -1902,6 +2047,7 @@ class BBSApp:
             return
         prompt_text = " ".join(self.fragments)
         self.fragments.clear()
+        self._save_to_history(prompt_text)
         # Keep dictation buffer visible with yellow border while agent processes
         self._agent_source_pane = self.dictation_pane
         self._agent_source_original_color = self.dictation_pane.color_pair
@@ -1932,6 +2078,8 @@ class BBSApp:
         self._agent_source_pane = self.prompt_pane
         self._agent_source_original_color = self.prompt_pane.color_pair
         self.prompt_pane.color_pair = self.CP_XFER
+
+        self._save_to_history(prompt_text)
 
         self.xfer_prompt_text = prompt_text
         self.xfer_bytes = len(prompt_text.encode())
@@ -2214,6 +2362,7 @@ class BBSApp:
                 self.fragments.clear()
                 self.dictation_pane.lines.clear()
                 self.dictation_pane.scroll_offset = 0
+                self._set_dictation_info(left_width)
                 self.refining = False
 
             elif msg[0] == "clear_source_pane":
