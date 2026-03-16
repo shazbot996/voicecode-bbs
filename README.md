@@ -34,7 +34,7 @@ It ships with two interfaces:
 
 ## The BBS Experience
 
-The flagship app is a retro terminal UI inspired by 1980s/90s bulletin board systems and *WarGames*.
+The flagship app is a retro terminal UI inspired by 1980s/90s bulletin board systems. Author was a SysOp of a very famous Wildcat! BBS in 1991. He had a dedicated phone line of his own. In his room!
 
 ### Three-Pane Layout
 
