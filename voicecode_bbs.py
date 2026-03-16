@@ -77,7 +77,18 @@ PIPER_VOICES = [
     "en_US-hfc_female-medium",
     "en_US-hfc_male-medium",
     "en_US-joe-medium",
+    "joshua",
 ]
+
+# Virtual voice presets — use an existing model with custom piper parameters
+VOICE_PRESETS = {
+    "joshua": {
+        "model": "en_US-hfc_male-medium",
+        "piper_args": ["--noise-scale", "0", "--noise-w-scale", "0",
+                       "--length-scale", "1.3", "--sentence-silence", "0.6"],
+        "description": "WOPR/Joshua — flat, monotone, robotic (WarGames 1983 / DECTalk style)",
+    },
+}
 
 # Restore saved voice selection, falling back to index 0
 _saved_voice = _load_settings().get("tts_voice")
@@ -109,7 +120,17 @@ def extract_tts_summary(text: str) -> str:
 
 def get_tts_voice_model() -> Path:
     """Return the path to the currently selected Piper voice model."""
-    return PIPER_VOICES_DIR / (PIPER_VOICES[_tts_voice_index] + ".onnx")
+    voice = PIPER_VOICES[_tts_voice_index]
+    preset = VOICE_PRESETS.get(voice)
+    model_name = preset["model"] if preset else voice
+    return PIPER_VOICES_DIR / (model_name + ".onnx")
+
+
+def get_tts_piper_extra_args() -> list[str]:
+    """Return extra piper CLI args for the current voice (e.g. preset tuning)."""
+    voice = PIPER_VOICES[_tts_voice_index]
+    preset = VOICE_PRESETS.get(voice)
+    return list(preset["piper_args"]) if preset else []
 
 
 def get_tts_voice_name() -> str:
@@ -134,9 +155,14 @@ def delete_unused_voices() -> tuple[int, str]:
     Returns (count_deleted, current_voice_name).
     """
     current = PIPER_VOICES[_tts_voice_index]
+    # Resolve preset to its underlying model name
+    preset = VOICE_PRESETS.get(current)
+    keep_model = preset["model"] if preset else current
     deleted = 0
     for voice in PIPER_VOICES:
-        if voice == current:
+        if voice in VOICE_PRESETS:
+            continue  # preset voices share another model's files
+        if voice == keep_model:
             continue
         for ext in (".onnx", ".onnx.json"):
             p = PIPER_VOICES_DIR / (voice + ext)
@@ -160,7 +186,9 @@ def download_all_voices(on_progress=None, on_done=None):
         fail = 0
         for i, voice in enumerate(PIPER_VOICES):
             try:
-                download_voice(voice, PIPER_VOICES_DIR)
+                # Preset voices reuse another model's files — download that instead
+                model = VOICE_PRESETS[voice]["model"] if voice in VOICE_PRESETS else voice
+                download_voice(model, PIPER_VOICES_DIR)
                 ok += 1
             except Exception:
                 fail += 1
@@ -176,6 +204,7 @@ def speak_text(text: str, on_done=None):
     """Speak text using Piper TTS + aplay in a background thread."""
     global _tts_process
     voice_model = get_tts_voice_model()
+    extra_args = get_tts_piper_extra_args()
 
     def _run():
         global _tts_process
@@ -185,9 +214,10 @@ def speak_text(text: str, on_done=None):
             # Pipe text through piper as raw PCM, then play with aplay.
             # Using --output-raw avoids per-sentence WAV headers that cause
             # aplay to stop after the first sentence.
+            piper_cmd = ["piper", "--model", str(voice_model),
+                         "--output-raw", "--output_file", "/dev/stdout"] + extra_args
             piper_proc = subprocess.Popen(
-                ["piper", "--model", str(voice_model),
-                 "--output-raw", "--output_file", "/dev/stdout"],
+                piper_cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -539,45 +569,48 @@ class BBSApp:
 
         # Retro welcome art shown when panes are empty
         self.prompt_pane.welcome_art = [
-            "┌─────────────────────────┐",
-            "│   ◆ PROMPT  WORKSHOP ◆  │",
-            "│                         │",
-            "│  Your refined prompts   │",
-            "│  will appear here.      │",
-            "│                         │",
-            "│  [SPC] Record voice     │",
-            "│  [R]   Refine prompt    │",
-            "│  [←→]  Browse saved     │",
-            "└─────────────────────────┘",
+            "╔══════════════════════════════════════╗",
+            "║       ◆  PROMPT  WORKSHOP  ◆         ║",
+            "║   Press SPACE to start dictating...   ║",
+            "╚══════════════════════════════════════╝",
+            "",
+            "  [SPACE] Record   [R] Refine   [D] Direct execute",
+            "  [END] Clear working prompt & buffer",
+            "",
+            "  ←→ to browse saved prompts",
+            "  ↓ switch to history",
         ]
         self.dictation_pane.welcome_art = [
-            "┌─────────────────────────┐",
-            "│  ◆ DICTATION  BUFFER ◆  │",
-            "│                         │",
-            "│  Voice fragments land   │",
-            "│  here as you speak.     │",
-            "│                         │",
-            "│  [SPC] Start recording  │",
-            "│  [C]   Clear buffer     │",
-            "└─────────────────────────┘",
+            "╔══════════════════════════════════════╗",
+            "║      ◆  DICTATION  BUFFER  ◆         ║",
+            "║   Voice fragments appear here as      ║",
+            "║   you record with SPACE.              ║",
+            "╚══════════════════════════════════════╝",
+            "",
+            "  This is your scratchpad for voice input.",
+            "  Fragments collect here, then:",
+            "",
+            "  [R] Refine → merges into the Prompt above",
+            "  [D] Direct → sends straight to the Agent",
+            "  [C] Clear  → wipe and start over",
         ]
         self.agent_pane.welcome_art = [
-            "╔═══════════════════════════════╗",
-            "║  GREETINGS PROFESSOR FALKEN.  ║",
-            "╚═══════════════════════════════╝",
+            "╔═══════════════════════════════════════╗",
+            "║   GREETINGS PROFESSOR FALKEN.          ║",
+            "╚═══════════════════════════════════════╝",
             "",
-            "   READY TO RECEIVE TRANSMISSION",
+            "  READY TO RECEIVE TRANSMISSION.",
             "",
-            "   Protocol: ZMODEM-VOICE/1.0",
-            "   Connection: LOCAL",
-            "   Status: AWAITING UPLOAD...",
+            "  Awaiting prompt upload...",
+            "  Protocol: ZMODEM-VOICE/1.0",
+            "  Connection: LOCAL",
             "",
-            "   ── Quick Start ──────────────",
-            "   [SPC] Record voice",
-            "   [R]   Refine into prompt",
-            "   [E]   Execute prompt here",
-            "   [D]   Direct execute",
-            "   [H]   Full help screen",
+            "  ── Quick Start ─────────────────",
+            "  [SPACE] Record voice",
+            "  [R]     Refine into prompt",
+            "  [E]     Execute prompt here",
+            "  [D]     Direct execute",
+            "  [H]     Full help screen",
         ]
 
         self.fragments: list[str] = []
@@ -886,15 +919,8 @@ class BBSApp:
                 self.prompt_pane.set_text(self.current_prompt, width)
             else:
                 self.prompt_pane.title = "NEW PROMPT — ready for dictation"
-                self.prompt_pane.set_text(
-                    "╔══════════════════════════════════════╗\n"
-                    "║      ◆  NEW PROMPT  ◆                ║\n"
-                    "║  Press SPACE to start dictating...   ║\n"
-                    "╚══════════════════════════════════════╝\n\n"
-                    "  [SPACE] Record   [R] Refine   [D] Direct execute\n"
-                    "  [END] Clear working prompt & buffer\n\n"
-                    f"  Saved prompts: {len(self.saved_prompts)}  ←→ to browse\n"
-                    "  ↓ switch to history", width)
+                # Clear lines so welcome_art renders (centered & dimmed)
+                self.prompt_pane.lines = []
             self.prompt_pane.scroll_offset = 0
             return
 
@@ -920,33 +946,14 @@ class BBSApp:
         """Show info box in dictation buffer when it's empty."""
         if self.dictation_pane.lines:
             return  # don't overwrite existing content
-        self.dictation_pane.set_text(
-            "╔══════════════════════════════════════╗\n"
-            "║     ◆  DICTATION BUFFER  ◆           ║\n"
-            "║  Voice fragments appear here as      ║\n"
-            "║  you record with SPACE.              ║\n"
-            "╚══════════════════════════════════════╝\n\n"
-            "  This is your scratchpad for voice input.\n"
-            "  Fragments collect here, then:\n\n"
-            "  [R] Refine → merges into the Prompt above\n"
-            "  [D] Direct → sends straight to the Agent\n"
-            "  [C] Clear  → wipe and start over\n", width)
+        # Clear lines so welcome_art renders (centered & dimmed)
+        self.dictation_pane.lines = []
         self.dictation_pane.scroll_offset = 0
 
     def _set_agent_welcome(self, width: int):
         """Show welcome/help text in the agent terminal pane."""
-        self.agent_pane.set_text(
-            "GREETINGS PROFESSOR FALKEN.\n\n"
-            "READY TO RECEIVE TRANSMISSION.\n\n"
-            "Awaiting prompt upload...\n"
-            "Protocol: ZMODEM-VOICE/1.0\n"
-            "Connection: LOCAL\n\n"
-            "── Quick Start ─────────────────\n"
-            "  [SPACE] Record voice\n"
-            "  [R]     Refine into prompt\n"
-            "  [E]     Execute prompt here\n"
-            "  [D]     Direct execute\n"
-            "  [H]     Full help screen\n", width)
+        # Clear lines so welcome_art renders (centered & dimmed)
+        self.agent_pane.lines = []
         self.agent_pane.scroll_offset = 0
 
     def _get_active_prompt_text(self) -> str | None:
@@ -1917,9 +1924,11 @@ class BBSApp:
             self.audio_frames.clear()
         self._live_preview_text = ""  # current interim transcription
 
-        # Clear intro/info text from dictation buffer so it doesn't mix with real input
-        self.dictation_pane.lines.clear()
-        self.dictation_pane.scroll_offset = 0
+        # Clear intro/info text from dictation buffer only on first recording;
+        # preserve existing fragments so SPACE adds to (not replaces) the buffer.
+        if not self.fragments:
+            self.dictation_pane.lines.clear()
+            self.dictation_pane.scroll_offset = 0
 
         self._set_status("██ RECORDING — press SPACE to stop ██", self.CP_RECORDING)
 
