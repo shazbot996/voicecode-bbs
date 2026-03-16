@@ -275,6 +275,7 @@ class TextPane:
         self.lines: list[str] = []
         self.scroll_offset = 0
         self.color_pair = color_pair
+        self.welcome_art: list[str] = []  # shown centered when lines is empty
 
     def set_text(self, text: str, width: int):
         self.lines = []
@@ -335,24 +336,48 @@ class TextPane:
             pass
 
         visible_height = height - 2
-        visible_lines = self.lines[self.scroll_offset:self.scroll_offset + visible_height]
-
         content_width = width - 2  # inside the ║ borders
 
-        for i in range(visible_height):
-            try:
-                win.addstr(y + 1 + i, x, "║", border_attr)
-                if i < len(visible_lines):
-                    line = visible_lines[i][:content_width - 1]
-                    padding = " " * max(0, content_width - 1 - len(line))
-                    win.addstr(y + 1 + i, x + 1, " " + line + padding,
-                               curses.color_pair(self.color_pair))
-                else:
-                    win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),
-                               curses.color_pair(self.color_pair))
-                win.addnstr(y + 1 + i, x + width - 1, "║", 1, border_attr)
-            except curses.error:
-                pass
+        # Use welcome art centered in pane when no content
+        if not self.lines and self.welcome_art:
+            art_lines = self.welcome_art
+            # Vertically center the art
+            v_pad = max(0, (visible_height - len(art_lines)) // 2)
+            for i in range(visible_height):
+                try:
+                    win.addstr(y + 1 + i, x, "║", border_attr)
+                    art_idx = i - v_pad
+                    if 0 <= art_idx < len(art_lines):
+                        art_line = art_lines[art_idx]
+                        # Horizontally center
+                        h_pad = max(0, (content_width - len(art_line)) // 2)
+                        centered = " " * h_pad + art_line
+                        centered = centered[:content_width - 1]
+                        padding = " " * max(0, content_width - 1 - len(centered))
+                        win.addstr(y + 1 + i, x + 1, " " + centered[:content_width - 2] + padding,
+                                   curses.color_pair(self.color_pair) | curses.A_DIM)
+                    else:
+                        win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),
+                                   curses.color_pair(self.color_pair))
+                    win.addnstr(y + 1 + i, x + width - 1, "║", 1, border_attr)
+                except curses.error:
+                    pass
+        else:
+            visible_lines = self.lines[self.scroll_offset:self.scroll_offset + visible_height]
+            for i in range(visible_height):
+                try:
+                    win.addstr(y + 1 + i, x, "║", border_attr)
+                    if i < len(visible_lines):
+                        line = visible_lines[i][:content_width - 1]
+                        padding = " " * max(0, content_width - 1 - len(line))
+                        win.addstr(y + 1 + i, x + 1, " " + line + padding,
+                                   curses.color_pair(self.color_pair))
+                    else:
+                        win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),
+                                   curses.color_pair(self.color_pair))
+                    win.addnstr(y + 1 + i, x + width - 1, "║", 1, border_attr)
+                except curses.error:
+                    pass
 
         bottom = "╚" + "═" * max(0, width - 2) + "╝"
         try:
@@ -511,6 +536,49 @@ class BBSApp:
 
         # Right pane
         self.agent_pane = TextPane("AGENT TERMINAL", self.CP_AGENT)
+
+        # Retro welcome art shown when panes are empty
+        self.prompt_pane.welcome_art = [
+            "┌─────────────────────────┐",
+            "│   ◆ PROMPT  WORKSHOP ◆  │",
+            "│                         │",
+            "│  Your refined prompts   │",
+            "│  will appear here.      │",
+            "│                         │",
+            "│  [SPC] Record voice     │",
+            "│  [R]   Refine prompt    │",
+            "│  [←→]  Browse saved     │",
+            "└─────────────────────────┘",
+        ]
+        self.dictation_pane.welcome_art = [
+            "┌─────────────────────────┐",
+            "│  ◆ DICTATION  BUFFER ◆  │",
+            "│                         │",
+            "│  Voice fragments land   │",
+            "│  here as you speak.     │",
+            "│                         │",
+            "│  [SPC] Start recording  │",
+            "│  [C]   Clear buffer     │",
+            "└─────────────────────────┘",
+        ]
+        self.agent_pane.welcome_art = [
+            "╔═══════════════════════════════╗",
+            "║  GREETINGS PROFESSOR FALKEN.  ║",
+            "╚═══════════════════════════════╝",
+            "",
+            "   READY TO RECEIVE TRANSMISSION",
+            "",
+            "   Protocol: ZMODEM-VOICE/1.0",
+            "   Connection: LOCAL",
+            "   Status: AWAITING UPLOAD...",
+            "",
+            "   ── Quick Start ──────────────",
+            "   [SPC] Record voice",
+            "   [R]   Refine into prompt",
+            "   [E]   Execute prompt here",
+            "   [D]   Direct execute",
+            "   [H]   Full help screen",
+        ]
 
         self.fragments: list[str] = []
         self.current_prompt: str | None = None
@@ -865,6 +933,22 @@ class BBSApp:
             "  [C] Clear  → wipe and start over\n", width)
         self.dictation_pane.scroll_offset = 0
 
+    def _set_agent_welcome(self, width: int):
+        """Show welcome/help text in the agent terminal pane."""
+        self.agent_pane.set_text(
+            "GREETINGS PROFESSOR FALKEN.\n\n"
+            "READY TO RECEIVE TRANSMISSION.\n\n"
+            "Awaiting prompt upload...\n"
+            "Protocol: ZMODEM-VOICE/1.0\n"
+            "Connection: LOCAL\n\n"
+            "── Quick Start ─────────────────\n"
+            "  [SPACE] Record voice\n"
+            "  [R]     Refine into prompt\n"
+            "  [E]     Execute prompt here\n"
+            "  [D]     Direct execute\n"
+            "  [H]     Full help screen\n", width)
+        self.agent_pane.scroll_offset = 0
+
     def _get_active_prompt_text(self) -> str | None:
         """Get the prompt text currently shown in the browser, for execution."""
         prompt_list = self._current_browser_list()
@@ -899,12 +983,7 @@ class BBSApp:
 
         self._load_browser_prompt(80)
         self._set_dictation_info(80)
-        self.agent_pane.set_text(
-            "GREETINGS PROFESSOR FALKEN.\n\n"
-            "READY TO RECEIVE TRANSMISSION.\n\n"
-            "Awaiting prompt upload...\n"
-            "Protocol: ZMODEM-VOICE/1.0\n"
-            "Connection: LOCAL", 40)
+        self._set_agent_welcome(40)
 
         while self.running:
             self._process_ui_queue()
@@ -2124,6 +2203,7 @@ class BBSApp:
         w = self.stdscr.getmaxyx()[1] // 2
         self._load_browser_prompt(w)
         self._set_dictation_info(w)
+        self._set_agent_welcome(w)
         self._set_status("New prompt started. Dictate away!")
 
     # ─── Direct execution (skip refinement) ────────────────────────
@@ -2153,8 +2233,7 @@ class BBSApp:
         self.agent_state = AgentState.DOWNLOADING
         self.typewriter_queue.clear()
         self.agent_first_output = False
-        self.agent_pane.lines.clear()
-        self.agent_pane.scroll_offset = 0
+        self._set_agent_welcome(40)
         threading.Thread(target=self._run_agent, daemon=True).start()
 
     # ─── Agent execution ──────────────────────────────────────────
@@ -2181,9 +2260,8 @@ class BBSApp:
         self.typewriter_queue.clear()
         self.agent_first_output = False
 
-        # Clear agent pane
-        self.agent_pane.lines.clear()
-        self.agent_pane.scroll_offset = 0
+        # Reset agent pane with welcome text (visible until output arrives)
+        self._set_agent_welcome(40)
 
         self._set_status("Initiating ZMODEM transfer to agent...")
 
@@ -2457,6 +2535,9 @@ class BBSApp:
                 self.refining = False
 
             elif msg[0] == "clear_source_pane":
+                # Clear agent pane welcome text now that real output is arriving
+                self.agent_pane.lines.clear()
+                self.agent_pane.scroll_offset = 0
                 if self._agent_source_pane is not None:
                     self._agent_source_pane.lines.clear()
                     self._agent_source_pane.scroll_offset = 0
