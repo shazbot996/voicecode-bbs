@@ -571,7 +571,7 @@ class BBSApp:
         self.prompt_pane.welcome_art = [
             "╔══════════════════════════════════════╗",
             "║       ◆  PROMPT  WORKSHOP  ◆         ║",
-            "║   Press SPACE to start dictating...   ║",
+            "║   Press SPACE to start dictating...  ║",
             "╚══════════════════════════════════════╝",
             "",
             "  [SPACE] Record   [R] Refine   [D] Direct execute",
@@ -583,8 +583,8 @@ class BBSApp:
         self.dictation_pane.welcome_art = [
             "╔══════════════════════════════════════╗",
             "║      ◆  DICTATION  BUFFER  ◆         ║",
-            "║   Voice fragments appear here as      ║",
-            "║   you record with SPACE.              ║",
+            "║   Voice fragments appear here as     ║",
+            "║   you record with SPACE.             ║",
             "╚══════════════════════════════════════╝",
             "",
             "  This is your scratchpad for voice input.",
@@ -596,7 +596,7 @@ class BBSApp:
         ]
         self.agent_pane.welcome_art = [
             "╔═══════════════════════════════════════╗",
-            "║   GREETINGS PROFESSOR FALKEN.          ║",
+            "║   GREETINGS PROFESSOR FALKEN.         ║",
             "╚═══════════════════════════════════════╝",
             "",
             "  READY TO RECEIVE TRANSMISSION.",
@@ -698,6 +698,7 @@ class BBSApp:
         self.typewriter_char_delay = 0.006  # seconds per char (~167 cps)
         self.typewriter_line_delay = 0.02   # extra delay at newlines
         self.agent_first_output = False      # tracks if agent has produced any output
+        self.agent_welcome_shown = False     # True after initial welcome art displayed
 
         # Pending source pane tracking (yellow border while agent processes)
         self._agent_source_pane = None       # which pane sent the prompt
@@ -951,7 +952,10 @@ class BBSApp:
         self.dictation_pane.scroll_offset = 0
 
     def _set_agent_welcome(self, width: int):
-        """Show welcome/help text in the agent terminal pane."""
+        """Show welcome/help text in the agent terminal pane (first launch only)."""
+        if self.agent_welcome_shown:
+            return
+        self.agent_welcome_shown = True
         # Clear lines so welcome_art renders (centered & dimmed)
         self.agent_pane.lines = []
         self.agent_pane.scroll_offset = 0
@@ -986,7 +990,7 @@ class BBSApp:
         self._draw_loading("Loading Whisper model...")
         get_whisper_model(self.whisper_model)
         self._draw_loading("Ready!")
-        time.sleep(0.5)
+        time.sleep(2.0)
 
         self._load_browser_prompt(80)
         self._set_dictation_info(80)
@@ -1566,7 +1570,7 @@ class BBSApp:
         modem_art = [
             "   ┌──────────────────┐",
             "   │ ≈≈≈ SENDING ≈≈≈  │",
-            "   │  ◄══════════════► │",
+            "   │ ◄══════════════► │",
             "   └──────────────────┘",
         ]
         for line in modem_art:
@@ -2544,9 +2548,7 @@ class BBSApp:
                 self.refining = False
 
             elif msg[0] == "clear_source_pane":
-                # Clear agent pane welcome text now that real output is arriving
-                self.agent_pane.lines.clear()
-                self.agent_pane.scroll_offset = 0
+                # Don't clear agent pane — let new output scroll past old content
                 if self._agent_source_pane is not None:
                     self._agent_source_pane.lines.clear()
                     self._agent_source_pane.scroll_offset = 0
@@ -2579,9 +2581,9 @@ def main():
         epilog=textwrap.dedent("""\
             ╔═══════════════════════════════════════════════════════╗
             ║  Three-Pane Layout:                                   ║
-            ║    Top-Left:    Prompt Browser / Editor                ║
+            ║    Top-Left:    Prompt Browser / Editor               ║
             ║    Bottom-Left: Dictation Buffer                      ║
-            ║    Right:       Agent Terminal (full height)           ║
+            ║    Right:       Agent Terminal (full height)          ║
             ║                                                       ║
             ║  Controls:                                            ║
             ║    SPACE    Toggle voice recording                    ║
@@ -2589,13 +2591,13 @@ def main():
             ║    S        Save prompt to dated folder               ║
             ║    N        New prompt (prompts save if unsaved)      ║
             ║    E        Execute prompt (send to agent)            ║
-            ║    C        Clear dictation buffer                   ║
-            ║    ←→       Browse saved prompts                     ║
-            ║    ↑↓       Scroll prompt pane                       ║
-            ║    PgUp/Dn  Scroll agent pane                        ║
-            ║    K        Kill running agent                       ║
+            ║    C        Clear dictation buffer                    ║
+            ║    ←→       Browse saved prompts                      ║
+            ║    ↑↓       Scroll prompt pane                        ║
+            ║    PgUp/Dn  Scroll agent pane                         ║
+            ║    K        Kill running agent                        ║
             ║    X        Restart application                       ║
-            ║    Q        Quit                                     ║
+            ║    Q        Quit                                      ║
             ╚═══════════════════════════════════════════════════════╝
         """),
     )
