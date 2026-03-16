@@ -1,0 +1,2289 @@
+#!/usr/bin/env python3
+"""
+VoiceCode BBS - A retro BBS-style voice-driven prompt workshop & agent terminal.
+
+          ╔═══════════════════════════════════════╗
+          ║  V O I C E C O D E   B B S   v2.0    ║
+          ║  "Your voice, your prompt, your way"  ║
+          ╚═══════════════════════════════════════╝
+
+Layout:
+  ┌─ Prompt Browser ─────┬─ Agent Terminal ──────┐
+  │  (view/edit prompts)  │  (full height)        │
+  ├─ Dictation Buffer ───┤│  ZMODEM download      │
+  │  (voice fragments)   ││  animation + Joshua   │
+  │                      ││  typewriter response   │
+  └──────────────────────┴────────────────────────┘
+
+Workflow:
+  1. Dictate fragments → [R]efine into prompt
+  2. [S]ave prompt to <library>/voicecode/YYYY/MM/DD/
+  3. [←→] Browse saved prompts
+  4. [E]xecute — sends prompt to Claude agent (right pane)
+  5. Watch the ZMODEM transfer animation + Joshua typewriter response
+"""
+
+import curses
+import sys
+import os
+import threading
+import queue
+import subprocess
+import time
+import datetime
+import textwrap
+import argparse
+import random
+import collections
+from pathlib import Path
+
+import json
+import numpy as np
+import sounddevice as sd
+import torch
+
+
+# ─── Settings persistence ────────────────────────────────────────────
+
+SETTINGS_DIR = Path.home() / ".config" / "voicecode"
+SETTINGS_FILE = SETTINGS_DIR / "settings.json"
+
+
+def _load_settings() -> dict:
+    """Load settings from disk, returning empty dict on any error."""
+    try:
+        return json.loads(SETTINGS_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_settings(settings: dict):
+    """Persist settings to disk."""
+    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(settings, indent=2) + "\n")
+
+
+# ─── TTS globals ──────────────────────────────────────────────────────
+
+PIPER_VOICES_DIR = Path.home() / ".local/share/piper-voices"
+PIPER_VOICES = [
+    "en_US-amy-medium",
+    "en_US-lessac-medium",
+    "en_US-libritts-high",
+    "en_US-ryan-medium",
+    "en_GB-alan-medium",
+    "en_GB-jenny_dioco-medium",
+    "en_US-arctic-medium",
+    "en_US-hfc_female-medium",
+    "en_US-hfc_male-medium",
+    "en_US-joe-medium",
+]
+
+# Restore saved voice selection, falling back to index 0
+_saved_voice = _load_settings().get("tts_voice")
+_tts_voice_index = PIPER_VOICES.index(_saved_voice) if _saved_voice in PIPER_VOICES else 0
+_tts_process = None  # Track running TTS playback for cancellation
+
+
+TTS_PROMPT_SUFFIX = """
+
+IMPORTANT: At the very end of your response, include a brief spoken summary
+for text-to-speech. This must be plain text with NO markdown formatting
+whatsoever — no asterisks, backticks, hash symbols, bullet points, dashes,
+or any other markup. Write it as natural speech that sounds good read aloud.
+Keep it concise (1-3 sentences). Wrap it exactly like this:
+
+[TTS_SUMMARY]
+Your plain text summary here.
+[/TTS_SUMMARY]"""
+
+
+def extract_tts_summary(text: str) -> str:
+    """Extract the [TTS_SUMMARY] block from agent response text."""
+    import re
+    match = re.search(r'\[TTS_SUMMARY\]\s*(.*?)\s*\[/TTS_SUMMARY\]', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
+def get_tts_voice_model() -> Path:
+    """Return the path to the currently selected Piper voice model."""
+    return PIPER_VOICES_DIR / (PIPER_VOICES[_tts_voice_index] + ".onnx")
+
+
+def get_tts_voice_name() -> str:
+    """Return the short display name of the currently selected voice."""
+    return PIPER_VOICES[_tts_voice_index]
+
+
+def cycle_tts_voice(direction: int) -> str:
+    """Cycle the TTS voice forward (+1) or backward (-1). Returns new voice name."""
+    global _tts_voice_index
+    _tts_voice_index = (_tts_voice_index + direction) % len(PIPER_VOICES)
+    voice = PIPER_VOICES[_tts_voice_index]
+    settings = _load_settings()
+    settings["tts_voice"] = voice
+    _save_settings(settings)
+    return voice
+
+
+def delete_unused_voices() -> tuple[int, str]:
+    """Delete all voice files except the currently selected one.
+
+    Returns (count_deleted, current_voice_name).
+    """
+    current = PIPER_VOICES[_tts_voice_index]
+    deleted = 0
+    for voice in PIPER_VOICES:
+        if voice == current:
+            continue
+        for ext in (".onnx", ".onnx.json"):
+            p = PIPER_VOICES_DIR / (voice + ext)
+            if p.exists():
+                p.unlink()
+                deleted += 1
+    return deleted, current
+
+
+def download_all_voices(on_progress=None, on_done=None):
+    """Download all configured voice files in a background thread.
+
+    on_progress(voice_name, index, total) is called after each voice.
+    on_done(success_count, fail_count) is called when finished.
+    """
+    from piper.download_voices import download_voice
+
+    def _run():
+        PIPER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        ok = 0
+        fail = 0
+        for i, voice in enumerate(PIPER_VOICES):
+            try:
+                download_voice(voice, PIPER_VOICES_DIR)
+                ok += 1
+            except Exception:
+                fail += 1
+            if on_progress:
+                on_progress(voice, i + 1, len(PIPER_VOICES))
+        if on_done:
+            on_done(ok, fail)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def speak_text(text: str, on_done=None):
+    """Speak text using Piper TTS + aplay in a background thread."""
+    global _tts_process
+    voice_model = get_tts_voice_model()
+
+    def _run():
+        global _tts_process
+        try:
+            if not voice_model.exists():
+                return
+            # Pipe text through piper as raw PCM, then play with aplay.
+            # Using --output-raw avoids per-sentence WAV headers that cause
+            # aplay to stop after the first sentence.
+            piper_proc = subprocess.Popen(
+                ["piper", "--model", str(voice_model),
+                 "--output-raw", "--output_file", "/dev/stdout"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            play_proc = subprocess.Popen(
+                ["aplay", "-q", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-c", "1"],
+                stdin=piper_proc.stdout,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            _tts_process = play_proc
+            # Piper reads stdin line-by-line; collapse to one line so the
+            # entire summary is synthesised, not just the first sentence.
+            single_line = " ".join(text.split())
+            piper_proc.stdin.write((single_line + "\n").encode("utf-8"))
+            piper_proc.stdin.close()
+            piper_proc.stdout.close()
+            play_proc.wait()
+        except Exception:
+            pass
+        finally:
+            _tts_process = None
+            if on_done:
+                on_done()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def stop_speaking():
+    """Stop any currently playing TTS audio."""
+    global _tts_process
+    if _tts_process:
+        try:
+            _tts_process.kill()
+        except Exception:
+            pass
+        _tts_process = None
+
+
+# ─── Audio / STT globals ───────────────────────────────────────────────
+
+SAMPLE_RATE = 16000
+CHANNELS = 1
+BLOCK_SIZE = int(SAMPLE_RATE * 0.03)
+VAD_THRESHOLD = 0.5
+SILENCE_AFTER_SPEECH_SEC = 1.5
+MIN_SPEECH_DURATION_SEC = 0.3
+
+_whisper_model = None
+_vad_model = None
+
+
+def get_vad_model():
+    global _vad_model
+    if _vad_model is None:
+        _vad_model, _ = torch.hub.load(
+            "snakers4/silero-vad", "silero_vad", force_reload=False, onnx=False
+        )
+    return _vad_model
+
+
+def get_whisper_model(model_size="base.en"):
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+        _whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    return _whisper_model
+
+
+def transcribe(audio: np.ndarray, model_size: str = "base.en") -> str:
+    model = get_whisper_model(model_size)
+    if audio.dtype != np.float32:
+        audio = audio.astype(np.float32)
+    segments, _ = model.transcribe(audio, beam_size=3, vad_filter=True)
+    return " ".join(seg.text.strip() for seg in segments).strip()
+
+
+# ─── Scrollable text pane ──────────────────────────────────────────────
+
+class TextPane:
+    """A scrollable text region within a curses window."""
+
+    def __init__(self, title: str, color_pair: int):
+        self.title = title
+        self.lines: list[str] = []
+        self.scroll_offset = 0
+        self.color_pair = color_pair
+
+    def set_text(self, text: str, width: int):
+        self.lines = []
+        for paragraph in text.split("\n"):
+            if not paragraph.strip():
+                self.lines.append("")
+            else:
+                wrapped = textwrap.wrap(paragraph, width=max(1, width - 2))
+                self.lines.extend(wrapped if wrapped else [""])
+
+    def add_line(self, text: str, width: int):
+        wrapped = textwrap.wrap(text, width=max(1, width - 2))
+        self.lines.extend(wrapped if wrapped else [text])
+        self.scroll_to_bottom(self._last_height if hasattr(self, '_last_height') else 10)
+
+    def add_char_to_last_line(self, ch: str, width: int):
+        """Append a character, wrapping if needed. For typewriter effect."""
+        if not self.lines:
+            self.lines.append("")
+        if ch == "\n":
+            self.lines.append("")
+        else:
+            last = self.lines[-1]
+            if len(last) >= max(1, width - 3):
+                self.lines.append(ch)
+            else:
+                self.lines[-1] = last + ch
+        self.scroll_to_bottom(self._last_height if hasattr(self, '_last_height') else 10)
+
+    def scroll_to_bottom(self, visible_height: int):
+        max_offset = max(0, len(self.lines) - visible_height)
+        self.scroll_offset = max_offset
+
+    def scroll_up(self, amount=1):
+        self.scroll_offset = max(0, self.scroll_offset - amount)
+
+    def scroll_down(self, visible_height: int, amount=1):
+        max_offset = max(0, len(self.lines) - visible_height)
+        self.scroll_offset = min(max_offset, self.scroll_offset + amount)
+
+    def draw(self, win, y: int, x: int, height: int, width: int):
+        if height < 3 or width < 5:
+            return
+        self._last_height = height - 2
+
+        border_attr = curses.color_pair(self.color_pair) | curses.A_BOLD
+        title_str = f" {self.title} "
+        # Truncate title if too long
+        max_title = width - 6
+        if len(title_str) > max_title:
+            title_str = title_str[:max_title - 1] + "…"
+
+        top = "╔══" + title_str + "═" * max(0, width - 3 - len(title_str) - 1) + "╗"
+
+        try:
+            win.addnstr(y, x, top, width, border_attr)
+        except curses.error:
+            pass
+
+        visible_height = height - 2
+        visible_lines = self.lines[self.scroll_offset:self.scroll_offset + visible_height]
+
+        content_width = width - 2  # inside the ║ borders
+
+        for i in range(visible_height):
+            try:
+                win.addstr(y + 1 + i, x, "║", border_attr)
+                if i < len(visible_lines):
+                    line = visible_lines[i][:content_width - 1]
+                    padding = " " * max(0, content_width - 1 - len(line))
+                    win.addstr(y + 1 + i, x + 1, " " + line + padding,
+                               curses.color_pair(self.color_pair))
+                else:
+                    win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),
+                               curses.color_pair(self.color_pair))
+                win.addnstr(y + 1 + i, x + width - 1, "║", 1, border_attr)
+            except curses.error:
+                pass
+
+        bottom = "╚" + "═" * max(0, width - 2) + "╝"
+        try:
+            win.addnstr(y + height - 1, x, bottom, width, border_attr)
+        except curses.error:
+            pass
+
+        # Scroll indicator
+        if len(self.lines) > visible_height and visible_height > 0:
+            total = len(self.lines)
+            pos = self.scroll_offset / max(1, total - visible_height)
+            indicator_y = y + 1 + int(pos * max(0, visible_height - 1))
+            try:
+                win.addstr(indicator_y, x + width - 1, "█", border_attr)
+            except curses.error:
+                pass
+
+
+# ─── Refinement engine ─────────────────────────────────────────────────
+
+INITIAL_REFINE_PROMPT = """\
+You are a prompt engineer. The user has dictated the following speech fragments \
+while thinking about what they want to ask an AI coding assistant. \
+Your job is to synthesize these fragments into a single, clear, well-structured prompt \
+that faithfully captures their intent, meaning, and all details mentioned.
+
+Rules:
+- Be faithful to what they said. Do not add requirements they didn't mention.
+- Organize the prompt logically even if they jumped around.
+- Use clear, direct language.
+- If they mentioned specific files, tools, or technologies, include those.
+- Output ONLY the refined prompt, nothing else. No preamble, no explanation.
+
+Speech fragments:
+---
+{fragments}
+---
+
+Refined prompt:"""
+
+MODIFY_REFINE_PROMPT = """\
+You are a prompt engineer. The user previously built this prompt through voice dictation:
+
+CURRENT PROMPT:
+---
+{current_prompt}
+---
+
+They have now dictated additional fragments to modify or extend this prompt. \
+Apply their changes faithfully. They may want to:
+- Add new requirements or details
+- Change or clarify existing parts
+- Remove something
+- Restructure the prompt
+
+New dictation fragments:
+---
+{fragments}
+---
+
+Rules:
+- Output ONLY the updated prompt, nothing else.
+- Preserve parts of the original that aren't being changed.
+- Be faithful to their intent.
+
+Updated prompt:"""
+
+
+def refine_with_llm(fragments: list[str], current_prompt: str | None,
+                    status_callback=None) -> str:
+    if status_callback:
+        status_callback("Refining with Claude...")
+
+    fragment_text = "\n".join(f"- {f}" for f in fragments)
+
+    if current_prompt:
+        meta_prompt = MODIFY_REFINE_PROMPT.format(
+            current_prompt=current_prompt, fragments=fragment_text)
+    else:
+        meta_prompt = INITIAL_REFINE_PROMPT.format(fragments=fragment_text)
+
+    try:
+        result = subprocess.run(
+            ["claude", "--print", "-p", meta_prompt],
+            capture_output=True, text=True, timeout=120)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        else:
+            return f"[Error: {result.stderr.strip() or 'empty response'}]"
+    except FileNotFoundError:
+        return "[Error: 'claude' CLI not found]"
+    except subprocess.TimeoutExpired:
+        return "[Error: timed out after 120s]"
+    except Exception as e:
+        return f"[Error: {e}]"
+
+
+# ─── Agent execution states ───────────────────────────────────────────
+
+class AgentState:
+    IDLE = "idle"
+    DOWNLOADING = "downloading"  # ZMODEM animation
+    RECEIVING = "receiving"      # typewriter output
+    DONE = "done"
+
+
+# ─── ZMODEM download art ──────────────────────────────────────────────
+
+ZMODEM_FRAMES = [
+    "rz waiting to receive.",
+    "rz waiting to receive..",
+    "rz waiting to receive...",
+    "Starting zmodem transfer.",
+    "Transferring prompt data...",
+]
+
+
+# ─── Main BBS Application ─────────────────────────────────────────────
+
+BANNER = r"""
+██╗   ██╗ ██████╗ ██╗ ██████╗███████╗ ██████╗ ██████╗ ██████╗ ███████╗
+ ██║   ██║██╔═══██╗██║██╔════╝██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝
+ ██║   ██║██║   ██║██║██║     █████╗  ██║     ██║   ██║██║  ██║█████╗
+ ╚██╗ ██╔╝██║   ██║██║██║     ██╔══╝  ██║     ██║   ██║██║  ██║██╔══╝
+  ╚████╔╝ ╚██████╔╝██║╚██████╗███████╗╚██████╗╚██████╔╝██████╔╝███████╗
+   ╚═══╝   ╚═════╝ ╚═╝ ╚═════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+          ███████╗ ██████╗██╗  ██╗██╗███████╗██╗     ███████╗
+          ██╔════╝██╔════╝██║  ██║██║██╔════╝██║     ██╔════╝
+          ███████╗██║     ███████║██║█████╗  ██║     █████╗
+          ╚════██║██║     ██╔══██║██║██╔══╝  ██║     ██╔══╝
+          ███████║╚██████╗██║  ██║██║███████╗███████╗███████╗
+          ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝╚══════╝
+                  ╔════════════════════════════════╗
+                  ║     B  ·  B  ·  S    v2.0      ║
+                  ║  Voice-Driven Prompt Workshop  ║
+                  ╚════════════════════════════════╝                   """
+
+
+class BBSApp:
+    """The main curses application — three-pane BBS terminal."""
+
+    # Color pair IDs
+    CP_HEADER = 1
+    CP_PROMPT = 2
+    CP_DICTATION = 3
+    CP_STATUS = 4
+    CP_HELP = 5
+    CP_RECORDING = 6
+    CP_BANNER = 7
+    CP_ACCENT = 8
+    CP_AGENT = 9
+    CP_XFER = 10
+    CP_VOICE = 11
+
+    def __init__(self, args):
+        self.args = args
+
+        # Left panes
+        self.prompt_pane = TextPane("PROMPT BROWSER", self.CP_PROMPT)
+        self.dictation_pane = TextPane("DICTATION BUFFER", self.CP_DICTATION)
+
+        # Right pane
+        self.agent_pane = TextPane("AGENT TERMINAL", self.CP_AGENT)
+
+        self.fragments: list[str] = []
+        self.current_prompt: str | None = None
+        self.prompt_version = 0
+
+        self.status_msg = "Welcome to VoiceCode BBS v2.0!"
+        self.status_color = self.CP_STATUS
+        self.running = True
+        self.restart = False
+        self.recording = False
+        self.refining = False
+
+        # Audio
+        self.audio_frames: list[np.ndarray] = []
+        self.audio_lock = threading.Lock()
+
+        # Event queue for cross-thread UI updates
+        self.ui_queue: queue.Queue = queue.Queue()
+
+        # Prompt library & save dir
+        # Priority: CLI --save-dir (explicit) > persisted setting > default ~/prompts
+        saved = _load_settings()
+        cli_save_dir_explicit = any(a in sys.argv for a in ("--save-dir",))
+        if cli_save_dir_explicit:
+            self.prompt_library = str(Path(args.save_dir).expanduser())
+        else:
+            self.prompt_library = saved.get(
+                "prompt_library", str(Path(args.save_dir).expanduser()))
+        # Voicecode writes into a dedicated subfolder within the library
+        self.save_base = Path(self.prompt_library).expanduser() / "voicecode"
+        self.saved_prompts: list[Path] = []
+        self.browser_index: int = -1
+        self._scan_saved_prompts()
+
+        # Prompt saved state
+        self.prompt_saved = True  # no unsaved prompt at start
+        self.confirming_new = False  # for [N] save confirmation dialog
+
+        # Voice command state
+        self.voice_cmd_listening = False
+
+        # Help overlay state
+        self.show_help_overlay = False
+
+        # Settings overlay state
+        self.show_settings_overlay = False
+        self.settings_cursor = 0
+        self.settings_editing_text = False  # True when inline text editing is active
+        self.settings_edit_buffer = ""      # current text being edited
+        self.settings_edit_cursor = 0       # cursor position within buffer
+
+        # Voice settings (mutable, persisted) — `saved` loaded above for prompt_library
+        self.vad_threshold = saved.get("vad_threshold", VAD_THRESHOLD)
+        self.silence_timeout = saved.get("silence_timeout", SILENCE_AFTER_SPEECH_SEC)
+        self.min_speech_duration = saved.get("min_speech_duration", MIN_SPEECH_DURATION_SEC)
+        self.whisper_model = args.model  # from CLI, overrideable in settings
+        if "whisper_model" in saved and not any(
+                a in sys.argv for a in ("--model",)):
+            self.whisper_model = saved["whisper_model"]
+
+        # Settings definitions: (key, label, description, options, get_current, set_fn)
+        self._build_settings_items()
+
+        # Agent state
+        self.agent_state = AgentState.IDLE
+        self.agent_process = None
+        self.last_tts_summary = ""
+
+        # ZMODEM animation state
+        self.xfer_progress = 0.0
+        self.xfer_frame = 0
+        self.xfer_bytes = 0
+        self.xfer_start_time = 0.0
+        self.xfer_prompt_text = ""
+
+        # Joshua typewriter state
+        self.typewriter_queue: collections.deque = collections.deque()
+        self.typewriter_last_time = 0.0
+        self.typewriter_char_delay = 0.006  # seconds per char (~167 cps)
+        self.typewriter_line_delay = 0.02   # extra delay at newlines
+        self.agent_first_output = False      # tracks if agent has produced any output
+
+        # Pending source pane tracking (yellow border while agent processes)
+        self._agent_source_pane = None       # which pane sent the prompt
+        self._agent_source_original_color = None  # original color_pair to restore
+
+    # ─── Settings items ────────────────────────────────────────────
+
+    def _build_settings_items(self):
+        """Build the list of settings for the settings modal."""
+        self.settings_items = [
+            {
+                "key": "prompt_library",
+                "label": "Prompt Library",
+                "desc": "Path to prompt library (voicecode/ subfolder auto-created)",
+                "options": None,
+                "get": lambda: self.prompt_library,
+                "set": None,
+                "editable": True,
+                "action": self._start_editing_prompt_library,
+            },
+            {
+                "key": "whisper_model",
+                "label": "Whisper Model",
+                "desc": "Speech-to-text model (larger = slower but more accurate)",
+                "options": ["tiny.en", "base.en", "small.en", "medium.en"],
+                "get": lambda: self.whisper_model,
+                "set": self._set_whisper_model,
+            },
+            {
+                "key": "vad_threshold",
+                "label": "VAD Threshold",
+                "desc": "Voice activity sensitivity (lower = more sensitive)",
+                "options": [0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+                "get": lambda: self.vad_threshold,
+                "set": self._set_vad_threshold,
+            },
+            {
+                "key": "silence_timeout",
+                "label": "Silence Timeout",
+                "desc": "Seconds of silence before auto-stop (handsfree mode)",
+                "options": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+                "get": lambda: self.silence_timeout,
+                "set": self._set_silence_timeout,
+            },
+            {
+                "key": "min_speech_duration",
+                "label": "Min Speech Duration",
+                "desc": "Minimum seconds of speech to accept a recording",
+                "options": [0.1, 0.2, 0.3, 0.5, 0.7, 1.0],
+                "get": lambda: self.min_speech_duration,
+                "set": self._set_min_speech,
+            },
+            {
+                "key": "tts_voice",
+                "label": "TTS Voice",
+                "desc": "Text-to-speech voice for spoken summaries",
+                "options": PIPER_VOICES,
+                "get": get_tts_voice_name,
+                "set": self._set_tts_voice,
+            },
+            {
+                "key": "_action_echo_test",
+                "label": "[Enter] Echo / Mic Test",
+                "desc": "Record 1s of audio and play it back to test your mic",
+                "options": None,
+                "get": lambda: "",
+                "set": None,
+                "action": self._echo_test,
+            },
+            {
+                "key": "_action_download_voices",
+                "label": "[Enter] Download All Voice Models",
+                "desc": "Download all available Piper TTS voice models",
+                "options": None,
+                "get": lambda: "",
+                "set": None,
+                "action": self._action_download_voices,
+            },
+            {
+                "key": "_action_clean_voices",
+                "label": "[Enter] Clean Unused Voice Models",
+                "desc": "Delete downloaded voice models not currently selected",
+                "options": None,
+                "get": lambda: "",
+                "set": None,
+                "action": self._action_clean_voices,
+            },
+        ]
+
+    def _set_whisper_model(self, val):
+        global _whisper_model
+        if val != self.whisper_model:
+            self.whisper_model = val
+            _whisper_model = None  # force reload on next use
+            self._persist_setting("whisper_model", val)
+            self._set_status(f"Whisper model → {val} (will load on next recording)")
+
+    def _set_vad_threshold(self, val):
+        global VAD_THRESHOLD
+        self.vad_threshold = val
+        VAD_THRESHOLD = val
+        self._persist_setting("vad_threshold", val)
+
+    def _set_silence_timeout(self, val):
+        global SILENCE_AFTER_SPEECH_SEC
+        self.silence_timeout = val
+        SILENCE_AFTER_SPEECH_SEC = val
+        self._persist_setting("silence_timeout", val)
+
+    def _set_min_speech(self, val):
+        global MIN_SPEECH_DURATION_SEC
+        self.min_speech_duration = val
+        MIN_SPEECH_DURATION_SEC = val
+        self._persist_setting("min_speech_duration", val)
+
+    def _set_tts_voice(self, val):
+        global _tts_voice_index
+        if val in PIPER_VOICES:
+            _tts_voice_index = PIPER_VOICES.index(val)
+            settings = _load_settings()
+            settings["tts_voice"] = val
+            _save_settings(settings)
+
+    def _action_download_voices(self):
+        self._set_status("Downloading all voice files...")
+        def _on_progress(name, i, total):
+            self._set_status(f"Downloading voices... {i}/{total}: {name}")
+        def _on_done(ok, fail):
+            if fail:
+                self._set_status(f"Downloaded {ok} voices, {fail} failed.")
+                speak_text(f"Downloaded {ok} voices. {fail} failed.")
+            else:
+                self._set_status(f"All {ok} voices downloaded.")
+                speak_text(f"All {ok} voices downloaded successfully.")
+        download_all_voices(on_progress=_on_progress, on_done=_on_done)
+
+    def _action_clean_voices(self):
+        deleted, kept = delete_unused_voices()
+        if deleted:
+            self._set_status(f"Deleted {deleted} unused voice files, kept {kept}")
+            speak_text(f"Deleted {deleted} unused voice files.")
+        else:
+            self._set_status(f"No unused voice files to delete.")
+
+    def _start_editing_prompt_library(self):
+        """Enter inline text editing mode for the prompt library path."""
+        self.settings_editing_text = True
+        self.settings_edit_buffer = self.prompt_library
+        self.settings_edit_cursor = len(self.settings_edit_buffer)
+        self.show_settings_overlay = True  # keep modal open
+
+    def _commit_prompt_library(self):
+        """Apply the edited prompt library path."""
+        new_path = self.settings_edit_buffer.strip()
+        if not new_path:
+            new_path = str(Path("~/prompts").expanduser())
+        self.prompt_library = new_path
+        self.save_base = Path(new_path).expanduser() / "voicecode"
+        self._persist_setting("prompt_library", new_path)
+        self._scan_saved_prompts()
+        self.settings_editing_text = False
+        self._set_status(f"Prompt library → {new_path}/voicecode/")
+
+    def _cancel_text_edit(self):
+        """Cancel inline text editing."""
+        self.settings_editing_text = False
+
+    def _persist_setting(self, key, val):
+        settings = _load_settings()
+        settings[key] = val
+        _save_settings(settings)
+
+    def _settings_cycle(self, direction):
+        """Cycle the current setting's value left (-1) or right (+1)."""
+        item = self.settings_items[self.settings_cursor]
+        if item.get("options") is None:
+            return  # action item, no cycling
+        options = item["options"]
+        current = item["get"]()
+        try:
+            idx = options.index(current)
+        except ValueError:
+            idx = 0
+        new_idx = (idx + direction) % len(options)
+        item["set"](options[new_idx])
+
+    # ─── Prompt browser ────────────────────────────────────────────
+
+    def _scan_saved_prompts(self):
+        self.saved_prompts = sorted(self.save_base.rglob("prompt_*.md"))
+
+    def _load_browser_prompt(self, width: int):
+        if self.browser_index < 0 or self.browser_index >= len(self.saved_prompts):
+            self.browser_index = -1
+            if self.current_prompt:
+                self.prompt_pane.title = f"PROMPT WORKSHOP — session v{self.prompt_version}"
+                self.prompt_pane.set_text(self.current_prompt, width)
+            else:
+                self.prompt_pane.title = "PROMPT BROWSER"
+                self.prompt_pane.set_text(
+                    "(no prompt yet)\n\n"
+                    "Dictate with SPACE, then [R]efine\n"
+                    f"Saved prompts: {len(self.saved_prompts)}  ←→ to browse", width)
+            self.prompt_pane.scroll_offset = 0
+            return
+
+        path = self.saved_prompts[self.browser_index]
+        try:
+            rel = path.relative_to(self.save_base)
+        except ValueError:
+            rel = path
+        n = len(self.saved_prompts)
+        idx = self.browser_index + 1
+        self.prompt_pane.title = f"[{idx}/{n}] {rel}"
+
+        try:
+            content = path.read_text()
+        except Exception as e:
+            content = f"[Error: {e}]"
+
+        self.prompt_pane.set_text(content, width)
+        self.prompt_pane.scroll_offset = 0
+
+    def _get_active_prompt_text(self) -> str | None:
+        """Get the prompt text currently shown in the browser, for execution."""
+        if self.browser_index >= 0 and self.browser_index < len(self.saved_prompts):
+            path = self.saved_prompts[self.browser_index]
+            try:
+                raw = path.read_text()
+                # Strip comment headers
+                lines = [l for l in raw.split("\n") if not l.startswith("#")]
+                return "\n".join(lines).strip()
+            except Exception:
+                return None
+        elif self.current_prompt:
+            return self.current_prompt
+        return None
+
+    # ─── Main loop ─────────────────────────────────────────────────
+
+    def run(self, stdscr):
+        self.stdscr = stdscr
+        self._init_colors()
+        curses.curs_set(0)
+        stdscr.nodelay(True)
+        stdscr.timeout(16)  # ~60fps for smooth animations
+
+        self._draw_loading("Loading Silero VAD model...")
+        get_vad_model()
+        self._draw_loading("Loading Whisper model...")
+        get_whisper_model(self.whisper_model)
+        self._draw_loading("Ready!")
+        time.sleep(0.5)
+
+        self._load_browser_prompt(80)
+        self.agent_pane.set_text(
+            "GREETINGS PROFESSOR FALKEN.\n\n"
+            "READY TO RECEIVE TRANSMISSION.\n\n"
+            "Awaiting prompt upload...\n"
+            "Protocol: ZMODEM-VOICE/1.0\n"
+            "Connection: LOCAL", 40)
+
+        while self.running:
+            self._process_ui_queue()
+            self._process_typewriter()
+            self._draw()
+            self._handle_input()
+
+    def _init_colors(self):
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(self.CP_HEADER, curses.COLOR_YELLOW, curses.COLOR_BLUE)
+        curses.init_pair(self.CP_PROMPT, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_DICTATION, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_STATUS, curses.COLOR_BLACK, curses.COLOR_CYAN)
+        curses.init_pair(self.CP_HELP, curses.COLOR_YELLOW, curses.COLOR_BLUE)
+        curses.init_pair(self.CP_RECORDING, curses.COLOR_WHITE, curses.COLOR_RED)
+        curses.init_pair(self.CP_BANNER, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_ACCENT, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_AGENT, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_XFER, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_VOICE, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+
+    def _draw_loading(self, msg: str):
+        self.stdscr.clear()
+        h, w = self.stdscr.getmaxyx()
+        lines = BANNER.strip().split("\n")
+        max_line_w = max(len(l) for l in lines)
+        start_y = max(0, (h - len(lines) - 4) // 2)
+        block_x = max(0, (w - max_line_w) // 2)
+        for i, line in enumerate(lines):
+            try:
+                cp = self.CP_BANNER if i < 12 else self.CP_ACCENT
+                self.stdscr.addstr(start_y + i, block_x, line[:w-1],
+                                   curses.color_pair(cp) | curses.A_BOLD)
+            except curses.error:
+                pass
+        msg_x = max(0, (w - len(msg)) // 2)
+        try:
+            self.stdscr.addstr(start_y + len(lines) + 2, msg_x, msg,
+                               curses.color_pair(self.CP_STATUS) | curses.A_BOLD)
+        except curses.error:
+            pass
+        self.stdscr.refresh()
+
+    # ─── Drawing ───────────────────────────────────────────────────
+
+    def _draw(self):
+        self.stdscr.erase()
+        h, w = self.stdscr.getmaxyx()
+
+        if h < 12 or w < 60:
+            try:
+                self.stdscr.addstr(0, 0, "Terminal too small! Need 60x12 minimum.")
+            except curses.error:
+                pass
+            self.stdscr.refresh()
+            return
+
+        # ── Header bar ──
+        header = " VOICECODE BBS v2.0"
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        sysop = f"SysOp: {os.getenv('USER', '?')}"
+        voice_tag = f"Voice: {get_tts_voice_name()}"
+        right = f"{voice_tag}  {sysop}  {now} "
+        header_line = header + " " * max(0, w - len(header) - len(right)) + right
+        try:
+            self.stdscr.addnstr(0, 0, header_line, w,
+                                curses.color_pair(self.CP_HEADER) | curses.A_BOLD)
+        except curses.error:
+            pass
+
+        # ── Divider ──
+        if self.browser_index >= 0:
+            browse_info = f"Viewing: {self.browser_index + 1}/{len(self.saved_prompts)}"
+        else:
+            browse_info = f"Session v{self.prompt_version}"
+        node_info = (f" {browse_info} │ Saved: {len(self.saved_prompts)} │ "
+                     f"Frags: {len(self.fragments)} │ Agent: {self.agent_state.upper()} ")
+        divider = "─" * 2 + node_info + "─" * max(0, w - 2 - len(node_info))
+        try:
+            self.stdscr.addnstr(1, 0, divider, w - 1,
+                                curses.color_pair(self.CP_ACCENT))
+        except curses.error:
+            pass
+
+        # ── Three-pane layout ──
+        # content_height = everything between divider and help/status bars
+        content_height = h - 4  # header + divider + help + status
+        left_width = w // 2
+        right_width = w - left_width
+        prompt_height = content_height // 2
+        dictation_height = content_height - prompt_height
+
+        content_y = 2
+
+        # Top-left: Prompt browser
+        self.prompt_pane.draw(self.stdscr, content_y, 0,
+                              prompt_height, left_width)
+
+        # Bottom-left: Dictation buffer
+        self.dictation_pane.draw(self.stdscr, content_y + prompt_height, 0,
+                                 dictation_height, left_width)
+
+        # Right: Agent terminal (full height)
+        if self.agent_state == AgentState.DOWNLOADING:
+            self._draw_agent_xfer(content_y, left_width, content_height, right_width)
+        else:
+            self.agent_pane.draw(self.stdscr, content_y, left_width,
+                                 content_height, right_width)
+            # Show thinking indicator while waiting for agent output
+            if (self.agent_state == AgentState.RECEIVING
+                    and not self.typewriter_queue
+                    and not self.agent_first_output):
+                elapsed = time.time() - self.xfer_start_time - 3.0  # subtract ZMODEM time
+                spinners = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+                spin = spinners[int(elapsed * 6) % len(spinners)]
+                dots = "." * (int(elapsed * 2) % 4)
+                thinking_text = f" {spin} Agent processing{dots}"
+                # Draw over last content line of agent pane
+                think_y = content_y + 1 + len(self.agent_pane.lines)
+                if think_y < content_y + content_height - 1:
+                    try:
+                        self.stdscr.addnstr(
+                            think_y, left_width + 1, thinking_text,
+                            right_width - 2,
+                            curses.color_pair(self.CP_XFER) | curses.A_BOLD)
+                    except curses.error:
+                        pass
+
+        # ── Data-flow hotkey hints (drawn after panes so they overlay borders) ──
+        hint_attr = curses.color_pair(self.CP_VOICE) | curses.A_BOLD
+        # R: bottom border of Prompt Browser — dictation ^ refines into prompt
+        r_label = "=^R^="
+        r_y = content_y + prompt_height - 1  # bottom border of prompt pane
+        r_x = max(1, (left_width - len(r_label)) // 2)
+        try:
+            self.stdscr.addstr(r_y, r_x, r_label, hint_attr)
+        except curses.error:
+            pass
+        # E: right edge of Prompt Browser — prompt > executes in agent
+        e_label = "E>"
+        e_y = content_y + prompt_height // 2
+        try:
+            self.stdscr.addstr(e_y, left_width - 1, e_label, hint_attr)
+        except curses.error:
+            pass
+        # D: right edge of Dictation Buffer — dictation > direct to agent
+        d_label = "D>"
+        d_y = content_y + prompt_height + dictation_height // 2
+        try:
+            self.stdscr.addstr(d_y, left_width - 1, d_label, hint_attr)
+        except curses.error:
+            pass
+
+        # ── Help bar ──
+        help_y = h - 2
+        if self.voice_cmd_listening:
+            help_text = " ██ LISTENING — say a command: save, refine, direct, execute, new, clear, settings, quit... ██"
+            self._draw_bar(help_y, help_text, self.CP_RECORDING)
+        elif self.recording:
+            help_text = " ██ RECORDING — press SPACE to stop ██"
+            self._draw_bar(help_y, help_text, self.CP_RECORDING)
+        elif self.refining:
+            help_text = " ◌ Refining prompt with Claude..."
+            self._draw_bar(help_y, help_text, self.CP_STATUS)
+        elif self.confirming_new:
+            help_text = " ██ UNSAVED PROMPT — [Y] Save first  [N] Discard  [other] Cancel ██"
+            self._draw_bar(help_y, help_text, self.CP_RECORDING)
+        elif self.agent_state in (AgentState.DOWNLOADING, AgentState.RECEIVING):
+            help_text = " ◌ Agent working... [K] to kill"
+            self._draw_bar(help_y, help_text, self.CP_STATUS)
+        else:
+            keys = " [SPC]Rec [S]ave [N]ew [O]ptions [C]lear [←→]Browse [[]Voice[]] [H]elp [Q]uit"
+            self._draw_bar(help_y, keys, self.CP_HELP)
+
+        # ── Status bar ──
+        self._draw_bar(h - 1, f" {self.status_msg}", self.status_color)
+
+        # ── Overlays (drawn last so they're on top) ──
+        if self.show_help_overlay:
+            self._draw_help_overlay()
+        if self.show_settings_overlay:
+            self._draw_settings_overlay()
+
+        self.stdscr.refresh()
+
+    def _draw_bar(self, y: int, text: str, color: int):
+        w = self.stdscr.getmaxyx()[1]
+        padded = text + " " * max(0, w - len(text))
+        try:
+            self.stdscr.addnstr(y, 0, padded, w - 1,
+                                curses.color_pair(color) | curses.A_BOLD)
+        except curses.error:
+            pass
+
+    def _draw_help_overlay(self):
+        """Draw a 90s BBS-style help modal overlay on top of the UI."""
+        h, w = self.stdscr.getmaxyx()
+
+        # Overlay dimensions — leave a border of surrounding UI visible
+        overlay_w = min(64, w - 6)
+        overlay_h = min(30, h - 4)
+        if overlay_w < 40 or overlay_h < 16:
+            return
+
+        start_y = max(1, (h - overlay_h) // 2)
+        start_x = max(2, (w - overlay_w) // 2)
+
+        border_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+        text_attr = curses.color_pair(self.CP_HELP) | curses.A_BOLD
+        body_attr = curses.color_pair(self.CP_HELP)
+        accent_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+
+        inner_w = overlay_w - 2
+
+        # Content lines for the help overlay
+        content = [
+            "",
+            "  V O I C E C O D E   B B S   v2.0",
+            "  Voice-Driven Prompt Workshop",
+            "",
+            "  ── How It Works ──────────────────",
+            "  Dictate speech fragments, refine",
+            "  them into polished prompts with AI,",
+            "  then execute via Claude agent.",
+            "",
+            "  ── Keyboard Controls ─────────────",
+            "  SPACE  Toggle recording on/off",
+            "  R      Refine fragments → prompt",
+            "  E      Execute current prompt",
+            "  D      Direct execute (skip refine)",
+            "  S      Save prompt to disk",
+            "  N      New prompt",
+            "  C      Clear dictation buffer",
+            "  O      Settings / voice config",
+            "  K      Kill running agent",
+            "  ←/→    Browse saved prompts",
+            "  ↑/↓    Scroll prompt pane",
+            "  PgUp/Dn  Scroll agent pane",
+            "  [/]    Cycle TTS voice",
+            "  P      Replay last TTS summary",
+            "  ESC    Voice command mode",
+            "  H      This help screen",
+            "  Q      Quit",
+            "",
+            "  Press H, ESC, or Q to close",
+        ]
+
+        # Truncate if overlay is too small
+        content = content[:overlay_h - 2]
+
+        try:
+            # Top border
+            top = "╔" + "═" * inner_w + "╗"
+            self.stdscr.addnstr(start_y, start_x, top, overlay_w, border_attr)
+
+            # Title bar
+            title = " HELP — SYSTEM GUIDE "
+            title_line = "║" + title.center(inner_w) + "║"
+            self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
+
+            # Title separator
+            sep = "╠" + "═" * inner_w + "╣"
+            self.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
+
+            # Body lines
+            for i, line in enumerate(content):
+                row = start_y + 3 + i
+                if row >= start_y + overlay_h - 1:
+                    break
+                padded = line + " " * max(0, inner_w - len(line))
+                body_line = "║" + padded[:inner_w] + "║"
+                self.stdscr.addnstr(row, start_x, body_line, overlay_w, body_attr)
+
+            # Fill remaining rows
+            for row in range(start_y + 3 + len(content), start_y + overlay_h - 1):
+                if row >= start_y + overlay_h - 1:
+                    break
+                empty_line = "║" + " " * inner_w + "║"
+                self.stdscr.addnstr(row, start_x, empty_line, overlay_w, body_attr)
+
+            # Bottom border
+            bottom = "╚" + "═" * inner_w + "╝"
+            self.stdscr.addnstr(start_y + overlay_h - 1, start_x, bottom, overlay_w, border_attr)
+        except curses.error:
+            pass
+
+    def _draw_settings_overlay(self):
+        """Draw a BBS-style settings modal overlay on top of the UI."""
+        h, w = self.stdscr.getmaxyx()
+
+        overlay_w = min(72, w - 6)
+        overlay_h = min(4 + len(self.settings_items) * 3 + 3, h - 4)
+        if overlay_w < 44 or overlay_h < 12:
+            return
+
+        start_y = max(1, (h - overlay_h) // 2)
+        start_x = max(2, (w - overlay_w) // 2)
+
+        border_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+        body_attr = curses.color_pair(self.CP_HELP)
+        accent_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+        sel_attr = curses.color_pair(self.CP_RECORDING) | curses.A_BOLD
+        val_attr = curses.color_pair(self.CP_AGENT) | curses.A_BOLD
+
+        inner_w = overlay_w - 2
+
+        try:
+            # Top border
+            top = "╔" + "═" * inner_w + "╗"
+            self.stdscr.addnstr(start_y, start_x, top, overlay_w, border_attr)
+
+            # Title bar
+            title = " SETTINGS — VOICE CONFIG "
+            title_line = "║" + title.center(inner_w) + "║"
+            self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
+
+            # Title separator
+            sep = "╠" + "═" * inner_w + "╣"
+            self.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
+
+            row = start_y + 3
+            for i, item in enumerate(self.settings_items):
+                if row + 2 >= start_y + overlay_h - 1:
+                    break
+
+                is_selected = (i == self.settings_cursor)
+                is_action = item.get("options") is None
+                line_attr = sel_attr if is_selected else body_attr
+
+                # Setting label line
+                cursor = "►" if is_selected else " "
+                label = f" {cursor} {item['label']}"
+
+                is_editable = item.get("editable", False)
+
+                if is_editable:
+                    # Editable text field — show path on the desc line
+                    if is_selected and self.settings_editing_text:
+                        label = f" {cursor} {item['label']}  [editing]"
+                    else:
+                        label = f" {cursor} {item['label']}  [Enter to edit]"
+                    padded = label + " " * max(0, inner_w - len(label))
+                    body_line = "║" + padded[:inner_w] + "║"
+                    self.stdscr.addnstr(row, start_x, body_line, overlay_w, line_attr)
+                    row += 1
+
+                    # Show the editable path value
+                    if is_selected and self.settings_editing_text:
+                        buf = self.settings_edit_buffer
+                        cur = self.settings_edit_cursor
+                        # Scroll the visible window if path is too long
+                        max_vis = inner_w - 7
+                        if cur > max_vis:
+                            vis_start = cur - max_vis + 1
+                        else:
+                            vis_start = 0
+                        vis_text = buf[vis_start:vis_start + max_vis]
+                        vis_cursor = cur - vis_start
+                        path_line = f"  >> {vis_text}"
+                        path_padded = path_line + " " * max(0, inner_w - len(path_line))
+                        body_line = "║" + path_padded[:inner_w] + "║"
+                        self.stdscr.addnstr(row, start_x, body_line, overlay_w, val_attr)
+                        # Draw cursor character with reverse video
+                        cursor_x = start_x + 1 + 5 + vis_cursor  # "║  >> " = 5 chars
+                        if cursor_x < start_x + overlay_w - 1:
+                            ch_under = buf[cur] if cur < len(buf) else " "
+                            self.stdscr.addnstr(
+                                row, cursor_x, ch_under, 1,
+                                curses.color_pair(self.CP_AGENT) | curses.A_REVERSE)
+                    else:
+                        val_text = f"  >> {item['get']()}"
+                        val_padded = val_text + " " * max(0, inner_w - len(val_text))
+                        body_line = "║" + val_padded[:inner_w] + "║"
+                        attr = val_attr if is_selected else body_attr
+                        self.stdscr.addnstr(row, start_x, body_line, overlay_w, attr)
+                    row += 1
+
+                    # Blank separator
+                    blank = "║" + " " * inner_w + "║"
+                    self.stdscr.addnstr(row, start_x, blank, overlay_w, body_attr)
+                    row += 1
+                    continue
+
+                elif is_action:
+                    # Action item — no value display
+                    padded = label + " " * max(0, inner_w - len(label))
+                    body_line = "║" + padded[:inner_w] + "║"
+                    self.stdscr.addnstr(row, start_x, body_line, overlay_w, line_attr)
+                else:
+                    current_val = str(item["get"]())
+                    # Build value display with ◄ ► arrows when selected
+                    if is_selected:
+                        val_display = f"◄ {current_val} ►"
+                    else:
+                        val_display = f"  {current_val}  "
+                    # Right-align the value
+                    space = inner_w - len(label) - len(val_display) - 1
+                    full_line = label + " " * max(1, space) + val_display + " "
+
+                    padded = full_line[:inner_w]
+                    padded += " " * max(0, inner_w - len(padded))
+                    body_line = "║" + padded + "║"
+                    self.stdscr.addnstr(row, start_x, body_line, overlay_w, line_attr)
+
+                    # Overwrite just the value portion in green if selected
+                    if is_selected:
+                        val_x = start_x + 1 + max(1, inner_w - len(val_display) - 1)
+                        self.stdscr.addnstr(row, val_x, val_display, len(val_display), val_attr)
+
+                row += 1
+
+                # Description line (dimmer)
+                desc = f"     {item['desc']}"
+                desc_padded = desc + " " * max(0, inner_w - len(desc))
+                desc_line = "║" + desc_padded[:inner_w] + "║"
+                self.stdscr.addnstr(row, start_x, desc_line, overlay_w, body_attr)
+                row += 1
+
+                # Blank separator line
+                blank = "║" + " " * inner_w + "║"
+                self.stdscr.addnstr(row, start_x, blank, overlay_w, body_attr)
+                row += 1
+
+            # Fill remaining rows
+            for r in range(row, start_y + overlay_h - 2):
+                blank = "║" + " " * inner_w + "║"
+                self.stdscr.addnstr(r, start_x, blank, overlay_w, body_attr)
+
+            # Footer help line
+            footer_text = " ↑↓ Navigate  ←→ Change  Enter Action  O/Esc Close "
+            footer_padded = footer_text.center(inner_w)
+            footer_line = "║" + footer_padded[:inner_w] + "║"
+            self.stdscr.addnstr(start_y + overlay_h - 2, start_x, footer_line,
+                                overlay_w, accent_attr)
+
+            # Bottom border
+            bottom = "╚" + "═" * inner_w + "╝"
+            self.stdscr.addnstr(start_y + overlay_h - 1, start_x, bottom, overlay_w, border_attr)
+        except curses.error:
+            pass
+
+    def _draw_agent_xfer(self, y: int, x: int, height: int, width: int):
+        """Draw the ZMODEM-style transfer animation in the right pane."""
+        border_attr = curses.color_pair(self.CP_XFER) | curses.A_BOLD
+        content_attr = curses.color_pair(self.CP_XFER)
+        green_attr = curses.color_pair(self.CP_AGENT) | curses.A_BOLD
+
+        # Draw border
+        title = " FILE TRANSFER "
+        top = "╔══" + title + "═" * max(0, width - 3 - len(title) - 1) + "╗"
+        try:
+            self.stdscr.addnstr(y, x, top, width, border_attr)
+        except curses.error:
+            pass
+
+        for i in range(1, height - 1):
+            try:
+                self.stdscr.addstr(y + i, x, "║", border_attr)
+                self.stdscr.addstr(y + i, x + 1, " " * max(0, width - 2), content_attr)
+                self.stdscr.addnstr(y + i, x + width - 1, "║", 1, border_attr)
+            except curses.error:
+                pass
+
+        bottom = "╚" + "═" * max(0, width - 2) + "╝"
+        try:
+            self.stdscr.addnstr(y + height - 1, x, bottom, width, border_attr)
+        except curses.error:
+            pass
+
+        # Content
+        inner_w = width - 4
+        cx = x + 2
+        elapsed = time.time() - self.xfer_start_time
+        self.xfer_progress = min(0.99, elapsed / 3.0)  # ~3 sec animation
+
+        lines_content = [
+            ("Protocol", "ZMODEM-VOICE/1.0"),
+            ("Filename", "prompt_upload.md"),
+            ("   Bytes", f"{self.xfer_bytes:,}"),
+            ("     BPS", f"{random.randint(28800, 115200):,}"),
+            ("  Errors", "0"),
+            ("  Status", ZMODEM_FRAMES[self.xfer_frame % len(ZMODEM_FRAMES)]),
+        ]
+
+        # Update animation frame
+        self.xfer_frame = int(elapsed * 4)
+
+        row = y + 2
+        # ASCII art modem
+        modem_art = [
+            "   ┌──────────────────┐",
+            "   │ ≈≈≈ SENDING ≈≈≈  │",
+            "   │  ◄══════════════► │",
+            "   └──────────────────┘",
+        ]
+        for line in modem_art:
+            try:
+                self.stdscr.addnstr(row, cx, line[:inner_w], inner_w, green_attr)
+            except curses.error:
+                pass
+            row += 1
+
+        row += 1
+        for label, val in lines_content:
+            try:
+                text = f"  {label}: {val}"
+                self.stdscr.addnstr(row, cx, text[:inner_w], inner_w, content_attr)
+            except curses.error:
+                pass
+            row += 1
+
+        # Progress bar
+        row += 1
+        bar_w = min(inner_w - 12, 30)
+        filled = int(self.xfer_progress * bar_w)
+        bar = "█" * filled + "░" * (bar_w - filled)
+        pct = f" {int(self.xfer_progress * 100):3d}%"
+        try:
+            self.stdscr.addnstr(row, cx, f"  [{bar}]{pct}", inner_w, green_attr)
+        except curses.error:
+            pass
+
+        # Spinning chars
+        row += 2
+        spinners = "|/-\\"
+        spin_ch = spinners[int(elapsed * 8) % len(spinners)]
+        try:
+            self.stdscr.addnstr(row, cx, f"  {spin_ch} Transmitting...", inner_w, content_attr)
+        except curses.error:
+            pass
+
+    # ─── Input handling ────────────────────────────────────────────
+
+    def _handle_input(self):
+        try:
+            ch = self.stdscr.getch()
+        except curses.error:
+            return
+
+        if ch == -1:
+            return
+
+        # Handle help overlay dismiss (before anything else)
+        if self.show_help_overlay:
+            if ch in (ord("h"), ord("H"), ord("q"), ord("Q"), 27):
+                self.show_help_overlay = False
+                # Consume any follow-up byte from ESC sequence
+                if ch == 27:
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+            return
+
+        # Handle settings overlay navigation
+        if self.show_settings_overlay:
+            # Inline text editing mode (e.g. prompt library path)
+            if self.settings_editing_text:
+                if ch in (10, 13, curses.KEY_ENTER):
+                    self._commit_prompt_library()
+                elif ch == 27:
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+                    self._cancel_text_edit()
+                elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                    if self.settings_edit_cursor > 0:
+                        b = self.settings_edit_buffer
+                        c = self.settings_edit_cursor
+                        self.settings_edit_buffer = b[:c-1] + b[c:]
+                        self.settings_edit_cursor -= 1
+                elif ch == curses.KEY_DC:  # Delete key
+                    b = self.settings_edit_buffer
+                    c = self.settings_edit_cursor
+                    if c < len(b):
+                        self.settings_edit_buffer = b[:c] + b[c+1:]
+                elif ch == curses.KEY_LEFT:
+                    self.settings_edit_cursor = max(0, self.settings_edit_cursor - 1)
+                elif ch == curses.KEY_RIGHT:
+                    self.settings_edit_cursor = min(
+                        len(self.settings_edit_buffer), self.settings_edit_cursor + 1)
+                elif ch == curses.KEY_HOME or ch == 1:  # Ctrl+A
+                    self.settings_edit_cursor = 0
+                elif ch == curses.KEY_END or ch == 5:  # Ctrl+E
+                    self.settings_edit_cursor = len(self.settings_edit_buffer)
+                elif 32 <= ch <= 126:  # printable ASCII
+                    b = self.settings_edit_buffer
+                    c = self.settings_edit_cursor
+                    self.settings_edit_buffer = b[:c] + chr(ch) + b[c:]
+                    self.settings_edit_cursor += 1
+                return
+
+            if ch in (ord("o"), ord("O"), ord("q"), ord("Q"), 27):
+                self.show_settings_overlay = False
+                if ch == 27:
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+            elif ch == curses.KEY_UP:
+                self.settings_cursor = (self.settings_cursor - 1) % len(self.settings_items)
+            elif ch == curses.KEY_DOWN:
+                self.settings_cursor = (self.settings_cursor + 1) % len(self.settings_items)
+            elif ch == curses.KEY_LEFT:
+                self._settings_cycle(-1)
+            elif ch == curses.KEY_RIGHT:
+                self._settings_cycle(1)
+            elif ch in (10, 13, curses.KEY_ENTER):
+                item = self.settings_items[self.settings_cursor]
+                if item.get("action"):
+                    if item.get("editable"):
+                        item["action"]()  # keep modal open for editing
+                    else:
+                        self.show_settings_overlay = False
+                        item["action"]()
+            return
+
+        # Handle voice command listening result
+        if self.voice_cmd_listening:
+            # Ignore input while listening for voice command
+            return
+
+        # ESC (27) with no follow-up = voice command trigger
+        # ALT+key comes as ESC followed immediately by key, so check for bare ESC
+        if ch == 27:
+            # Check if another key follows (ALT combo)
+            self.stdscr.nodelay(True)
+            next_ch = self.stdscr.getch()
+            if next_ch == -1:
+                # Bare ESC — start voice command
+                if not self.recording:
+                    self._voice_command()
+                return
+            else:
+                # ALT+something — ignore for now
+                return
+
+        # Handle confirmation dialog for [N]ew prompt
+        if self.confirming_new:
+            if ch == ord("y") or ch == ord("Y"):
+                self.confirming_new = False
+                self._save_prompt()
+                self._do_new_prompt()
+            elif ch == ord("n") or ch == ord("N"):
+                self.confirming_new = False
+                self._do_new_prompt()
+            else:
+                # Any other key cancels
+                self.confirming_new = False
+                self._set_status("New prompt cancelled.")
+            return
+
+        if ch == ord("q") or ch == ord("Q"):
+            self._kill_agent()
+            self.running = False
+
+        elif ch == ord("x") or ch == ord("X"):
+            self._kill_agent()
+            self.restart = True
+            self.running = False
+
+        elif ch == ord("k") or ch == ord("K"):
+            if self.agent_state in (AgentState.DOWNLOADING, AgentState.RECEIVING):
+                self._kill_agent()
+
+        elif ch == ord(" "):
+            if self.recording:
+                self._stop_recording()
+            elif not self.refining:
+                self._start_recording()
+
+        elif ch == ord("r") or ch == ord("R"):
+            if not self.refining and not self.recording:
+                self._start_refine()
+
+        elif ch == ord("d") or ch == ord("D"):
+            if not self.refining and not self.recording:
+                self._execute_raw()
+
+        elif ch == ord("s") or ch == ord("S"):
+            if not self.refining and not self.recording:
+                self._save_prompt()
+
+        elif ch == ord("e") or ch == ord("E"):
+            if self.agent_state in (AgentState.IDLE, AgentState.DONE):
+                self._execute_prompt()
+
+        elif ch == ord("n") or ch == ord("N"):
+            if not self.refining and not self.recording:
+                self._new_prompt()
+
+        elif ch == ord("o") or ch == ord("O"):
+            self.show_settings_overlay = True
+            self.settings_cursor = 0
+
+        elif ch == ord("c") or ch == ord("C"):
+            self.fragments.clear()
+            self.dictation_pane.lines.clear()
+            self.dictation_pane.scroll_offset = 0
+            self._set_status("Dictation buffer cleared.")
+
+        elif ch == ord("p") or ch == ord("P"):
+            if self.last_tts_summary:
+                stop_speaking()
+                speak_text(self.last_tts_summary, on_done=lambda: self.ui_queue.put(
+                    ("status", "Ready for next prompt.", self.CP_STATUS)))
+                self._set_status("Replaying summary...", self.CP_STATUS)
+            else:
+                self._set_status("No summary to replay.")
+
+        elif ch == curses.KEY_LEFT:
+            if not self.saved_prompts:
+                self._set_status("No saved prompts to browse.")
+            elif self.browser_index == -1:
+                self.browser_index = len(self.saved_prompts) - 1
+                self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+            elif self.browser_index > 0:
+                self.browser_index -= 1
+                self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+            else:
+                self._set_status("Already at oldest prompt.")
+
+        elif ch == curses.KEY_RIGHT:
+            if self.browser_index == -1:
+                self._set_status("Already at current session.")
+            elif self.browser_index < len(self.saved_prompts) - 1:
+                self.browser_index += 1
+                self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+            else:
+                self.browser_index = -1
+                self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+
+        elif ch == curses.KEY_UP:
+            self.prompt_pane.scroll_up(2)
+
+        elif ch == curses.KEY_DOWN:
+            h = self.stdscr.getmaxyx()[0]
+            content_height = h - 4
+            self.prompt_pane.scroll_down(content_height // 2 - 2, 2)
+
+        elif ch == curses.KEY_PPAGE:
+            self.agent_pane.scroll_up(5)
+
+        elif ch == curses.KEY_NPAGE:
+            h = self.stdscr.getmaxyx()[0]
+            content_height = h - 4
+            self.agent_pane.scroll_down(content_height - 2, 5)
+
+        elif ch == ord("["):
+            name = cycle_tts_voice(-1)
+            self._set_status(f"Voice: {name}", self.CP_VOICE)
+            speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
+
+        elif ch == ord("]"):
+            name = cycle_tts_voice(1)
+            self._set_status(f"Voice: {name}", self.CP_VOICE)
+            speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
+
+        elif ch == ord("h") or ch == ord("H"):
+            self.show_help_overlay = True
+
+    # ─── Recording ─────────────────────────────────────────────────
+
+    def _start_recording(self):
+        self.recording = True
+        self._rec_stop_event = threading.Event()
+        with self.audio_lock:
+            self.audio_frames.clear()
+        self._live_preview_text = ""  # current interim transcription
+
+        self._set_status("██ RECORDING — press SPACE to stop ██", self.CP_RECORDING)
+
+        self._audio_stream = sd.InputStream(
+            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
+            blocksize=BLOCK_SIZE, callback=self._audio_callback)
+        self._audio_stream.start()
+
+        # Start live transcription thread
+        threading.Thread(target=self._live_transcribe_loop, daemon=True).start()
+
+    def _audio_callback(self, indata, frames, time_info, status):
+        with self.audio_lock:
+            self.audio_frames.append(indata[:, 0].copy())
+
+    def _live_transcribe_loop(self):
+        """Periodically transcribe accumulated audio while recording."""
+        CHUNK_INTERVAL = 2.0  # transcribe every 2 seconds
+        last_transcribed_samples = 0
+
+        while not self._rec_stop_event.is_set():
+            self._rec_stop_event.wait(CHUNK_INTERVAL)
+
+            with self.audio_lock:
+                if not self.audio_frames:
+                    continue
+                audio = np.concatenate(self.audio_frames)
+
+            total_samples = len(audio)
+            # Only re-transcribe if we have meaningful new audio
+            new_samples = total_samples - last_transcribed_samples
+            if new_samples < SAMPLE_RATE * 0.5:  # at least 0.5s of new audio
+                continue
+
+            if total_samples / SAMPLE_RATE < self.min_speech_duration:
+                continue
+
+            text = transcribe(audio, self.whisper_model)
+            last_transcribed_samples = total_samples
+            if text:
+                self._live_preview_text = text
+                self.ui_queue.put(("live_preview", text))
+
+    def _stop_recording(self):
+        self.recording = False
+        self._rec_stop_event.set()
+
+        try:
+            self._audio_stream.stop()
+            self._audio_stream.close()
+        except Exception:
+            pass
+
+        with self.audio_lock:
+            if not self.audio_frames:
+                self._set_status("No audio captured.")
+                return
+            audio = np.concatenate(self.audio_frames)
+            self.audio_frames.clear()
+
+        duration = len(audio) / SAMPLE_RATE
+        if duration < self.min_speech_duration:
+            self._set_status(f"Too short ({duration:.1f}s), discarded.")
+            return
+
+        # Final transcription (full audio for best accuracy)
+        self._set_status(f"Final transcription of {duration:.1f}s...")
+        threading.Thread(target=self._do_final_transcribe, args=(audio,), daemon=True).start()
+
+    def _do_final_transcribe(self, audio: np.ndarray):
+        text = transcribe(audio, self.whisper_model)
+        # Remove live preview line, replace with final
+        self.ui_queue.put(("remove_live_preview", None))
+        if not text:
+            self.ui_queue.put(("status", "No speech detected.", self.CP_STATUS))
+            return
+        self.ui_queue.put(("fragment", text))
+        label = f"Added: \"{text[:50]}\"" if len(text) > 50 else f"Added: \"{text}\""
+        self.ui_queue.put(("status", label, self.CP_STATUS))
+
+    # ─── Echo test ─────────────────────────────────────────────────
+
+    def _echo_test(self):
+        """Record 1 second of audio and play it back immediately."""
+        self._set_status("Echo test: recording 1 second...", self.CP_RECORDING)
+        threading.Thread(target=self._do_echo_test, daemon=True).start()
+
+    def _do_echo_test(self):
+        frames = []
+
+        def callback(indata, frame_count, time_info, status):
+            frames.append(indata.copy())
+
+        # Record 1 second
+        stream = sd.InputStream(
+            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
+            blocksize=BLOCK_SIZE, callback=callback)
+        stream.start()
+        time.sleep(1.0)
+        stream.stop()
+        stream.close()
+
+        if not frames:
+            self.ui_queue.put(("status", "Echo test: no audio captured.", self.CP_STATUS))
+            return
+
+        audio = np.concatenate(frames)
+        peak = np.max(np.abs(audio))
+        rms = np.sqrt(np.mean(audio ** 2))
+
+        self.ui_queue.put(("status",
+                           f"Echo test: playing back (peak={peak:.3f}, rms={rms:.4f})...",
+                           self.CP_STATUS))
+
+        # Play it back at the default output device
+        sd.play(audio, samplerate=SAMPLE_RATE)
+        sd.wait()
+
+        self.ui_queue.put(("status",
+                           f"Echo test done. Peak={peak:.3f} RMS={rms:.4f} "
+                           f"({'good signal' if peak > 0.05 else 'very quiet!'})",
+                           self.CP_STATUS))
+
+    # ─── Voice commands ──────────────────────────────────────────────
+
+    # Map spoken words to key actions
+    VOICE_COMMANDS = {
+        "record": " ", "recording": " ", "dictate": " ", "start": " ", "stop": " ",
+        "refine": "r", "summarize": "r", "compile": "r",
+        "direct": "d", "raw": "d",
+        "save": "s",
+        "new": "n",
+        "execute": "e", "run": "e", "send": "e",
+        "settings": "o", "options": "o", "config": "o",
+        "clear": "c",
+        "kill": "k",
+        "restart": "x", "reboot": "x", "reload": "x",
+        "quit": "q", "exit": "q",
+        "left": "LEFT", "previous": "LEFT", "back": "LEFT", "older": "LEFT",
+        "right": "RIGHT", "next": "RIGHT", "forward": "RIGHT", "newer": "RIGHT",
+    }
+
+    def _voice_command(self):
+        """Listen for a single spoken command word."""
+        self.voice_cmd_listening = True
+        self._set_status("Listening for command...", self.CP_RECORDING)
+        threading.Thread(target=self._do_voice_command, daemon=True).start()
+
+    def _do_voice_command(self):
+        """Record ~1.5s, transcribe, and dispatch as a key command."""
+        frames = []
+
+        def callback(indata, frame_count, time_info, status):
+            frames.append(indata[:, 0].copy())
+
+        stream = sd.InputStream(
+            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
+            blocksize=BLOCK_SIZE, callback=callback)
+        stream.start()
+        time.sleep(1.5)
+        stream.stop()
+        stream.close()
+
+        if not frames:
+            self.ui_queue.put(("voice_cmd_result", None))
+            return
+
+        audio = np.concatenate(frames)
+        if len(audio) / SAMPLE_RATE < 0.2:
+            self.ui_queue.put(("voice_cmd_result", None))
+            return
+
+        text = transcribe(audio, self.whisper_model)
+        if not text:
+            self.ui_queue.put(("voice_cmd_result", None))
+            return
+
+        # Extract first word, lowercase, strip punctuation
+        word = text.strip().split()[0].lower().rstrip(".,!?;:")
+        self.ui_queue.put(("voice_cmd_result", word))
+
+    def _dispatch_voice_command(self, word: str):
+        """Map a spoken word to a key action and simulate it."""
+        action = self.VOICE_COMMANDS.get(word)
+        if action is None:
+            self._set_status(f"Unknown command: \"{word}\"")
+            return
+
+        self._set_status(f"Voice command: \"{word}\"")
+
+        # Simulate the keypress by injecting into curses
+        if action == "LEFT":
+            curses.ungetch(curses.KEY_LEFT)
+        elif action == "RIGHT":
+            curses.ungetch(curses.KEY_RIGHT)
+        else:
+            curses.ungetch(ord(action))
+
+    # ─── Refine ────────────────────────────────────────────────────
+
+    def _start_refine(self):
+        if not self.fragments:
+            self._set_status("No fragments to refine. Dictate something first!")
+            return
+        self.refining = True
+        self._set_status("Sending to Claude for refinement...", self.CP_STATUS)
+        threading.Thread(target=self._do_refine, daemon=True).start()
+
+    def _do_refine(self):
+        fragments_copy = list(self.fragments)
+        current = self.current_prompt
+        result = refine_with_llm(
+            fragments_copy, current,
+            status_callback=lambda msg: self.ui_queue.put(("status", msg, self.CP_STATUS)))
+        self.ui_queue.put(("refined", result))
+        self.ui_queue.put(("status", f"Prompt refined! (v{self.prompt_version + 1})", self.CP_STATUS))
+
+    # ─── Save ──────────────────────────────────────────────────────
+
+    def _save_prompt(self):
+        if not self.current_prompt:
+            self._set_status("No prompt to save. Refine first!")
+            return
+
+        now = datetime.datetime.now()
+        date_dir = self.save_base / now.strftime("%Y/%m/%d")
+        date_dir.mkdir(parents=True, exist_ok=True)
+
+        existing = sorted(date_dir.glob("prompt_*.md"))
+        seq = len(existing) + 1
+        filename = date_dir / f"prompt_{seq:03d}.md"
+
+        with open(filename, "w") as f:
+            f.write(f"# Prompt v{self.prompt_version}\n")
+            f.write(f"# Generated: {now.isoformat()}\n")
+            f.write(f"# Fragments: {len(self.fragments)}\n\n")
+            f.write(self.current_prompt)
+            f.write("\n")
+
+        self._scan_saved_prompts()
+        self.browser_index = -1
+        self.prompt_saved = True
+        self._set_status(f"Saved: {filename}")
+
+    # ─── New prompt ─────────────────────────────────────────────────
+
+    def _new_prompt(self):
+        """Start a new prompt. If current is unsaved, ask to save first."""
+        if self.current_prompt and not self.prompt_saved:
+            self.confirming_new = True
+            self._set_status("Unsaved prompt! Save first? [Y]es / [N]o / any key to cancel")
+            return
+        self._do_new_prompt()
+
+    def _do_new_prompt(self):
+        """Actually reset to a new prompt."""
+        self.fragments.clear()
+        self.current_prompt = None
+        self.prompt_version = 0
+        self.prompt_saved = True
+        self.dictation_pane.lines.clear()
+        self.dictation_pane.scroll_offset = 0
+        self.browser_index = -1
+        w = self.stdscr.getmaxyx()[1] // 2
+        self._load_browser_prompt(w)
+        self._set_status("New prompt started. Dictate away!")
+
+    # ─── Direct execution (skip refinement) ────────────────────────
+
+    def _execute_raw(self):
+        """Execute raw dictation fragments directly, skipping refinement."""
+        if not self.fragments:
+            self._set_status("No fragments to execute. Dictate something first!")
+            return
+        if self.agent_state not in (AgentState.IDLE, AgentState.DONE):
+            self._set_status("Agent is busy. Wait or kill it first.")
+            return
+        prompt_text = " ".join(self.fragments)
+        self.fragments.clear()
+        # Keep dictation buffer visible with yellow border while agent processes
+        self._agent_source_pane = self.dictation_pane
+        self._agent_source_original_color = self.dictation_pane.color_pair
+        self.dictation_pane.color_pair = self.CP_XFER
+        self._set_status("Executing raw dictation directly...")
+        # Reuse the standard execution path
+        self.xfer_prompt_text = prompt_text
+        self.xfer_bytes = len(prompt_text.encode())
+        self.xfer_progress = 0.0
+        self.xfer_frame = 0
+        self.xfer_start_time = time.time()
+        self.agent_state = AgentState.DOWNLOADING
+        self.typewriter_queue.clear()
+        self.agent_first_output = False
+        self.agent_pane.lines.clear()
+        self.agent_pane.scroll_offset = 0
+        threading.Thread(target=self._run_agent, daemon=True).start()
+
+    # ─── Agent execution ──────────────────────────────────────────
+
+    def _execute_prompt(self):
+        prompt_text = self._get_active_prompt_text()
+        if not prompt_text:
+            self._set_status("No prompt to execute. Refine or browse to one first!")
+            return
+
+        # Set prompt browser border to yellow while agent processes
+        self._agent_source_pane = self.prompt_pane
+        self._agent_source_original_color = self.prompt_pane.color_pair
+        self.prompt_pane.color_pair = self.CP_XFER
+
+        self.xfer_prompt_text = prompt_text
+        self.xfer_bytes = len(prompt_text.encode())
+        self.xfer_progress = 0.0
+        self.xfer_frame = 0
+        self.xfer_start_time = time.time()
+        self.agent_state = AgentState.DOWNLOADING
+        self.typewriter_queue.clear()
+        self.agent_first_output = False
+
+        # Clear agent pane
+        self.agent_pane.lines.clear()
+        self.agent_pane.scroll_offset = 0
+
+        self._set_status("Initiating ZMODEM transfer to agent...")
+
+        # Start agent after a brief animation delay
+        threading.Thread(target=self._run_agent, daemon=True).start()
+
+    def _emit_typewriter(self, text):
+        """Queue text for typewriter display in the agent pane."""
+        for ch in text:
+            self.ui_queue.put(("typewriter_char", ch))
+
+    def _format_tool_input(self, name, inp):
+        """Format a tool_use input dict into a concise display string."""
+        if name == "Read":
+            path = inp.get("file_path", "")
+            parts = []
+            if path:
+                parts.append(path.split("/")[-1] if "/" in path else path)
+            if inp.get("offset"):
+                parts.append(f"L{inp['offset']}")
+            if inp.get("limit"):
+                parts.append(f"+{inp['limit']}")
+            return " ".join(parts) if parts else ""
+        elif name == "Edit":
+            path = inp.get("file_path", "")
+            short = path.split("/")[-1] if "/" in path else path
+            old = inp.get("old_string", "")
+            preview = old[:60].replace("\n", "\\n") + ("..." if len(old) > 60 else "")
+            return f"{short}: {preview}" if preview else short
+        elif name == "Write":
+            path = inp.get("file_path", "")
+            return path.split("/")[-1] if "/" in path else path
+        elif name in ("Bash", "Task"):
+            cmd = inp.get("command", inp.get("prompt", ""))
+            return cmd[:80] + ("..." if len(cmd) > 80 else "")
+        elif name in ("Grep", "Glob"):
+            pat = inp.get("pattern", "")
+            path = inp.get("path", "")
+            return f"{pat}" + (f" in {path}" if path else "")
+        elif name == "Agent":
+            desc = inp.get("description", "")
+            return desc
+        else:
+            s = json.dumps(inp)
+            return s[:80] + ("..." if len(s) > 80 else "")
+
+    def _run_agent(self):
+        """Run claude agent in background, streaming verbose output."""
+        # Let the download animation play for ~3 seconds
+        time.sleep(3.0)
+
+        self.ui_queue.put(("agent_state", AgentState.RECEIVING))
+        self.ui_queue.put(("status", "Agent receiving transmission...", self.CP_STATUS))
+
+        # Add the "incoming transmission" header via typewriter
+        self._emit_typewriter("\n═══ INCOMING TRANSMISSION ═══\n\n")
+
+        try:
+            prompt_with_tts = self.xfer_prompt_text + TTS_PROMPT_SUFFIX
+            self.agent_process = subprocess.Popen(
+                ["claude", "--print", "--verbose", "--output-format",
+                 "stream-json", "--dangerously-skip-permissions",
+                 "-p", prompt_with_tts],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            result_text = ""
+            response_text_parts = []
+
+            while True:
+                line = self.agent_process.stdout.readline()
+                if not line:
+                    break
+                if self.agent_state == AgentState.IDLE:
+                    break
+
+                if not self.agent_first_output:
+                    self.agent_first_output = True
+                    self.ui_queue.put(("clear_source_pane", None))
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    # Non-JSON output (e.g. stderr), show as-is
+                    self._emit_typewriter(line + "\n")
+                    continue
+
+                ev_type = event.get("type", "")
+
+                if ev_type == "assistant":
+                    msg = event.get("message", {})
+                    for block in msg.get("content", []):
+                        bt = block.get("type", "")
+                        if bt == "text":
+                            text = block.get("text", "")
+                            response_text_parts.append(text)
+                            self._emit_typewriter(text)
+                        elif bt == "tool_use":
+                            name = block.get("name", "?")
+                            inp = block.get("input", {})
+                            detail = self._format_tool_input(name, inp)
+                            self._emit_typewriter(
+                                f"\n▶ {name}: {detail}\n"
+                            )
+                        elif bt == "thinking":
+                            thinking = block.get("thinking", "")
+                            if thinking:
+                                # Show thinking with prefix
+                                lines = thinking.split("\n")
+                                for tl in lines:
+                                    self._emit_typewriter(f"  .. {tl}\n")
+
+                elif ev_type == "user":
+                    # Tool results - show abbreviated
+                    content = event.get("content", [])
+                    if isinstance(content, list):
+                        for item in content:
+                            if item.get("type") == "tool_result":
+                                tool_text = item.get("content", "")
+                                if isinstance(tool_text, list):
+                                    # Extract text from content blocks
+                                    tool_text = " ".join(
+                                        c.get("text", "")
+                                        for c in tool_text
+                                        if c.get("type") == "text"
+                                    )
+                                if tool_text:
+                                    preview = tool_text[:200].replace("\n", " ")
+                                    if len(tool_text) > 200:
+                                        preview += f"... ({len(tool_text)} chars)"
+                                    self._emit_typewriter(
+                                        f"  ◀ {preview}\n"
+                                    )
+
+                elif ev_type == "result":
+                    result_text = event.get("result", "")
+
+                # Skip system, rate_limit_event, etc.
+
+            self.agent_process.wait()
+
+            # End marker
+            self._emit_typewriter("\n\n═══ END TRANSMISSION ═══\n")
+
+            self.ui_queue.put(("agent_state", AgentState.DONE))
+            self.ui_queue.put(("status", "Agent complete. Ready for next prompt.", self.CP_STATUS))
+
+            # Speak the summary via TTS
+            full_response = result_text or "".join(response_text_parts)
+            summary = extract_tts_summary(full_response)
+            if summary:
+                self.last_tts_summary = summary
+                stop_speaking()
+                speak_text(summary, on_done=lambda: self.ui_queue.put(
+                    ("status", "Ready for next prompt.", self.CP_STATUS)))
+                self.ui_queue.put(("status", "Speaking summary...", self.CP_STATUS))
+
+        except FileNotFoundError:
+            self.ui_queue.put(("agent_state", AgentState.DONE))
+            self.ui_queue.put(("status", "Error: 'claude' CLI not found!", self.CP_STATUS))
+        except Exception as e:
+            self.ui_queue.put(("agent_state", AgentState.DONE))
+            self.ui_queue.put(("status", f"Agent error: {e}", self.CP_STATUS))
+
+    def _kill_agent(self):
+        if self.agent_process:
+            try:
+                self.agent_process.kill()
+            except Exception:
+                pass
+            self.agent_process = None
+        stop_speaking()
+        self.agent_state = AgentState.IDLE
+        self.typewriter_queue.clear()
+        # Restore source pane if still pending
+        if self._agent_source_pane is not None:
+            self._agent_source_pane.color_pair = self._agent_source_original_color
+            self._agent_source_pane = None
+            self._agent_source_original_color = None
+        self._set_status("Agent terminated.")
+
+    # ─── Typewriter effect ─────────────────────────────────────────
+
+    def _process_typewriter(self):
+        """Process queued characters for the Joshua typewriter effect."""
+        if not self.typewriter_queue:
+            return
+
+        now = time.time()
+        right_width = self.stdscr.getmaxyx()[1] - self.stdscr.getmaxyx()[1] // 2
+
+        # Process multiple chars per frame to keep up, but with timing
+        chars_this_frame = 0
+        max_chars = 20  # burst up to 20 chars per frame for verbose streaming
+
+        while self.typewriter_queue and chars_this_frame < max_chars:
+            ch = self.typewriter_queue[0]
+            delay = self.typewriter_line_delay if ch == "\n" else self.typewriter_char_delay
+
+            if now - self.typewriter_last_time >= delay:
+                self.typewriter_queue.popleft()
+                self.agent_pane.add_char_to_last_line(ch, right_width)
+                self.typewriter_last_time = now
+                chars_this_frame += 1
+            else:
+                break
+
+    # ─── UI queue processing ───────────────────────────────────────
+
+    def _process_ui_queue(self):
+        left_width = self.stdscr.getmaxyx()[1] // 2
+
+        while True:
+            try:
+                msg = self.ui_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            if msg[0] == "status":
+                self.status_msg = msg[1]
+                self.status_color = msg[2] if len(msg) > 2 else self.CP_STATUS
+
+            elif msg[0] == "live_preview":
+                # Update or add the live preview lines (shown dimly while recording)
+                text = msg[1]
+                # Remove previous preview lines
+                while self.dictation_pane.lines and self.dictation_pane.lines[-1].startswith("  ◌ "):
+                    self.dictation_pane.lines.pop()
+                # Wrap the preview text to fit within the pane
+                wrap_width = max(1, left_width - 2)
+                prefix = "  ◌ "
+                wrapped = textwrap.wrap(text, width=max(1, wrap_width - len(prefix)))
+                if wrapped:
+                    self.dictation_pane.lines.append(f"{prefix}{wrapped[0]}")
+                    for continuation in wrapped[1:]:
+                        self.dictation_pane.lines.append(f"  ◌  {continuation}")
+                else:
+                    self.dictation_pane.lines.append(f"{prefix}{text}")
+                self.dictation_pane.scroll_to_bottom(
+                    self.dictation_pane._last_height if hasattr(self.dictation_pane, '_last_height') else 10)
+
+            elif msg[0] == "remove_live_preview":
+                # Remove all live preview lines before adding final fragment
+                while self.dictation_pane.lines and self.dictation_pane.lines[-1].startswith("  ◌ "):
+                    self.dictation_pane.lines.pop()
+
+            elif msg[0] == "fragment":
+                text = msg[1]
+                self.fragments.append(text)
+                ts = datetime.datetime.now().strftime("%H:%M:%S")
+                self.dictation_pane.add_line(f"[{ts}] {text}", left_width)
+
+            elif msg[0] == "refined":
+                self.current_prompt = msg[1]
+                self.prompt_version += 1
+                self.prompt_saved = False  # track unsaved state
+                self.browser_index = -1
+                self._load_browser_prompt(left_width)
+                # Clear fragments and dictation after refinement
+                self.fragments.clear()
+                self.dictation_pane.lines.clear()
+                self.dictation_pane.scroll_offset = 0
+                self.refining = False
+
+            elif msg[0] == "clear_source_pane":
+                if self._agent_source_pane is not None:
+                    self._agent_source_pane.lines.clear()
+                    self._agent_source_pane.scroll_offset = 0
+                    self._agent_source_pane.color_pair = self._agent_source_original_color
+                    self._agent_source_pane = None
+                    self._agent_source_original_color = None
+
+            elif msg[0] == "agent_state":
+                self.agent_state = msg[1]
+
+            elif msg[0] == "voice_cmd_result":
+                self.voice_cmd_listening = False
+                if msg[1]:
+                    self._dispatch_voice_command(msg[1])
+                else:
+                    self._set_status("No command heard.")
+
+            elif msg[0] == "typewriter_char":
+                self.typewriter_queue.append(msg[1])
+
+    def _set_status(self, msg: str, color: int = None):
+        self.status_msg = msg
+        self.status_color = color if color is not None else self.CP_STATUS
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="VoiceCode BBS v2.0 - Voice-Driven Prompt Workshop & Agent Terminal",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""\
+            ╔═══════════════════════════════════════════════════════╗
+            ║  Three-Pane Layout:                                   ║
+            ║    Top-Left:    Prompt Browser / Editor                ║
+            ║    Bottom-Left: Dictation Buffer                      ║
+            ║    Right:       Agent Terminal (full height)           ║
+            ║                                                       ║
+            ║  Controls:                                            ║
+            ║    SPACE    Toggle voice recording                    ║
+            ║    R        Refine fragments into prompt              ║
+            ║    S        Save prompt to dated folder               ║
+            ║    N        New prompt (prompts save if unsaved)      ║
+            ║    E        Execute prompt (send to agent)            ║
+            ║    C        Clear dictation buffer                   ║
+            ║    ←→       Browse saved prompts                     ║
+            ║    ↑↓       Scroll prompt pane                       ║
+            ║    PgUp/Dn  Scroll agent pane                        ║
+            ║    K        Kill running agent                       ║
+            ║    X        Restart application                       ║
+            ║    Q        Quit                                     ║
+            ╚═══════════════════════════════════════════════════════╝
+        """),
+    )
+    parser.add_argument(
+        "--model", default="base.en",
+        help="Whisper model (default: base.en)")
+    parser.add_argument(
+        "--save-dir", default="~/prompts",
+        help="Prompt library path (saves to <path>/voicecode/). "
+             "Overrides persisted setting. Default: ~/prompts")
+    args = parser.parse_args()
+
+    app = BBSApp(args)
+    curses.wrapper(lambda stdscr: app.run(stdscr))
+
+    if app.restart:
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+if __name__ == "__main__":
+    main()

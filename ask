@@ -1,0 +1,48 @@
+#!/bin/bash
+# ask - Run a saved prompt file through Claude
+#
+# Usage:
+#   ask <prompt_file>
+#   ask ~/prompts/2026/03/15/prompt_001.md
+#   ask latest    # runs the most recently saved prompt
+
+set -euo pipefail
+
+PROMPT_DIR="${VOICECODE_PROMPT_DIR:-$HOME/prompts}"
+
+if [ $# -eq 0 ]; then
+    echo "Usage: ask <prompt_file|latest>"
+    echo ""
+    echo "Saved prompts:"
+    find "$PROMPT_DIR" -name "prompt_*.md" -type f 2>/dev/null | sort | tail -10
+    exit 1
+fi
+
+TARGET="$1"
+shift
+
+if [ "$TARGET" = "latest" ]; then
+    TARGET=$(find "$PROMPT_DIR" -name "prompt_*.md" -type f 2>/dev/null | sort | tail -1)
+    if [ -z "$TARGET" ]; then
+        echo "No saved prompts found in $PROMPT_DIR"
+        exit 1
+    fi
+    echo "Running latest prompt: $TARGET"
+fi
+
+if [ ! -f "$TARGET" ]; then
+    echo "File not found: $TARGET"
+    exit 1
+fi
+
+# Strip comment headers (lines starting with #) and feed to claude
+PROMPT=$(grep -v '^#' "$TARGET" | sed '/^$/N;/^\n$/d')
+
+echo "═══════════════════════════════════════"
+echo "  Prompt: $(basename "$TARGET")"
+echo "═══════════════════════════════════════"
+echo "$PROMPT"
+echo "═══════════════════════════════════════"
+echo ""
+
+exec claude --print -p "$PROMPT" "$@"
