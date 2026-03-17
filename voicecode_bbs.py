@@ -648,6 +648,7 @@ class BBSApp:
             "  D     ··· Direct execute",
             "  W     ··· New session (clear context)",
             "  H     ··· Full help screen",
+            "  ESC   ··· Main menu",
         ]
 
         self.fragments: list[str] = []
@@ -700,6 +701,17 @@ class BBSApp:
         # Help overlay state
         self.show_help_overlay = False
         self.show_about_overlay = False
+
+        # Escape menu overlay state
+        self.show_escape_menu = False
+        self.escape_menu_cursor = 0
+        self._escape_menu_items = [
+            ("Options", "settings"),
+            ("Help", "help"),
+            ("About", "about"),
+            ("Restart", "restart"),
+            ("Quit", "quit"),
+        ]
 
         # Shortcuts overlay state (was folder slug)
         self.show_folder_slug = False
@@ -1442,7 +1454,7 @@ class BBSApp:
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
             voice_label = "[V]oice"
-            keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [←→]Browse [↑↓]View | [O]pt [H]elp [A]bout"
+            keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [←→]Browse [↑↓]View"
             self._draw_bar(help_y, keys, self.CP_HELP)
             # Draw [V]oice in red, right-justified
             w = self.stdscr.getmaxyx()[1]
@@ -1468,6 +1480,8 @@ class BBSApp:
             self._draw_folder_slug_overlay()
         if self.show_shortcut_editor:
             self._draw_shortcut_editor()
+        if self.show_escape_menu:
+            self._draw_escape_menu()
 
         self.stdscr.refresh()
 
@@ -1520,7 +1534,6 @@ class BBSApp:
             "  F      Add/remove favorites",
             "  N      New prompt",
             "  C      Clear dictation buffer",
-            "  O      Settings / voice config",
             "  K      Kill running agent",
             "  W      New session (clear context)",
             "  ←/→    Browse within current view",
@@ -1529,9 +1542,9 @@ class BBSApp:
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
-            "  A      About / title screen",
             "  H      This help screen",
             "  Q      Quit",
+            "  ESC    Main menu (Options/About...)",
             "",
             "  Press H, ESC, or Q to close",
         ]
@@ -1647,6 +1660,67 @@ class BBSApp:
 
             bottom = "╚" + "═" * inner_w + "╝"
             self.stdscr.addnstr(start_y + overlay_h - 1, start_x, bottom, overlay_w, border_attr)
+        except curses.error:
+            pass
+
+    def _draw_escape_menu(self):
+        """Draw a centered BBS/DOS-style Escape menu modal."""
+        h, w = self.stdscr.getmaxyx()
+
+        num_items = len(self._escape_menu_items)
+        # Box: title bar (3 rows) + items + blank top/bottom padding + bottom border
+        overlay_h = num_items + 6  # top border + title + sep + blank + items + blank + bottom
+        overlay_w = 36
+        if overlay_w > w - 4 or overlay_h > h - 2:
+            return
+
+        start_y = max(1, (h - overlay_h) // 2)
+        start_x = max(2, (w - overlay_w) // 2)
+
+        border_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+        body_attr = curses.color_pair(self.CP_HELP)
+        accent_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+        sel_attr = curses.color_pair(self.CP_VOICE) | curses.A_BOLD
+
+        inner_w = overlay_w - 2
+
+        try:
+            # Top border
+            self.stdscr.addnstr(start_y, start_x,
+                                "╔" + "═" * inner_w + "╗", overlay_w, border_attr)
+            # Title
+            title = " MAIN MENU "
+            title_line = "║" + title.center(inner_w) + "║"
+            self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
+            # Separator
+            self.stdscr.addnstr(start_y + 2, start_x,
+                                "╠" + "═" * inner_w + "╣", overlay_w, border_attr)
+
+            # Blank line above items
+            self.stdscr.addnstr(start_y + 3, start_x,
+                                "║" + " " * inner_w + "║", overlay_w, body_attr)
+
+            # Menu items
+            for i, (label, _action) in enumerate(self._escape_menu_items):
+                row = start_y + 4 + i
+                if i == self.escape_menu_cursor:
+                    line = f"  ► {label}  "
+                    attr = sel_attr
+                else:
+                    line = f"    {label}  "
+                    attr = body_attr
+                padded = line + " " * max(0, inner_w - len(line))
+                self.stdscr.addnstr(row, start_x,
+                                    "║" + padded[:inner_w] + "║", overlay_w, attr)
+
+            # Blank line below items
+            blank_row = start_y + 4 + num_items
+            self.stdscr.addnstr(blank_row, start_x,
+                                "║" + " " * inner_w + "║", overlay_w, body_attr)
+
+            # Bottom border
+            self.stdscr.addnstr(blank_row + 1, start_x,
+                                "╚" + "═" * inner_w + "╝", overlay_w, border_attr)
         except curses.error:
             pass
 
@@ -2176,6 +2250,37 @@ class BBSApp:
                     self.stdscr.getch()
             return
 
+        # Handle escape menu overlay
+        if self.show_escape_menu:
+            if ch == curses.KEY_UP:
+                self.escape_menu_cursor = (self.escape_menu_cursor - 1) % len(self._escape_menu_items)
+            elif ch == curses.KEY_DOWN:
+                self.escape_menu_cursor = (self.escape_menu_cursor + 1) % len(self._escape_menu_items)
+            elif ch in (10, 13, curses.KEY_ENTER):
+                _label, action = self._escape_menu_items[self.escape_menu_cursor]
+                self.show_escape_menu = False
+                if action == "settings":
+                    self.show_settings_overlay = True
+                    self.settings_cursor = 0
+                elif action == "help":
+                    self.show_help_overlay = True
+                elif action == "about":
+                    self.show_about_overlay = True
+                elif action == "restart":
+                    self._kill_agent()
+                    self.restart = True
+                    self.running = False
+                elif action == "quit":
+                    self._kill_agent()
+                    self.running = False
+            elif ch == 27:
+                self.show_escape_menu = False
+                self.stdscr.nodelay(True)
+                self.stdscr.getch()
+            elif ch in (ord("q"), ord("Q")):
+                self.show_escape_menu = False
+            return
+
         # Handle folder slug overlay
         if self.show_folder_slug:
             if ch == curses.KEY_UP:
@@ -2437,10 +2542,6 @@ class BBSApp:
             if not self.refining and not self.recording:
                 self._new_prompt()
 
-        elif ch == ord("o") or ch == ord("O"):
-            self.show_settings_overlay = True
-            self.settings_cursor = 0
-
         elif ch == ord("c") or ch == ord("C"):
             self.fragments.clear()
             self.dictation_pane.lines.clear()
@@ -2562,13 +2663,20 @@ class BBSApp:
                 else:
                     self._set_status("No shortcuts or folders found.")
             elif not self.working_dir and not self._shortcut_strings:
-                self._set_status("Set working directory or add shortcuts in [O]ptions.")
+                self._set_status("Set working directory or add shortcuts in ESC → Options.")
 
         elif ch == ord("h") or ch == ord("H"):
             self.show_help_overlay = True
 
-        elif ch == ord("a") or ch == ord("A"):
-            self.show_about_overlay = not self.show_about_overlay
+        elif ch == 27:
+            # ESC key — open the main menu
+            # Consume any follow-up byte from ESC sequence (arrow keys etc.)
+            self.stdscr.nodelay(True)
+            next_ch = self.stdscr.getch()
+            if next_ch == -1:
+                # Pure ESC press — open menu
+                self.show_escape_menu = True
+                self.escape_menu_cursor = 0
 
     # ─── Recording ─────────────────────────────────────────────────
 
