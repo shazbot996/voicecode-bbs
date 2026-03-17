@@ -4,10 +4,7 @@ Voice-driven CLI interface for interacting with AI agents (Claude). Dictate prom
 
 ## Architecture
 
-Two main applications sharing a common audio pipeline:
-
-- **`voicecode.py`** — Simple push-to-talk / hands-free voice-to-CLI tool. Records audio, transcribes with Whisper, sends to a CLI command.
-- **`voicecode_bbs.py`** — Advanced retro BBS-style prompt engineering workshop with three-pane curses UI (Prompt Browser, Dictation Buffer, Agent Terminal), ZMODEM animations, typewriter streaming, TTS output, and voice commands.
+- **`voicecode_bbs.py`** — Retro BBS-style voice-driven prompt engineering workshop with three-pane curses UI (Prompt Browser, Dictation Buffer, Agent Terminal), ZMODEM animations, typewriter streaming, TTS output, voice commands, favorites, session continuity, folder slug injection, and context metering.
 - **`ask`** — Bash helper to run saved prompts through Claude CLI.
 
 ### Audio Pipeline
@@ -38,12 +35,7 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 # Activate venv
 source venv/bin/activate
 
-# Simple mode
-python voicecode.py
-python voicecode.py --mode handsfree
-python voicecode.py --model small.en --command "claude --print"
-
-# BBS mode
+# Launch the BBS prompt workshop
 python voicecode_bbs.py
 python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 
@@ -60,6 +52,8 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 - Comment lines (`#`) in prompt files are stripped before execution
 - TTS summaries extracted from `[TTS_SUMMARY]...[/TTS_SUMMARY]` blocks in agent responses
 - Thread-safe UI updates via `queue.Queue`
+- Session continuity across prompts via `--resume` with session IDs
+- Mid-recording folder slug injection merges paths into transcripts using word-level timestamps
 - No tests or CI currently
 
 ## BBS App Three-Pane Layout
@@ -89,9 +83,10 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | E | Execute current prompt |
 | D | Direct execute (skip refinement) |
 | S | Save prompt |
-| F | Add prompt to favorites |
-| N | New prompt (clear session) |
+| F | Add/remove prompt from favorites |
+| N | New prompt (clear buffer, keep session) |
 | C | Clear dictation buffer |
+| Enter | Folder slug browser (inject paths into dictation; works mid-recording) |
 | ←/→ | Browse saved prompts |
 | ↑/↓ | Cycle active/favorites/history views |
 | PgUp/PgDn | Scroll agent terminal |

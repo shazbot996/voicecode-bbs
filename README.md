@@ -23,15 +23,9 @@ VoiceCode is a CLI voice dictation system that is built to dictate prompts for A
 
 This application is intended to bridge the gap between hand prompt file editing and extemporaneous vibe code editing.
 
-It ships with two interfaces:
+The main interface is `voicecode_bbs.py` — a full curses three-pane TUI styled after 1990s bulletin board systems, with ZMODEM animations, typewriter streaming, TTS output, voice commands, favorites, session continuity, folder slug injection, and context metering.
 
-| | **Simple Mode** | **BBS Mode** |
-|---|---|---|
-| **File** | `voicecode.py` | `voicecode_bbs.py` |
-| **UI** | Minimal terminal | Full curses three-pane TUI |
-| **Modes** | Push-to-talk / hands-free | Voice-driven prompt workshop |
-| **Features** | Record & transcribe | Refine, execute, save, browse, TTS |
-| **Aesthetic** | Clean | 1990s BBS with ZMODEM animations |
+A companion `ask` script runs saved prompts through Claude CLI.
 
 ---
 
@@ -155,7 +149,19 @@ Prompts are automatically organized into a dated hierarchy:
               └── prompt_003.md
 ```
 
-Browse saved prompts with **Left/Right** arrows. Run any saved prompt later with the `ask` helper.
+Browse saved prompts with **Left/Right** arrows. Use **Up/Down** to cycle between active, favorites, and history views. Run any saved prompt later with the `ask` helper.
+
+### Favorites
+
+Press **F** to bookmark prompts you want to keep handy. Favorites appear in their own view accessible via the **Up/Down** view cycler.
+
+### Session Continuity
+
+Each session gets an ID passed to Claude via `--resume`, so conversation context carries across multiple execute cycles. Press **W** to start a fresh session. The context meter on the agent terminal border shows how much of Claude's context window has been used.
+
+### Folder Slug Browser
+
+Press **Enter** to open the folder slug browser — a navigable overlay listing directories under your configured working directory (set via **O** settings). Select a path to inject it into the dictation buffer. This works **mid-recording**: the slug is timestamped and merged into the final transcript at the correct position using Whisper's word-level timestamps.
 
 ---
 
@@ -191,12 +197,6 @@ python voicecode_bbs.py
 # Or with a larger Whisper model for better accuracy
 python voicecode_bbs.py --model small.en
 
-# Simple push-to-talk mode
-python voicecode.py
-
-# Hands-free mode (VAD auto-detects speech)
-python voicecode.py --mode handsfree
-
 # Run a saved prompt through Claude
 ./ask latest
 ./ask ~/prompts/2026/03/16/prompt_001.md
@@ -213,16 +213,21 @@ python voicecode.py --mode handsfree
 | `D` | Direct execute (skip refinement) |
 | `E` | Execute current prompt |
 | `S` | Save prompt to library |
-| `N` | New prompt (clear session) |
+| `F` | Add/remove prompt from favorites |
+| `N` | New prompt (clear buffer, keep session) |
 | `C` | Clear dictation buffer |
+| `Enter` | Folder slug browser (inject paths; works mid-recording) |
 | `←` `→` | Browse saved prompts |
-| `↑` `↓` | Scroll prompt pane |
+| `↑` `↓` | Cycle active/favorites/history views |
 | `PgUp` `PgDn` | Scroll agent terminal |
 | `O` | Settings / voice configuration |
+| `W` | New session (clear conversation context) |
 | `ESC` | Voice command mode |
 | `K` | Kill running agent |
 | `P` | Replay TTS summary |
 | `H` | Help overlay |
+| `A` | About / title screen |
+| `X` | Restart application |
 | `Q` | Quit |
 
 ---
@@ -251,6 +256,7 @@ Settings are persisted to `~/.config/voicecode/settings.json` and can be changed
 - Minimum speech duration
 - TTS voice selection (10 voices)
 - Prompt library path
+- Working directory for folder slug browser
 
 ---
 
