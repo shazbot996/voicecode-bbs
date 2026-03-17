@@ -578,7 +578,7 @@ class BBSApp:
             "  [END] Clear working prompt & buffer",
             "",
             "  ←→ to browse saved prompts",
-            "  ↓ switch to history",
+            "  ↑↓ cycle active/favorites/history",
         ]
         self.dictation_pane.welcome_art = [
             "╔══════════════════════════════════════╗",
@@ -606,11 +606,12 @@ class BBSApp:
             "  Connection: LOCAL",
             "",
             "  ── Quick Start ─────────────────",
-            "  [SPACE] Record voice",
-            "  [R]     Refine into prompt",
-            "  [E]     Execute prompt here",
-            "  [D]     Direct execute",
-            "  [H]     Full help screen",
+            "",
+            "  SPACE ··· Record voice",
+            "  R     ··· Refine into prompt",
+            "  E     ··· Execute prompt",
+            "  D     ··· Direct execute",
+            "  H     ··· Full help screen",
         ]
 
         self.fragments: list[str] = []
@@ -643,12 +644,15 @@ class BBSApp:
         # Voicecode writes into a dedicated subfolder within the library
         self.save_base = Path(self.prompt_library).expanduser() / "voicecode"
         self.history_base = self.save_base / "history"
+        self.favorites_base = self.save_base / "favorites"
         self.saved_prompts: list[Path] = []
         self.history_prompts: list[Path] = []
+        self.favorites_prompts: list[Path] = []
         self.browser_index: int = -1
-        self.browser_view: str = "active"  # "active" or "history"
+        self.browser_view: str = "active"  # "active", "history", or "favorites"
         self._scan_saved_prompts()
         self._scan_history_prompts()
+        self._scan_favorites_prompts()
 
         # Prompt saved state
         self.prompt_saved = True  # no unsaved prompt at start
@@ -703,6 +707,10 @@ class BBSApp:
         # Pending source pane tracking (yellow border while agent processes)
         self._agent_source_pane = None       # which pane sent the prompt
         self._agent_source_original_color = None  # original color_pair to restore
+
+        # Executed prompt display — persists in prompt browser until new prompt
+        self.executed_prompt_text: str | None = None
+        self._prompt_pane_original_color: int | None = None
 
     # ─── Settings items ────────────────────────────────────────────
 
@@ -891,30 +899,47 @@ class BBSApp:
         self.saved_prompts = sorted(
             p for p in self.save_base.rglob("prompt_*.md")
             if not str(p).startswith(str(self.history_base))
+            and not str(p).startswith(str(self.favorites_base))
         )
 
     def _scan_history_prompts(self):
         self.history_prompts = sorted(self.history_base.rglob("prompt_*.md"))
 
+    def _scan_favorites_prompts(self):
+        self.favorites_prompts = sorted(self.favorites_base.rglob("prompt_*.md"))
+
     def _current_browser_list(self) -> list[Path]:
         """Return the prompt list for the current browser view."""
         if self.browser_view == "history":
             return self.history_prompts
+        if self.browser_view == "favorites":
+            return self.favorites_prompts
         return self.saved_prompts
 
     def _load_browser_prompt(self, width: int):
         prompt_list = self._current_browser_list()
-        view_label = "HISTORY" if self.browser_view == "history" else "PROMPTS"
+        view_labels = {"history": "HISTORY", "favorites": "FAVORITES", "active": "PROMPTS"}
+        view_label = view_labels.get(self.browser_view, "PROMPTS")
 
         if self.browser_index < 0 or self.browser_index >= len(prompt_list):
             self.browser_index = -1
-            if self.browser_view == "history":
-                self.prompt_pane.title = f"HISTORY BROWSER"
+            if self.browser_view == "favorites":
+                self.prompt_pane.title = "FAVORITES BROWSER"
+                self.prompt_pane.set_text(
+                    "(no favorite selected)\n\n"
+                    f"Favorite prompts: {len(self.favorites_prompts)}  ←→ to browse\n"
+                    "↑↓ switch views\n"
+                    "HOME reset to new prompt", width)
+            elif self.browser_view == "history":
+                self.prompt_pane.title = "HISTORY BROWSER"
                 self.prompt_pane.set_text(
                     "(no history entry selected)\n\n"
                     f"Executed prompts: {len(self.history_prompts)}  ←→ to browse\n"
-                    "↑ switch to active prompts\n"
+                    "↑↓ switch views\n"
                     "HOME reset to new prompt", width)
+            elif self.executed_prompt_text:
+                self.prompt_pane.title = "EXECUTING PROMPT"
+                self.prompt_pane.set_text(self.executed_prompt_text, width)
             elif self.current_prompt:
                 self.prompt_pane.title = f"PROMPT WORKSHOP — session v{self.prompt_version}"
                 self.prompt_pane.set_text(self.current_prompt, width)
@@ -926,7 +951,9 @@ class BBSApp:
             return
 
         path = prompt_list[self.browser_index]
-        base = self.history_base if self.browser_view == "history" else self.save_base
+        base = (self.history_base if self.browser_view == "history"
+                else self.favorites_base if self.browser_view == "favorites"
+                else self.save_base)
         try:
             rel = path.relative_to(base)
         except ValueError:
@@ -974,6 +1001,8 @@ class BBSApp:
                 return None
         elif self.current_prompt:
             return self.current_prompt
+        elif self.executed_prompt_text:
+            return self.executed_prompt_text
         return None
 
     # ─── Main loop ─────────────────────────────────────────────────
@@ -1068,12 +1097,14 @@ class BBSApp:
 
         # ── Divider ──
         prompt_list = self._current_browser_list()
-        view_label = "History" if self.browser_view == "history" else "Prompts"
+        view_labels = {"history": "History", "favorites": "Favorites", "active": "Prompts"}
+        view_label = view_labels.get(self.browser_view, "Prompts")
         if self.browser_index >= 0:
             browse_info = f"{view_label}: {self.browser_index + 1}/{len(prompt_list)}"
         else:
             browse_info = f"Session v{self.prompt_version}"
         node_info = (f" {browse_info} │ Saved: {len(self.saved_prompts)} │ "
+                     f"Favs: {len(self.favorites_prompts)} │ "
                      f"History: {len(self.history_prompts)} │ "
                      f"Frags: {len(self.fragments)} │ Agent: {self.agent_state.upper()} ")
         divider = "─" * 2 + node_info + "─" * max(0, w - 2 - len(node_info))
@@ -1127,6 +1158,26 @@ class BBSApp:
                     except curses.error:
                         pass
 
+        # ── Favorites hint on prompt pane top border ──
+        if self.browser_view == "history" and self.browser_index >= 0:
+            fav_hint = " [F] ★ Favorite "
+            fav_x = left_width - len(fav_hint) - 1
+            if fav_x > 4:
+                try:
+                    self.stdscr.addstr(content_y, fav_x, fav_hint,
+                                       curses.color_pair(self.CP_RECORDING) | curses.A_BOLD)
+                except curses.error:
+                    pass
+        elif self.browser_view == "favorites" and self.browser_index >= 0:
+            fav_hint = " [F] Remove "
+            fav_x = left_width - len(fav_hint) - 1
+            if fav_x > 4:
+                try:
+                    self.stdscr.addstr(content_y, fav_x, fav_hint,
+                                       curses.color_pair(self.CP_RECORDING) | curses.A_BOLD)
+                except curses.error:
+                    pass
+
         # ── Data-flow hotkey hints (drawn after panes so they overlay borders) ──
         hint_attr = curses.color_pair(self.CP_VOICE) | curses.A_BOLD
         # R: bottom border of Prompt Browser — dictation ^ refines into prompt
@@ -1158,8 +1209,8 @@ class BBSApp:
             help_text = " ██ LISTENING — say a command: save, refine, direct, execute, new, clear, settings, quit... ██"
             self._draw_bar(help_y, help_text, self.CP_RECORDING)
         elif self.recording:
-            help_text = " ██ RECORDING — press SPACE to stop ██"
-            self._draw_bar(help_y, help_text, self.CP_RECORDING)
+            help_text = " [SPC] Stop recording"
+            self._draw_bar(help_y, help_text, self.CP_HELP)
         elif self.refining:
             help_text = " ◌ Refining prompt with Claude..."
             self._draw_bar(help_y, help_text, self.CP_STATUS)
@@ -1232,12 +1283,13 @@ class BBSApp:
             "  E      Execute current prompt",
             "  D      Direct execute (skip refine)",
             "  S      Save prompt to disk",
+            "  F      Add/remove favorites",
             "  N      New prompt",
             "  C      Clear dictation buffer",
             "  O      Settings / voice config",
             "  K      Kill running agent",
             "  ←/→    Browse within current view",
-            "  ↑/↓    Switch active/history views",
+            "  ↑/↓    Cycle active/favorites/history",
             "  Home   Reset to new empty prompt",
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
@@ -1765,6 +1817,13 @@ class BBSApp:
             if not self.refining and not self.recording:
                 self._save_prompt()
 
+        elif ch == ord("f") or ch == ord("F"):
+            if not self.refining and not self.recording:
+                if self.browser_view == "favorites" and self.browser_index >= 0:
+                    self._remove_from_favorites()
+                else:
+                    self._add_to_favorites()
+
         elif ch == ord("e") or ch == ord("E"):
             if self.agent_state in (AgentState.IDLE, AgentState.DONE):
                 self._execute_prompt()
@@ -1796,7 +1855,8 @@ class BBSApp:
         elif ch == curses.KEY_LEFT:
             prompt_list = self._current_browser_list()
             if not prompt_list:
-                self._set_status(f"No {'history' if self.browser_view == 'history' else 'saved'} prompts to browse.")
+                view_names = {"history": "history", "favorites": "favorite", "active": "saved"}
+                self._set_status(f"No {view_names.get(self.browser_view, 'saved')} prompts to browse.")
             elif self.browser_index == -1:
                 self.browser_index = len(prompt_list) - 1
                 self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
@@ -1818,64 +1878,49 @@ class BBSApp:
                 self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
 
         elif ch == curses.KEY_UP:
-            if self.browser_view == "history":
-                if self.prompt_pane.scroll_offset == 0:
-                    # At top of history — wrap to active (bottom)
-                    self.browser_view = "active"
-                    self.browser_index = -1
-                    self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
-                    h = self.stdscr.getmaxyx()[0]
-                    content_height = h - 4
-                    visible = content_height // 2 - 2
-                    max_off = max(0, len(self.prompt_pane.lines) - visible)
-                    self.prompt_pane.scroll_offset = max_off
-                    self._set_status("Switched to active prompts.")
-                else:
-                    self.prompt_pane.scroll_up(2)
-            else:
-                if self.prompt_pane.scroll_offset == 0:
-                    # At top of active — wrap to history (bottom)
+            # Cycle order (up): active → history → favorites → active
+            view_cycle_up = {"active": "history", "history": "favorites", "favorites": "active"}
+            if self.prompt_pane.scroll_offset == 0:
+                next_view = view_cycle_up[self.browser_view]
+                if next_view == "history":
                     self._scan_history_prompts()
-                    self.browser_view = "history"
-                    self.browser_index = -1
-                    self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
-                    h = self.stdscr.getmaxyx()[0]
-                    content_height = h - 4
-                    visible = content_height // 2 - 2
-                    max_off = max(0, len(self.prompt_pane.lines) - visible)
-                    self.prompt_pane.scroll_offset = max_off
-                    self._set_status(f"Switched to history. ({len(self.history_prompts)} entries)")
-                else:
-                    self.prompt_pane.scroll_up(2)
+                elif next_view == "favorites":
+                    self._scan_favorites_prompts()
+                self.browser_view = next_view
+                self.browser_index = -1
+                self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+                h = self.stdscr.getmaxyx()[0]
+                content_height = h - 4
+                visible = content_height // 2 - 2
+                max_off = max(0, len(self.prompt_pane.lines) - visible)
+                self.prompt_pane.scroll_offset = max_off
+                view_names = {"active": "active prompts", "history": "history", "favorites": "favorites"}
+                count = len(self._current_browser_list())
+                self._set_status(f"Switched to {view_names[next_view]}. ({count} entries)")
+            else:
+                self.prompt_pane.scroll_up(2)
 
         elif ch == curses.KEY_DOWN:
-            if self.browser_view == "active":
-                h = self.stdscr.getmaxyx()[0]
-                content_height = h - 4
-                visible = content_height // 2 - 2
-                max_off = max(0, len(self.prompt_pane.lines) - visible)
-                if self.prompt_pane.scroll_offset >= max_off:
-                    # At bottom of active — wrap to history
+            # Cycle order (down): active → favorites → history → active
+            view_cycle_down = {"active": "favorites", "favorites": "history", "history": "active"}
+            h = self.stdscr.getmaxyx()[0]
+            content_height = h - 4
+            visible = content_height // 2 - 2
+            max_off = max(0, len(self.prompt_pane.lines) - visible)
+            if self.prompt_pane.scroll_offset >= max_off:
+                next_view = view_cycle_down[self.browser_view]
+                if next_view == "history":
                     self._scan_history_prompts()
-                    self.browser_view = "history"
-                    self.browser_index = -1
-                    self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
-                    self._set_status(f"Switched to history. ({len(self.history_prompts)} entries)")
-                else:
-                    self.prompt_pane.scroll_down(visible, 2)
+                elif next_view == "favorites":
+                    self._scan_favorites_prompts()
+                self.browser_view = next_view
+                self.browser_index = -1
+                self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+                view_names = {"active": "active prompts", "history": "history", "favorites": "favorites"}
+                count = len(self._current_browser_list())
+                self._set_status(f"Switched to {view_names[next_view]}. ({count} entries)")
             else:
-                h = self.stdscr.getmaxyx()[0]
-                content_height = h - 4
-                visible = content_height // 2 - 2
-                max_off = max(0, len(self.prompt_pane.lines) - visible)
-                if self.prompt_pane.scroll_offset >= max_off:
-                    # At bottom of history — wrap to active
-                    self.browser_view = "active"
-                    self.browser_index = -1
-                    self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
-                    self._set_status("Switched to active prompts.")
-                else:
-                    self.prompt_pane.scroll_down(visible, 2)
+                self.prompt_pane.scroll_down(visible, 2)
 
         elif ch == curses.KEY_HOME:
             self.browser_view = "active"
@@ -2193,6 +2238,74 @@ class BBSApp:
             f.write("\n")
         self._scan_history_prompts()
 
+    def _add_to_favorites(self):
+        """Add the currently browsed prompt to favorites."""
+        prompt_text = self._get_active_prompt_text()
+        if not prompt_text and self.current_prompt:
+            prompt_text = self.current_prompt
+        if not prompt_text:
+            self._set_status("No prompt to favorite. Browse or refine one first!")
+            return
+
+        now = datetime.datetime.now()
+        date_dir = self.favorites_base / now.strftime("%Y/%m/%d")
+        date_dir.mkdir(parents=True, exist_ok=True)
+        existing = sorted(date_dir.glob("prompt_*.md"))
+        seq = len(existing) + 1
+        filename = date_dir / f"prompt_{seq:03d}.md"
+        with open(filename, "w") as f:
+            f.write(f"# Favorited: {now.isoformat()}\n\n")
+            f.write(prompt_text)
+            f.write("\n")
+        self._scan_favorites_prompts()
+        self._set_status(f"★ Added to favorites! ({len(self.favorites_prompts)} total)")
+
+    def _remove_from_favorites(self):
+        """Remove the currently browsed favorite and return it to history."""
+        if self.browser_view != "favorites" or self.browser_index < 0:
+            self._set_status("No favorite selected to remove.")
+            return
+        if self.browser_index >= len(self.favorites_prompts):
+            self._set_status("No favorite selected to remove.")
+            return
+
+        path = self.favorites_prompts[self.browser_index]
+        try:
+            # Read content before deleting
+            content = path.read_text()
+            path.unlink()
+            # Clean up empty parent directories
+            parent = path.parent
+            while parent != self.favorites_base:
+                try:
+                    parent.rmdir()  # only removes if empty
+                except OSError:
+                    break
+                parent = parent.parent
+        except Exception as e:
+            self._set_status(f"Error removing favorite: {e}")
+            return
+
+        # Save to history so it's not lost
+        now = datetime.datetime.now()
+        date_dir = self.history_base / now.strftime("%Y/%m/%d")
+        date_dir.mkdir(parents=True, exist_ok=True)
+        existing = sorted(date_dir.glob("prompt_*.md"))
+        seq = len(existing) + 1
+        filename = date_dir / f"prompt_{seq:03d}.md"
+        with open(filename, "w") as f:
+            f.write(content)
+        self._scan_history_prompts()
+
+        self._scan_favorites_prompts()
+        # Adjust browser index
+        if self.favorites_prompts:
+            self.browser_index = min(self.browser_index, len(self.favorites_prompts) - 1)
+        else:
+            self.browser_index = -1
+        self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+        self._set_status(f"Removed from favorites. ({len(self.favorites_prompts)} remaining)")
+
     # ─── New prompt ─────────────────────────────────────────────────
 
     def _new_prompt(self):
@@ -2203,8 +2316,17 @@ class BBSApp:
             return
         self._do_new_prompt()
 
+    def _clear_executed_prompt(self):
+        """Clear the executed prompt display from the prompt browser."""
+        if self.executed_prompt_text is not None:
+            self.executed_prompt_text = None
+            if self._prompt_pane_original_color is not None:
+                self.prompt_pane.color_pair = self._prompt_pane_original_color
+                self._prompt_pane_original_color = None
+
     def _do_new_prompt(self):
         """Actually reset to a new prompt."""
+        self._clear_executed_prompt()
         self.fragments.clear()
         self.current_prompt = None
         self.prompt_version = 0
@@ -2232,10 +2354,18 @@ class BBSApp:
         prompt_text = " ".join(self.fragments)
         self.fragments.clear()
         self._save_to_history(prompt_text)
-        # Keep dictation buffer visible with yellow border while agent processes
-        self._agent_source_pane = self.dictation_pane
-        self._agent_source_original_color = self.dictation_pane.color_pair
-        self.dictation_pane.color_pair = self.CP_XFER
+        # Show executed prompt in yellow in the prompt browser (persists until new prompt)
+        self.executed_prompt_text = prompt_text
+        if self._prompt_pane_original_color is None:
+            self._prompt_pane_original_color = self.prompt_pane.color_pair
+        self.prompt_pane.color_pair = self.CP_XFER
+        self.browser_view = "active"
+        self.browser_index = -1
+        w = self.stdscr.getmaxyx()[1] // 2
+        self._load_browser_prompt(w)
+        # Clear dictation buffer
+        self.dictation_pane.lines.clear()
+        self.dictation_pane.scroll_offset = 0
         self._set_status("Executing raw dictation directly...")
         # Reuse the standard execution path
         self.xfer_prompt_text = prompt_text
@@ -2257,10 +2387,15 @@ class BBSApp:
             self._set_status("No prompt to execute. Refine or browse to one first!")
             return
 
-        # Set prompt browser border to yellow while agent processes
-        self._agent_source_pane = self.prompt_pane
-        self._agent_source_original_color = self.prompt_pane.color_pair
+        # Show executed prompt in yellow in the prompt browser (persists until new prompt)
+        self.executed_prompt_text = prompt_text
+        if self._prompt_pane_original_color is None:
+            self._prompt_pane_original_color = self.prompt_pane.color_pair
         self.prompt_pane.color_pair = self.CP_XFER
+        self.browser_view = "active"
+        self.browser_index = -1
+        w = self.stdscr.getmaxyx()[1] // 2
+        self._load_browser_prompt(w)
 
         self._save_to_history(prompt_text)
 
@@ -2356,7 +2491,6 @@ class BBSApp:
 
                 if not self.agent_first_output:
                     self.agent_first_output = True
-                    self.ui_queue.put(("clear_source_pane", None))
 
                 line = line.strip()
                 if not line:
@@ -2530,6 +2664,10 @@ class BBSApp:
 
             elif msg[0] == "fragment":
                 text = msg[1]
+                # New dictation clears the executed prompt from the browser
+                if self.executed_prompt_text is not None:
+                    self._clear_executed_prompt()
+                    self._load_browser_prompt(left_width)
                 self.fragments.append(text)
                 ts = datetime.datetime.now().strftime("%H:%M:%S")
                 self.dictation_pane.add_line(f"[{ts}] {text}", left_width)
@@ -2546,15 +2684,6 @@ class BBSApp:
                 self.dictation_pane.scroll_offset = 0
                 self._set_dictation_info(left_width)
                 self.refining = False
-
-            elif msg[0] == "clear_source_pane":
-                # Don't clear agent pane — let new output scroll past old content
-                if self._agent_source_pane is not None:
-                    self._agent_source_pane.lines.clear()
-                    self._agent_source_pane.scroll_offset = 0
-                    self._agent_source_pane.color_pair = self._agent_source_original_color
-                    self._agent_source_pane = None
-                    self._agent_source_original_color = None
 
             elif msg[0] == "agent_state":
                 self.agent_state = msg[1]

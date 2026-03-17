@@ -89,10 +89,11 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | E | Execute current prompt |
 | D | Direct execute (skip refinement) |
 | S | Save prompt |
+| F | Add prompt to favorites |
 | N | New prompt (clear session) |
 | C | Clear dictation buffer |
 | ←/→ | Browse saved prompts |
-| ↑/↓ | Scroll prompt pane |
+| ↑/↓ | Cycle active/favorites/history views |
 | PgUp/PgDn | Scroll agent terminal |
 | O | Settings / voice config |
 | K | Kill running agent |
