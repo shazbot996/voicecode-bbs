@@ -287,6 +287,22 @@ def transcribe(audio: np.ndarray, model_size: str = "base.en") -> str:
     return " ".join(seg.text.strip() for seg in segments).strip()
 
 
+def transcribe_with_timestamps(audio: np.ndarray, model_size: str = "base.en") -> tuple[str, list[tuple[float, float, str]]]:
+    """Transcribe audio and return (full_text, [(start, end, word), ...])."""
+    model = get_whisper_model(model_size)
+    if audio.dtype != np.float32:
+        audio = audio.astype(np.float32)
+    segments, _ = model.transcribe(audio, beam_size=3, vad_filter=True, word_timestamps=True)
+    words = []
+    text_parts = []
+    for seg in segments:
+        text_parts.append(seg.text.strip())
+        if seg.words:
+            for w in seg.words:
+                words.append((w.start, w.end, w.word))
+    return " ".join(text_parts).strip(), words
+
+
 # ─── Scrollable text pane ──────────────────────────────────────────────
 
 class TextPane:
@@ -668,6 +684,9 @@ class BBSApp:
         self.folder_slug_cursor = 0
         self.folder_slug_list: list[str] = []
         self.folder_slug_scroll = 0
+
+        # Mid-recording folder injections: [(audio_seconds, text), ...]
+        self._recording_injections: list[tuple[float, str]] = []
 
         # Settings overlay state
         self.show_settings_overlay = False
@@ -1895,12 +1914,24 @@ class BBSApp:
             elif ch in (10, 13, curses.KEY_ENTER):
                 if self.folder_slug_list:
                     slug = self.folder_slug_list[self.folder_slug_cursor]
-                    left_width = self.stdscr.getmaxyx()[1] * 2 // 5
-                    self.fragments.append(slug)
-                    ts = datetime.datetime.now().strftime("%H:%M:%S")
-                    self.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
-                    self._set_status(f"Inserted: {slug}")
-                self.show_folder_slug = False
+                    if self.recording:
+                        # Inject into the ongoing recording stream — will be
+                        # merged into the final transcript at the right position.
+                        with self.audio_lock:
+                            audio_secs = (sum(len(f) for f in self.audio_frames)
+                                          / SAMPLE_RATE) if self.audio_frames else 0.0
+                        self._recording_injections.append((audio_secs, slug))
+                        # Update live preview to show slug inline
+                        preview = self._live_preview_text
+                        combined = f"{preview} {slug}" if preview else slug
+                        self.ui_queue.put(("live_preview", combined))
+                        self._set_status(f"Injected: {slug}")
+                    else:
+                        left_width = self.stdscr.getmaxyx()[1] * 2 // 5
+                        self.fragments.append(slug)
+                        ts = datetime.datetime.now().strftime("%H:%M:%S")
+                        self.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
+                        self._set_status(f"Inserted: {slug}")
                 return
             elif ch == 27:
                 self.show_folder_slug = False
@@ -2167,8 +2198,8 @@ class BBSApp:
             speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
 
         elif ch in (10, 13, curses.KEY_ENTER):
-            # Enter opens folder slug mode when not recording/executing
-            if (not self.recording and not self.refining
+            # Enter opens folder slug mode (allowed during recording for injection)
+            if (not self.refining
                     and self.agent_state in (AgentState.IDLE, AgentState.DONE)
                     and self.working_dir):
                 self._scan_folder_slugs()
@@ -2195,6 +2226,7 @@ class BBSApp:
         with self.audio_lock:
             self.audio_frames.clear()
         self._live_preview_text = ""  # current interim transcription
+        self._recording_injections.clear()
 
         # Clear intro/info text from dictation buffer only on first recording;
         # preserve existing fragments so SPACE adds to (not replaces) the buffer.
@@ -2210,7 +2242,9 @@ class BBSApp:
         self._audio_stream.start()
 
         # Start live transcription thread
-        threading.Thread(target=self._live_transcribe_loop, daemon=True).start()
+        self._live_transcribe_thread = threading.Thread(
+            target=self._live_transcribe_loop, daemon=True)
+        self._live_transcribe_thread.start()
 
     def _audio_callback(self, indata, frames, time_info, status):
         with self.audio_lock:
@@ -2242,7 +2276,13 @@ class BBSApp:
             last_transcribed_samples = total_samples
             if text:
                 self._live_preview_text = text
-                self.ui_queue.put(("live_preview", text))
+                # Include any mid-recording injections in the preview
+                if self._recording_injections:
+                    preview = text + " " + " ".join(
+                        inj[1] for inj in self._recording_injections)
+                    self.ui_queue.put(("live_preview", preview))
+                else:
+                    self.ui_queue.put(("live_preview", text))
 
     def _stop_recording(self):
         self.recording = False
@@ -2253,6 +2293,11 @@ class BBSApp:
             self._audio_stream.close()
         except Exception:
             pass
+
+        # Wait for live transcribe thread to finish so no stale preview
+        # arrives after the final fragment is added to the dictation buffer.
+        if hasattr(self, '_live_transcribe_thread'):
+            self._live_transcribe_thread.join(timeout=5.0)
 
         with self.audio_lock:
             if not self.audio_frames:
@@ -2268,18 +2313,58 @@ class BBSApp:
 
         # Final transcription (full audio for best accuracy)
         self._set_status(f"Final transcription of {duration:.1f}s...")
-        threading.Thread(target=self._do_final_transcribe, args=(audio,), daemon=True).start()
+        injections = list(self._recording_injections)
+        self._recording_injections.clear()
+        threading.Thread(target=self._do_final_transcribe, args=(audio, injections), daemon=True).start()
 
-    def _do_final_transcribe(self, audio: np.ndarray):
-        text = transcribe(audio, self.whisper_model)
+    def _do_final_transcribe(self, audio: np.ndarray,
+                             injections: list[tuple[float, str]] | None = None):
         # Remove live preview line, replace with final
         self.ui_queue.put(("remove_live_preview", None))
+
+        if injections:
+            # Use word timestamps to insert folder paths at the right positions
+            text, words = transcribe_with_timestamps(audio, self.whisper_model)
+            if text and words:
+                text = self._merge_injections(words, injections)
+            elif text:
+                # Fallback: append injections at the end
+                text = text + " " + " ".join(inj[1] for inj in injections)
+            else:
+                # No speech detected, just use injections as the fragment
+                text = " ".join(inj[1] for inj in injections)
+        else:
+            text = transcribe(audio, self.whisper_model)
+
         if not text:
             self.ui_queue.put(("status", "No speech detected.", self.CP_STATUS))
             return
         self.ui_queue.put(("fragment", text))
         label = f"Added: \"{text[:50]}\"" if len(text) > 50 else f"Added: \"{text}\""
         self.ui_queue.put(("status", label, self.CP_STATUS))
+
+    @staticmethod
+    def _merge_injections(words: list[tuple[float, float, str]],
+                          injections: list[tuple[float, str]]) -> str:
+        """Merge injected text into the word stream at the right timestamps."""
+        # Build a combined timeline of words and injections
+        result_parts: list[str] = []
+        inj_idx = 0
+        injections_sorted = sorted(injections, key=lambda x: x[0])
+
+        for w_start, w_end, word in words:
+            # Insert any injections that should appear before this word
+            while inj_idx < len(injections_sorted) and injections_sorted[inj_idx][0] <= w_start:
+                result_parts.append(injections_sorted[inj_idx][1])
+                inj_idx += 1
+            result_parts.append(word)
+
+        # Append any remaining injections after all words
+        while inj_idx < len(injections_sorted):
+            result_parts.append(injections_sorted[inj_idx][1])
+            inj_idx += 1
+
+        return " ".join(part.strip() for part in result_parts if part.strip())
 
     # ─── Echo test ─────────────────────────────────────────────────
 
@@ -2961,8 +3046,13 @@ class BBSApp:
                 self.typewriter_queue.append(msg[1])
 
     def _set_status(self, msg: str, color: int = None):
+        color = color if color is not None else self.CP_STATUS
+        # Recording indicator has highest priority — suppress non-recording
+        # alerts while recording is active so the red bar stays visible.
+        if self.recording and color != self.CP_RECORDING:
+            return
         self.status_msg = msg
-        self.status_color = color if color is not None else self.CP_STATUS
+        self.status_color = color
 
 
 def main():
