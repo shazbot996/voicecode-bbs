@@ -12,7 +12,10 @@ init: ## Create venv and install all dependencies
 	$(VENV)/bin/pip install --upgrade pip
 	$(VENV)/bin/pip install -r requirements.txt
 
+voicecode: ## Run the BBS application
+	. $(VENV)/bin/activate && python voicecode_bbs.py
+
 clean: ## Remove the virtual environment
 	rm -rf $(VENV)
 
-.PHONY: help init clean
+.PHONY: help init voicecode clean

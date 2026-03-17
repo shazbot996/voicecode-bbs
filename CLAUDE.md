@@ -97,6 +97,7 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | PgUp/PgDn | Scroll agent terminal |
 | O | Settings / voice config |
 | K | Kill running agent |
+| W | New session (clear conversation context) |
 | P | Replay TTS summary |
 | H | Help overlay |
 | A | About / title screen |

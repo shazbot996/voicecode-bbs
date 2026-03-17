@@ -11,7 +11,7 @@ Layout:
   ┌─ Prompt Browser ─────┬─ Agent Terminal ──────┐
   │  (view/edit prompts) │   (full height)       │
   ├─ Dictation Buffer ───┤   ZMODEM download     │
-  │  (voice fragments)   │   animation + Joshua  │
+  │  (voice fragments)   │   animation +         │
   │                      │   typewriter response │
   └──────────────────────┴───────────────────────┘
 
@@ -20,7 +20,7 @@ Workflow:
   2. [S]ave prompt to <library>/voicecode/YYYY/MM/DD/
   3. [←→] Browse saved prompts
   4. [E]xecute — sends prompt to Claude agent (right pane)
-  5. Watch the ZMODEM transfer animation + Joshua typewriter response
+  5. Watch the ZMODEM transfer animation + typewriter response
 """
 
 import curses
@@ -77,18 +77,10 @@ PIPER_VOICES = [
     "en_US-hfc_female-medium",
     "en_US-hfc_male-medium",
     "en_US-joe-medium",
-    "joshua",
 ]
 
 # Virtual voice presets — use an existing model with custom piper parameters
-VOICE_PRESETS = {
-    "joshua": {
-        "model": "en_US-hfc_male-medium",
-        "piper_args": ["--noise-scale", "0", "--noise-w-scale", "0",
-                       "--length-scale", "1.3", "--sentence-silence", "0.6"],
-        "description": "WOPR/Joshua — flat, monotone, robotic (WarGames 1983 / DECTalk style)",
-    },
-}
+VOICE_PRESETS = {}
 
 # Restore saved voice selection, falling back to index 0
 _saved_voice = _load_settings().get("tts_voice")
@@ -550,6 +542,12 @@ class BBSApp:
     CP_AGENT = 9
     CP_XFER = 10
     CP_VOICE = 11
+    CP_CTX_GREEN = 12
+    CP_CTX_YELLOW = 13
+    CP_CTX_RED = 14
+    CP_XTREE_BG = 15
+    CP_XTREE_SEL = 16
+    CP_XTREE_BORDER = 17
 
     def __init__(self, args):
         self.args = args
@@ -587,6 +585,8 @@ class BBSApp:
             "  [R] Refine → merges into the Prompt above",
             "  [D] Direct → sends straight to the Agent",
             "  [C] Clear  → wipe and start over",
+            "",
+            "                         [P] Replay TTS ♪",
         ]
         self.agent_pane.welcome_art = [
             "╔═══════════════════════════════════════╗",
@@ -605,6 +605,7 @@ class BBSApp:
             "  R     ··· Refine into prompt",
             "  E     ··· Execute prompt",
             "  D     ··· Direct execute",
+            "  W     ··· New session (clear context)",
             "  H     ··· Full help screen",
         ]
 
@@ -652,12 +653,21 @@ class BBSApp:
         self.prompt_saved = True  # no unsaved prompt at start
         self.confirming_new = False  # for [N] save confirmation dialog
 
+        # Working directory for folder slug mode
+        self.working_dir = saved.get("working_dir", "")
+
         # Voice command state
         self.voice_cmd_listening = False
 
         # Help overlay state
         self.show_help_overlay = False
         self.show_about_overlay = False
+
+        # Folder slug overlay state
+        self.show_folder_slug = False
+        self.folder_slug_cursor = 0
+        self.folder_slug_list: list[str] = []
+        self.folder_slug_scroll = 0
 
         # Settings overlay state
         self.show_settings_overlay = False
@@ -683,6 +693,12 @@ class BBSApp:
         self.agent_process = None
         self.last_tts_summary = ""
 
+        # Session continuity — reuse session_id across prompts
+        self.session_id: str | None = None
+        self.session_turns = 0
+        self.context_tokens_used = 0
+        self.context_window_size = 0
+
         # ZMODEM animation state
         self.xfer_progress = 0.0
         self.xfer_frame = 0
@@ -690,7 +706,7 @@ class BBSApp:
         self.xfer_start_time = 0.0
         self.xfer_prompt_text = ""
 
-        # Joshua typewriter state
+        # Typewriter state
         self.typewriter_queue: collections.deque = collections.deque()
         self.typewriter_last_time = 0.0
         self.typewriter_char_delay = 0.006  # seconds per char (~167 cps)
@@ -720,6 +736,16 @@ class BBSApp:
                 "set": None,
                 "editable": True,
                 "action": self._start_editing_prompt_library,
+            },
+            {
+                "key": "working_dir",
+                "label": "Working Directory",
+                "desc": "Source repo root for folder slug mode (Enter key)",
+                "options": None,
+                "get": lambda: self.working_dir or "(not set)",
+                "set": None,
+                "editable": True,
+                "action": self._start_editing_working_dir,
             },
             {
                 "key": "whisper_model",
@@ -867,6 +893,32 @@ class BBSApp:
     def _cancel_text_edit(self):
         """Cancel inline text editing."""
         self.settings_editing_text = False
+
+    def _commit_text_edit(self):
+        """Dispatch text edit commit based on which setting is being edited."""
+        item = self.settings_items[self.settings_cursor]
+        if item["key"] == "prompt_library":
+            self._commit_prompt_library()
+        elif item["key"] == "working_dir":
+            self._commit_working_dir()
+
+    def _start_editing_working_dir(self):
+        """Enter inline text editing mode for the working directory path."""
+        self.settings_editing_text = True
+        self.settings_edit_buffer = self.working_dir
+        self.settings_edit_cursor = len(self.settings_edit_buffer)
+        self.show_settings_overlay = True
+
+    def _commit_working_dir(self):
+        """Apply the edited working directory path."""
+        new_path = self.settings_edit_buffer.strip()
+        self.working_dir = new_path
+        self._persist_setting("working_dir", new_path)
+        self.settings_editing_text = False
+        if new_path:
+            self._set_status(f"Working directory → {new_path}")
+        else:
+            self._set_status("Working directory cleared.")
 
     def _persist_setting(self, key, val):
         settings = _load_settings()
@@ -1039,6 +1091,12 @@ class BBSApp:
         curses.init_pair(self.CP_AGENT, curses.COLOR_GREEN, curses.COLOR_BLACK)
         curses.init_pair(self.CP_XFER, curses.COLOR_YELLOW, curses.COLOR_BLACK)
         curses.init_pair(self.CP_VOICE, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_CTX_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_CTX_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_CTX_RED, curses.COLOR_RED, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_XTREE_BG, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+        curses.init_pair(self.CP_XTREE_SEL, curses.COLOR_YELLOW, curses.COLOR_BLUE)
+        curses.init_pair(self.CP_XTREE_BORDER, curses.COLOR_WHITE, curses.COLOR_YELLOW)
 
     def _draw_loading(self, msg: str):
         self.stdscr.clear()
@@ -1152,6 +1210,44 @@ class BBSApp:
                     except curses.error:
                         pass
 
+        # ── Agent terminal bottom border: context meter + session info ──
+        agent_bottom_y = content_y + content_height - 1
+        if self.context_window_size > 0:
+            ratio = min(1.0, self.context_tokens_used / self.context_window_size)
+            if ratio < 0.5:
+                ctx_cp = self.CP_CTX_GREEN
+            elif ratio < 0.8:
+                ctx_cp = self.CP_CTX_YELLOW
+            else:
+                ctx_cp = self.CP_CTX_RED
+            pct = int(ratio * 100)
+            ctx_label = f" CTX:{pct}% "
+        else:
+            ctx_cp = self.CP_CTX_GREEN
+            ctx_label = ""
+
+        # Session info tag
+        if self.session_id:
+            sess_label = f" Session: {self.session_turns} turn{'s' if self.session_turns != 1 else ''} "
+        else:
+            sess_label = " No session "
+        hint_label = " [W]New session "
+
+        # Draw colored bottom border for agent pane
+        bar_inner_w = right_width - 2  # inside ╚ ╝
+        info_text = sess_label + ctx_label
+        # Pad bar to fill, then overlay info on the right
+        if bar_inner_w > 0:
+            ctx_attr = curses.color_pair(ctx_cp) | curses.A_BOLD
+            # Build the bottom border with session/context info
+            bar = "═" * max(0, bar_inner_w - len(info_text) - len(hint_label))
+            full_bar = "╚" + hint_label + bar + info_text + "╝"
+            try:
+                self.stdscr.addnstr(agent_bottom_y, left_width, full_bar,
+                                    right_width, ctx_attr)
+            except curses.error:
+                pass
+
         # ── Favorites hint on prompt pane top border ──
         if self.browser_view == "history" and self.browser_index >= 0:
             fav_hint = " [F] ★ Favorite "
@@ -1212,7 +1308,7 @@ class BBSApp:
             help_text = " ◌ Agent working... [K] to kill"
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
-            keys = " [Q]uit [X]Restart | [SPC]Rec [R]efine [E]xec [D]irect [S]ave [N]ew [C]lear [K]ill [←→]Browse [↑↓]View | [ESC]Voice [O]pt [H]elp [A]bout"
+            keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [←→]Browse [↑↓]View | [ESC]Voice [O]pt [H]elp [A]bout"
             self._draw_bar(help_y, keys, self.CP_HELP)
 
         # ── Status bar ──
@@ -1225,6 +1321,8 @@ class BBSApp:
             self._draw_about_overlay()
         if self.show_settings_overlay:
             self._draw_settings_overlay()
+        if self.show_folder_slug:
+            self._draw_folder_slug_overlay()
 
         self.stdscr.refresh()
 
@@ -1279,8 +1377,10 @@ class BBSApp:
             "  C      Clear dictation buffer",
             "  O      Settings / voice config",
             "  K      Kill running agent",
+            "  W      New session (clear context)",
             "  ←/→    Browse within current view",
             "  ↑/↓    Cycle active/favorites/history",
+            "  Enter  Folder slug browser",
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
@@ -1561,6 +1661,107 @@ class BBSApp:
         except curses.error:
             pass
 
+    def _scan_folder_slugs(self):
+        """Scan the working directory for folders up to 2 levels deep."""
+        self.folder_slug_list = []
+        root = Path(self.working_dir).expanduser()
+        if not root.is_dir():
+            return
+        dirs = []
+        try:
+            for entry in sorted(root.iterdir()):
+                if entry.is_dir() and not entry.name.startswith("."):
+                    rel = entry.name
+                    dirs.append(rel + "/")
+                    try:
+                        for sub in sorted(entry.iterdir()):
+                            if sub.is_dir() and not sub.name.startswith("."):
+                                dirs.append(rel + "/" + sub.name + "/")
+                    except PermissionError:
+                        pass
+        except PermissionError:
+            pass
+        self.folder_slug_list = dirs
+
+    def _draw_folder_slug_overlay(self):
+        """Draw an XTree Gold-style folder browser overlay on the agent pane."""
+        h, w = self.stdscr.getmaxyx()
+
+        # Agent pane geometry
+        content_height = h - 4
+        left_width = w // 2
+        right_width = w - left_width
+        content_y = 2
+
+        # Overlay is inset from agent pane borders so terminal peeks through
+        overlay_x = left_width + 3
+        overlay_y = content_y + 2
+        overlay_w = right_width - 6
+        overlay_h = content_height - 4
+        if overlay_w < 20 or overlay_h < 6:
+            return
+
+        bg_attr = curses.color_pair(self.CP_XTREE_BG)
+        sel_attr = curses.color_pair(self.CP_XTREE_SEL) | curses.A_BOLD
+        border_attr = curses.color_pair(self.CP_XTREE_BORDER) | curses.A_BOLD
+
+        inner_w = overlay_w - 2
+        inner_h = overlay_h - 4  # top border + title + footer + bottom border
+
+        try:
+            # Top border
+            top = "╔" + "═" * inner_w + "╗"
+            self.stdscr.addnstr(overlay_y, overlay_x, top, overlay_w, border_attr)
+
+            # Title bar
+            title = " FOLDER BROWSER "
+            title_line = "║" + title.center(inner_w) + "║"
+            self.stdscr.addnstr(overlay_y + 1, overlay_x, title_line, overlay_w, border_attr)
+
+            # Title separator
+            sep = "╠" + "═" * inner_w + "╣"
+            self.stdscr.addnstr(overlay_y + 2, overlay_x, sep, overlay_w, border_attr)
+
+            # Scrolling: keep cursor visible
+            if self.folder_slug_cursor < self.folder_slug_scroll:
+                self.folder_slug_scroll = self.folder_slug_cursor
+            elif self.folder_slug_cursor >= self.folder_slug_scroll + inner_h:
+                self.folder_slug_scroll = self.folder_slug_cursor - inner_h + 1
+
+            # Folder list rows
+            for i in range(inner_h):
+                row_y = overlay_y + 3 + i
+                idx = self.folder_slug_scroll + i
+                if idx < len(self.folder_slug_list):
+                    path = self.folder_slug_list[idx]
+                    is_sel = (idx == self.folder_slug_cursor)
+                    # Folder icon (emoji is double-width, occupies 2 cells)
+                    icon = "📁 " if not is_sel else "📂 "
+                    text = f" {icon}{path}"
+                    # len() counts emoji as 1 char but it displays as 2 cells
+                    display_w = len(text) + 1  # +1 for double-width emoji
+                    padded = text[:inner_w] + " " * max(0, inner_w - display_w)
+                    line = "║" + padded + "║"
+                    attr = sel_attr if is_sel else bg_attr
+                    self.stdscr.addnstr(row_y, overlay_x, line, overlay_w, attr)
+                else:
+                    blank = "║" + " " * inner_w + "║"
+                    self.stdscr.addnstr(row_y, overlay_x, blank, overlay_w, bg_attr)
+
+            # Footer
+            footer_text = " ↑↓ Select  Enter Insert  Esc Cancel "
+            footer_padded = footer_text.center(inner_w)
+            footer_line = "║" + footer_padded[:inner_w] + "║"
+            self.stdscr.addnstr(overlay_y + overlay_h - 2, overlay_x,
+                                footer_line, overlay_w, border_attr)
+
+            # Bottom border
+            bottom = "╚" + "═" * inner_w + "╝"
+            self.stdscr.addnstr(overlay_y + overlay_h - 1, overlay_x,
+                                bottom, overlay_w, border_attr)
+        except curses.error:
+            pass
+
     def _draw_agent_xfer(self, y: int, x: int, height: int, width: int):
         """Draw the ZMODEM-style transfer animation in the right pane."""
         border_attr = curses.color_pair(self.CP_XFER) | curses.A_BOLD
@@ -1681,12 +1882,39 @@ class BBSApp:
                     self.stdscr.getch()
             return
 
+        # Handle folder slug overlay
+        if self.show_folder_slug:
+            if ch == curses.KEY_UP:
+                if self.folder_slug_cursor > 0:
+                    self.folder_slug_cursor -= 1
+                return
+            elif ch == curses.KEY_DOWN:
+                if self.folder_slug_cursor < len(self.folder_slug_list) - 1:
+                    self.folder_slug_cursor += 1
+                return
+            elif ch in (10, 13, curses.KEY_ENTER):
+                if self.folder_slug_list:
+                    slug = self.folder_slug_list[self.folder_slug_cursor]
+                    left_width = self.stdscr.getmaxyx()[1] * 2 // 5
+                    self.fragments.append(slug)
+                    ts = datetime.datetime.now().strftime("%H:%M:%S")
+                    self.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
+                    self._set_status(f"Inserted: {slug}")
+                self.show_folder_slug = False
+                return
+            elif ch == 27:
+                self.show_folder_slug = False
+                self.stdscr.nodelay(True)
+                self.stdscr.getch()
+                return
+            # Other keys (including SPACE) fall through to main handler
+
         # Handle settings overlay navigation
         if self.show_settings_overlay:
             # Inline text editing mode (e.g. prompt library path)
             if self.settings_editing_text:
                 if ch in (10, 13, curses.KEY_ENTER):
-                    self._commit_prompt_library()
+                    self._commit_text_edit()
                 elif ch == 27:
                     self.stdscr.nodelay(True)
                     self.stdscr.getch()
@@ -1788,6 +2016,10 @@ class BBSApp:
         elif ch == ord("k") or ch == ord("K"):
             if self.agent_state in (AgentState.DOWNLOADING, AgentState.RECEIVING):
                 self._kill_agent()
+
+        elif ch == ord("w") or ch == ord("W"):
+            if self.agent_state in (AgentState.IDLE, AgentState.DONE):
+                self._clear_session()
 
         elif ch == ord(" "):
             if self.recording:
@@ -1933,6 +2165,21 @@ class BBSApp:
             name = cycle_tts_voice(1)
             self._set_status(f"Voice: {name}", self.CP_VOICE)
             speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
+
+        elif ch in (10, 13, curses.KEY_ENTER):
+            # Enter opens folder slug mode when not recording/executing
+            if (not self.recording and not self.refining
+                    and self.agent_state in (AgentState.IDLE, AgentState.DONE)
+                    and self.working_dir):
+                self._scan_folder_slugs()
+                if self.folder_slug_list:
+                    self.show_folder_slug = True
+                    self.folder_slug_cursor = 0
+                    self.folder_slug_scroll = 0
+                else:
+                    self._set_status("No folders found in working directory.")
+            elif not self.working_dir:
+                self._set_status("Set working directory in [O]ptions first.")
 
         elif ch == ord("h") or ch == ord("H"):
             self.show_help_overlay = True
@@ -2090,6 +2337,7 @@ class BBSApp:
         "settings": "o", "options": "o", "config": "o",
         "clear": "c",
         "kill": "k",
+        "session": "w", "reset": "w",
         "restart": "x", "reboot": "x", "reload": "x",
         "quit": "q", "exit": "q",
         "left": "LEFT", "previous": "LEFT", "back": "LEFT", "older": "LEFT",
@@ -2445,10 +2693,13 @@ class BBSApp:
 
         try:
             prompt_with_tts = self.xfer_prompt_text + TTS_PROMPT_SUFFIX
+            cmd = ["claude", "--print", "--verbose", "--output-format",
+                   "stream-json", "--dangerously-skip-permissions"]
+            if self.session_id:
+                cmd += ["--resume", self.session_id]
+            cmd += ["-p", prompt_with_tts]
             self.agent_process = subprocess.Popen(
-                ["claude", "--print", "--verbose", "--output-format",
-                 "stream-json", "--dangerously-skip-permissions",
-                 "-p", prompt_with_tts],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -2480,6 +2731,12 @@ class BBSApp:
                     continue
 
                 ev_type = event.get("type", "")
+
+                # Capture session_id from init event
+                if ev_type == "system" and event.get("subtype") == "init":
+                    sid = event.get("session_id", "")
+                    if sid:
+                        self.ui_queue.put(("session_id", sid))
 
                 if ev_type == "assistant":
                     msg = event.get("message", {})
@@ -2528,6 +2785,17 @@ class BBSApp:
 
                 elif ev_type == "result":
                     result_text = event.get("result", "")
+                    # Extract context usage from modelUsage
+                    model_usage = event.get("modelUsage", {})
+                    for _model, usage_data in model_usage.items():
+                        ctx_window = usage_data.get("contextWindow", 0)
+                        input_t = usage_data.get("inputTokens", 0)
+                        output_t = usage_data.get("outputTokens", 0)
+                        cache_read = usage_data.get("cacheReadInputTokens", 0)
+                        cache_create = usage_data.get("cacheCreationInputTokens", 0)
+                        # Total tokens in context = all input + output tokens
+                        total = input_t + output_t + cache_read + cache_create
+                        self.ui_queue.put(("context_usage", total, ctx_window))
 
                 # Skip system, rate_limit_event, etc.
 
@@ -2573,10 +2841,18 @@ class BBSApp:
             self._agent_source_original_color = None
         self._set_status("Agent terminated.")
 
+    def _clear_session(self):
+        """Clear the current Claude session, starting fresh next execution."""
+        self.session_id = None
+        self.session_turns = 0
+        self.context_tokens_used = 0
+        self.context_window_size = 0
+        self._set_status("Session cleared. Next prompt starts a new conversation.")
+
     # ─── Typewriter effect ─────────────────────────────────────────
 
     def _process_typewriter(self):
-        """Process queued characters for the Joshua typewriter effect."""
+        """Process queued characters for the typewriter effect."""
         if not self.typewriter_queue:
             return
 
@@ -2602,7 +2878,7 @@ class BBSApp:
     # ─── UI queue processing ───────────────────────────────────────
 
     def _process_ui_queue(self):
-        left_width = self.stdscr.getmaxyx()[1] // 2
+        left_width = self.stdscr.getmaxyx()[1] * 2 // 5
 
         while True:
             try:
@@ -2663,6 +2939,16 @@ class BBSApp:
 
             elif msg[0] == "agent_state":
                 self.agent_state = msg[1]
+                if msg[1] == AgentState.DONE:
+                    self.session_turns += 1
+
+            elif msg[0] == "session_id":
+                self.session_id = msg[1]
+
+            elif msg[0] == "context_usage":
+                self.context_tokens_used = msg[1]
+                if msg[2]:
+                    self.context_window_size = msg[2]
 
             elif msg[0] == "voice_cmd_result":
                 self.voice_cmd_listening = False
@@ -2701,6 +2987,7 @@ def main():
             ║    ↑↓       Scroll prompt pane                        ║
             ║    PgUp/Dn  Scroll agent pane                         ║
             ║    K        Kill running agent                        ║
+            ║    W        New session (clear context)               ║
             ║    X        Restart application                       ║
             ║    Q        Quit                                      ║
             ╚═══════════════════════════════════════════════════════╝
