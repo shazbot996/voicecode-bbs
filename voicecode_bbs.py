@@ -47,6 +47,7 @@ import torch
 
 SETTINGS_DIR = Path.home() / ".config" / "voicecode"
 SETTINGS_FILE = SETTINGS_DIR / "settings.json"
+SHORTCUTS_FILE = SETTINGS_DIR / "shortcuts.txt"
 
 
 def _load_settings() -> dict:
@@ -61,6 +62,21 @@ def _save_settings(settings: dict):
     """Persist settings to disk."""
     SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(json.dumps(settings, indent=2) + "\n")
+
+
+def _load_shortcuts() -> list[str]:
+    """Load user-defined shortcut strings from disk."""
+    try:
+        lines = SHORTCUTS_FILE.read_text().splitlines()
+        return [l for l in lines if l.strip()]
+    except (FileNotFoundError, OSError):
+        return []
+
+
+def _save_shortcuts(shortcuts: list[str]):
+    """Persist shortcut strings to disk."""
+    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    SHORTCUTS_FILE.write_text("\n".join(shortcuts) + "\n" if shortcuts else "")
 
 
 # ─── TTS globals ──────────────────────────────────────────────────────
@@ -86,6 +102,7 @@ VOICE_PRESETS = {}
 _saved_voice = _load_settings().get("tts_voice")
 _tts_voice_index = PIPER_VOICES.index(_saved_voice) if _saved_voice in PIPER_VOICES else 0
 _tts_process = None  # Track running TTS playback for cancellation
+_tts_enabled = _load_settings().get("tts_enabled", True)
 
 
 TTS_PROMPT_SUFFIX = """
@@ -195,6 +212,10 @@ def download_all_voices(on_progress=None, on_done=None):
 def speak_text(text: str, on_done=None):
     """Speak text using Piper TTS + aplay in a background thread."""
     global _tts_process
+    if not _tts_enabled:
+        if on_done:
+            on_done()
+        return
     voice_model = get_tts_voice_model()
     extra_args = get_tts_piper_extra_args()
 
@@ -311,6 +332,7 @@ class TextPane:
     def __init__(self, title: str, color_pair: int):
         self.title = title
         self.lines: list[str] = []
+        self.line_colors: dict[int, int] = {}  # line index -> color pair override
         self.scroll_offset = 0
         self.color_pair = color_pair
         self.welcome_art: list[str] = []  # shown centered when lines is empty
@@ -402,8 +424,10 @@ class TextPane:
                     if i < len(visible_lines):
                         line = visible_lines[i][:content_width - 1]
                         padding = " " * max(0, content_width - 1 - len(line))
+                        line_idx = self.scroll_offset + i
+                        line_cp = self.line_colors.get(line_idx, self.color_pair)
                         win.addstr(y + 1 + i, x + 1, " " + line + padding,
-                                   curses.color_pair(self.color_pair))
+                                   curses.color_pair(line_cp))
                     else:
                         win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),
                                    curses.color_pair(self.color_pair))
@@ -564,6 +588,7 @@ class BBSApp:
     CP_XTREE_BG = 15
     CP_XTREE_SEL = 16
     CP_XTREE_BORDER = 17
+    CP_TTS = 18
 
     def __init__(self, args):
         self.args = args
@@ -672,18 +697,25 @@ class BBSApp:
         # Working directory for folder slug mode
         self.working_dir = saved.get("working_dir", "")
 
-        # Voice command state
-        self.voice_cmd_listening = False
-
         # Help overlay state
         self.show_help_overlay = False
         self.show_about_overlay = False
 
-        # Folder slug overlay state
+        # Shortcuts overlay state (was folder slug)
         self.show_folder_slug = False
         self.folder_slug_cursor = 0
         self.folder_slug_list: list[str] = []
         self.folder_slug_scroll = 0
+        self._shortcut_strings: list[str] = _load_shortcuts()
+        self._shortcut_count = 0  # how many items at the top are shortcuts
+
+        # Shortcut editor overlay state
+        self.show_shortcut_editor = False
+        self.shortcut_editor_cursor = 0
+        self.shortcut_editor_scroll = 0
+        self.shortcut_editing_text = False
+        self.shortcut_edit_buffer = ""
+        self.shortcut_edit_cursor_pos = 0
 
         # Mid-recording folder injections: [(audio_seconds, text), ...]
         self._recording_injections: list[tuple[float, str]] = []
@@ -694,6 +726,13 @@ class BBSApp:
         self.settings_editing_text = False  # True when inline text editing is active
         self.settings_edit_buffer = ""      # current text being edited
         self.settings_edit_cursor = 0       # cursor position within buffer
+
+        # TTS sub-menu state
+        self.tts_submenu_open = False
+        self.tts_submenu_cursor = 0
+        self.tts_enabled = saved.get("tts_enabled", True)
+        global _tts_enabled
+        _tts_enabled = self.tts_enabled
 
         # Voice settings (mutable, persisted) — `saved` loaded above for prompt_library
         self.vad_threshold = saved.get("vad_threshold", VAD_THRESHOLD)
@@ -730,6 +769,7 @@ class BBSApp:
         self.typewriter_last_time = 0.0
         self.typewriter_char_delay = 0.006  # seconds per char (~167 cps)
         self.typewriter_line_delay = 0.02   # extra delay at newlines
+        self._typewriter_line_color = None  # per-line color override (None = default)
         self.agent_first_output = False      # tracks if agent has produced any output
         self.agent_welcome_shown = False     # True after initial welcome art displayed
 
@@ -759,7 +799,7 @@ class BBSApp:
             {
                 "key": "working_dir",
                 "label": "Working Directory",
-                "desc": "Source repo root for folder slug mode (Enter key)",
+                "desc": "Source repo root for folder shortcuts (Enter key)",
                 "options": None,
                 "get": lambda: self.working_dir or "(not set)",
                 "set": None,
@@ -799,12 +839,13 @@ class BBSApp:
                 "set": self._set_min_speech,
             },
             {
-                "key": "tts_voice",
-                "label": "TTS Voice",
-                "desc": "Text-to-speech voice for spoken summaries",
-                "options": PIPER_VOICES,
-                "get": get_tts_voice_name,
-                "set": self._set_tts_voice,
+                "key": "_action_tts_submenu",
+                "label": "[Enter] Text-to-Speech Settings",
+                "desc": "Configure TTS voices, libraries, and enable/disable",
+                "options": None,
+                "get": lambda: "ON" if self.tts_enabled else "OFF",
+                "set": None,
+                "action": self._open_tts_submenu,
             },
             {
                 "key": "_action_echo_test",
@@ -816,9 +857,39 @@ class BBSApp:
                 "action": self._echo_test,
             },
             {
+                "key": "_action_edit_shortcuts",
+                "label": "[Enter] Edit Shortcuts",
+                "desc": "Manage shortcut strings for the Shortcuts browser (Enter key)",
+                "options": None,
+                "get": lambda: f"{len(self._shortcut_strings)} shortcut(s)",
+                "set": None,
+                "action": self._open_shortcut_editor,
+            },
+        ]
+
+    def _build_tts_submenu_items(self):
+        """Build the TTS sub-menu items list."""
+        return [
+            {
+                "key": "tts_enabled",
+                "label": "Enable/Disable TTS",
+                "desc": "Turn text-to-speech on or off entirely",
+                "options": ["ON", "OFF"],
+                "get": lambda: "ON" if self.tts_enabled else "OFF",
+                "set": self._set_tts_enabled,
+            },
+            {
+                "key": "tts_voice",
+                "label": "Configure Voices",
+                "desc": "Text-to-speech voice for spoken summaries",
+                "options": PIPER_VOICES,
+                "get": get_tts_voice_name,
+                "set": self._set_tts_voice,
+            },
+            {
                 "key": "_action_download_voices",
                 "label": "[Enter] Download All Voice Models",
-                "desc": "Download all available Piper TTS voice models",
+                "desc": "⚠ WARNING: Large download — fetches all Piper voice files",
                 "options": None,
                 "get": lambda: "",
                 "set": None,
@@ -834,6 +905,35 @@ class BBSApp:
                 "action": self._action_clean_voices,
             },
         ]
+
+    def _open_tts_submenu(self):
+        """Open the TTS settings sub-menu."""
+        self.tts_submenu_open = True
+        self.tts_submenu_cursor = 0
+        self.tts_submenu_items = self._build_tts_submenu_items()
+        self.show_settings_overlay = True  # keep modal open
+
+    def _set_tts_enabled(self, val):
+        global _tts_enabled
+        self.tts_enabled = (val == "ON")
+        _tts_enabled = self.tts_enabled
+        self._persist_setting("tts_enabled", self.tts_enabled)
+        state = "enabled" if self.tts_enabled else "disabled"
+        self._set_status(f"Text-to-speech {state}")
+
+    def _tts_submenu_cycle(self, direction):
+        """Cycle the current TTS sub-menu setting's value."""
+        item = self.tts_submenu_items[self.tts_submenu_cursor]
+        if item.get("options") is None:
+            return
+        options = item["options"]
+        current = item["get"]()
+        try:
+            idx = options.index(current)
+        except ValueError:
+            idx = 0
+        new_idx = (idx + direction) % len(options)
+        item["set"](options[new_idx])
 
     def _set_whisper_model(self, val):
         global _whisper_model
@@ -1050,6 +1150,7 @@ class BBSApp:
         self.agent_welcome_shown = True
         # Clear lines so welcome_art renders (left-justified & dimmed)
         self.agent_pane.lines = []
+        self.agent_pane.line_colors = {}
         self.agent_pane.scroll_offset = 0
 
     def _get_active_prompt_text(self) -> str | None:
@@ -1116,6 +1217,7 @@ class BBSApp:
         curses.init_pair(self.CP_XTREE_BG, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         curses.init_pair(self.CP_XTREE_SEL, curses.COLOR_YELLOW, curses.COLOR_BLUE)
         curses.init_pair(self.CP_XTREE_BORDER, curses.COLOR_WHITE, curses.COLOR_YELLOW)
+        curses.init_pair(self.CP_TTS, curses.COLOR_WHITE, curses.COLOR_BLACK)
 
     def _draw_loading(self, msg: str):
         self.stdscr.clear()
@@ -1209,6 +1311,21 @@ class BBSApp:
         else:
             self.agent_pane.draw(self.stdscr, content_y, left_width,
                                  content_height, right_width)
+
+        # Yellow spinner in agent pane header while agent is active
+        if self.agent_state in (AgentState.DOWNLOADING, AgentState.RECEIVING):
+            spin_chars = "|/-\\"
+            spin_ch = spin_chars[int(time.time() * 4) % len(spin_chars)]
+            # Place spinner right after the title text in the header
+            title_text = " AGENT TERMINAL " if self.agent_state != AgentState.DOWNLOADING else " FILE TRANSFER "
+            spin_x = left_width + 3 + len(title_text)
+            if spin_x < left_width + right_width - 2:
+                try:
+                    self.stdscr.addstr(
+                        content_y, spin_x, spin_ch,
+                        curses.color_pair(self.CP_XFER) | curses.A_BOLD)
+                except curses.error:
+                    pass
             # Show thinking indicator while waiting for agent output
             if (self.agent_state == AgentState.RECEIVING
                     and not self.typewriter_queue
@@ -1314,10 +1431,7 @@ class BBSApp:
 
         # ── Help bar ──
         help_y = h - 2
-        if self.voice_cmd_listening:
-            help_text = " ██ LISTENING — say a command: save, refine, direct, execute, new, clear, settings, quit... ██"
-            self._draw_bar(help_y, help_text, self.CP_RECORDING)
-        elif self.recording:
+        if self.recording:
             help_text = " [SPC] Stop recording"
             self._draw_bar(help_y, help_text, self.CP_HELP)
         elif self.confirming_new:
@@ -1327,8 +1441,18 @@ class BBSApp:
             help_text = " ◌ Agent working... [K] to kill"
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
-            keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [←→]Browse [↑↓]View | [ESC]Voice [O]pt [H]elp [A]bout"
+            voice_label = "[V]oice"
+            keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [←→]Browse [↑↓]View | [O]pt [H]elp [A]bout"
             self._draw_bar(help_y, keys, self.CP_HELP)
+            # Draw [V]oice in red, right-justified
+            w = self.stdscr.getmaxyx()[1]
+            vx = w - len(voice_label) - 1
+            if vx > len(keys):
+                try:
+                    self.stdscr.addnstr(help_y, vx, voice_label, w - vx - 1,
+                                        curses.color_pair(self.CP_CTX_RED) | curses.A_BOLD)
+                except curses.error:
+                    pass
 
         # ── Status bar ──
         self._draw_bar(h - 1, f" {self.status_msg}", self.status_color)
@@ -1342,6 +1466,8 @@ class BBSApp:
             self._draw_settings_overlay()
         if self.show_folder_slug:
             self._draw_folder_slug_overlay()
+        if self.show_shortcut_editor:
+            self._draw_shortcut_editor()
 
         self.stdscr.refresh()
 
@@ -1399,11 +1525,10 @@ class BBSApp:
             "  W      New session (clear context)",
             "  ←/→    Browse within current view",
             "  ↑/↓    Cycle active/favorites/history",
-            "  Enter  Folder slug browser",
+            "  Enter  Shortcuts browser",
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
-            "  ESC    Voice command mode",
             "  A      About / title screen",
             "  H      This help screen",
             "  Q      Quit",
@@ -1529,8 +1654,20 @@ class BBSApp:
         """Draw a BBS-style settings modal overlay on top of the UI."""
         h, w = self.stdscr.getmaxyx()
 
+        # Determine which items/cursor/title to render
+        if self.tts_submenu_open:
+            render_items = self.tts_submenu_items
+            render_cursor = self.tts_submenu_cursor
+            render_title = " TEXT-TO-SPEECH SETTINGS "
+            render_footer = " ↑↓ Navigate  ←→ Change  Enter Action  Q/Esc Back "
+        else:
+            render_items = self.settings_items
+            render_cursor = self.settings_cursor
+            render_title = " SETTINGS — VOICE CONFIG "
+            render_footer = " ↑↓ Navigate  ←→ Change  Enter Action  O/Esc Close "
+
         overlay_w = min(72, w - 6)
-        overlay_h = min(4 + len(self.settings_items) * 3 + 3, h - 4)
+        overlay_h = min(4 + len(render_items) * 3 + 3, h - 4)
         if overlay_w < 44 or overlay_h < 12:
             return
 
@@ -1551,8 +1688,7 @@ class BBSApp:
             self.stdscr.addnstr(start_y, start_x, top, overlay_w, border_attr)
 
             # Title bar
-            title = " SETTINGS — VOICE CONFIG "
-            title_line = "║" + title.center(inner_w) + "║"
+            title_line = "║" + render_title.center(inner_w) + "║"
             self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
 
             # Title separator
@@ -1560,11 +1696,11 @@ class BBSApp:
             self.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
 
             row = start_y + 3
-            for i, item in enumerate(self.settings_items):
+            for i, item in enumerate(render_items):
                 if row + 2 >= start_y + overlay_h - 1:
                     break
 
-                is_selected = (i == self.settings_cursor)
+                is_selected = (i == render_cursor)
                 is_action = item.get("options") is None
                 line_attr = sel_attr if is_selected else body_attr
 
@@ -1623,8 +1759,14 @@ class BBSApp:
                     continue
 
                 elif is_action:
-                    # Action item — no value display
-                    padded = label + " " * max(0, inner_w - len(label))
+                    # Action item — show status hint if get() returns non-empty
+                    action_val = item["get"]() if callable(item.get("get")) else ""
+                    if action_val:
+                        hint = f"  ({action_val})"
+                        full = label + hint
+                        padded = full + " " * max(0, inner_w - len(full))
+                    else:
+                        padded = label + " " * max(0, inner_w - len(label))
                     body_line = "║" + padded[:inner_w] + "║"
                     self.stdscr.addnstr(row, start_x, body_line, overlay_w, line_attr)
                 else:
@@ -1668,8 +1810,7 @@ class BBSApp:
                 self.stdscr.addnstr(r, start_x, blank, overlay_w, body_attr)
 
             # Footer help line
-            footer_text = " ↑↓ Navigate  ←→ Change  Enter Action  O/Esc Close "
-            footer_padded = footer_text.center(inner_w)
+            footer_padded = render_footer.center(inner_w)
             footer_line = "║" + footer_padded[:inner_w] + "║"
             self.stdscr.addnstr(start_y + overlay_h - 2, start_x, footer_line,
                                 overlay_w, accent_attr)
@@ -1681,29 +1822,29 @@ class BBSApp:
             pass
 
     def _scan_folder_slugs(self):
-        """Scan the working directory for folders up to 2 levels deep."""
-        self.folder_slug_list = []
-        root = Path(self.working_dir).expanduser()
-        if not root.is_dir():
-            return
+        """Build shortcuts list: user shortcuts first, then folder entries."""
+        shortcuts = list(self._shortcut_strings)
+        self._shortcut_count = len(shortcuts)
         dirs = []
-        try:
-            for entry in sorted(root.iterdir()):
-                if entry.is_dir() and not entry.name.startswith("."):
-                    rel = entry.name
-                    dirs.append(rel + "/")
-                    try:
-                        for sub in sorted(entry.iterdir()):
-                            if sub.is_dir() and not sub.name.startswith("."):
-                                dirs.append(rel + "/" + sub.name + "/")
-                    except PermissionError:
-                        pass
-        except PermissionError:
-            pass
-        self.folder_slug_list = dirs
+        root = Path(self.working_dir).expanduser()
+        if root.is_dir():
+            try:
+                for entry in sorted(root.iterdir()):
+                    if entry.is_dir() and not entry.name.startswith("."):
+                        rel = entry.name
+                        dirs.append(rel + "/")
+                        try:
+                            for sub in sorted(entry.iterdir()):
+                                if sub.is_dir() and not sub.name.startswith("."):
+                                    dirs.append(rel + "/" + sub.name + "/")
+                        except PermissionError:
+                            pass
+            except PermissionError:
+                pass
+        self.folder_slug_list = shortcuts + dirs
 
     def _draw_folder_slug_overlay(self):
-        """Draw an XTree Gold-style folder browser overlay on the agent pane."""
+        """Draw the Shortcuts overlay on the agent pane."""
         h, w = self.stdscr.getmaxyx()
 
         # Agent pane geometry
@@ -1733,7 +1874,7 @@ class BBSApp:
             self.stdscr.addnstr(overlay_y, overlay_x, top, overlay_w, border_attr)
 
             # Title bar
-            title = " FOLDER BROWSER "
+            title = " SHORTCUTS "
             title_line = "║" + title.center(inner_w) + "║"
             self.stdscr.addnstr(overlay_y + 1, overlay_x, title_line, overlay_w, border_attr)
 
@@ -1747,16 +1888,19 @@ class BBSApp:
             elif self.folder_slug_cursor >= self.folder_slug_scroll + inner_h:
                 self.folder_slug_scroll = self.folder_slug_cursor - inner_h + 1
 
-            # Folder list rows
+            # List rows: shortcuts first, then folders (continuous)
             for i in range(inner_h):
                 row_y = overlay_y + 3 + i
                 idx = self.folder_slug_scroll + i
                 if idx < len(self.folder_slug_list):
-                    path = self.folder_slug_list[idx]
+                    entry = self.folder_slug_list[idx]
                     is_sel = (idx == self.folder_slug_cursor)
-                    # Folder icon (emoji is double-width, occupies 2 cells)
-                    icon = "📁 " if not is_sel else "📂 "
-                    text = f" {icon}{path}"
+                    is_shortcut = idx < self._shortcut_count
+                    if is_shortcut:
+                        icon = "⚡ " if is_sel else "⚡ "
+                    else:
+                        icon = "📂 " if is_sel else "📁 "
+                    text = f" {icon}{entry}"
                     # len() counts emoji as 1 char but it displays as 2 cells
                     display_w = len(text) + 1  # +1 for double-width emoji
                     padded = text[:inner_w] + " " * max(0, inner_w - display_w)
@@ -1778,6 +1922,137 @@ class BBSApp:
             bottom = "╚" + "═" * inner_w + "╝"
             self.stdscr.addnstr(overlay_y + overlay_h - 1, overlay_x,
                                 bottom, overlay_w, border_attr)
+        except curses.error:
+            pass
+
+    def _open_shortcut_editor(self):
+        """Open the shortcut editor overlay."""
+        self._shortcut_strings = _load_shortcuts()
+        self.show_shortcut_editor = True
+        self.shortcut_editor_cursor = 0
+        self.shortcut_editor_scroll = 0
+        self.shortcut_editing_text = False
+
+    def _draw_shortcut_editor(self):
+        """Draw the shortcut editor overlay."""
+        h, w = self.stdscr.getmaxyx()
+
+        overlay_w = min(68, w - 6)
+        # +1 for the [Add New] row
+        num_entries = len(self._shortcut_strings) + 1
+        overlay_h = min(4 + num_entries + 2, h - 4)
+        if overlay_w < 40 or overlay_h < 6:
+            return
+
+        start_y = max(1, (h - overlay_h) // 2)
+        start_x = max(2, (w - overlay_w) // 2)
+
+        border_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+        body_attr = curses.color_pair(self.CP_HELP)
+        accent_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+        sel_attr = curses.color_pair(self.CP_RECORDING) | curses.A_BOLD
+        val_attr = curses.color_pair(self.CP_AGENT) | curses.A_BOLD
+
+        inner_w = overlay_w - 2
+        inner_h = overlay_h - 5  # borders + title + footer
+
+        try:
+            # Top border
+            top = "╔" + "═" * inner_w + "╗"
+            self.stdscr.addnstr(start_y, start_x, top, overlay_w, border_attr)
+
+            # Title bar
+            title = " EDIT SHORTCUTS "
+            title_line = "║" + title.center(inner_w) + "║"
+            self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
+
+            # Title separator
+            sep = "╠" + "═" * inner_w + "╣"
+            self.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
+
+            # Scrolling
+            if self.shortcut_editor_cursor < self.shortcut_editor_scroll:
+                self.shortcut_editor_scroll = self.shortcut_editor_cursor
+            elif self.shortcut_editor_cursor >= self.shortcut_editor_scroll + inner_h:
+                self.shortcut_editor_scroll = self.shortcut_editor_cursor - inner_h + 1
+
+            # List rows
+            for i in range(inner_h):
+                row_y = start_y + 3 + i
+                idx = self.shortcut_editor_scroll + i
+                is_sel = (idx == self.shortcut_editor_cursor)
+                line_attr = sel_attr if is_sel else body_attr
+
+                if idx < len(self._shortcut_strings):
+                    entry = self._shortcut_strings[idx]
+                    cursor = "►" if is_sel else " "
+                    if is_sel and self.shortcut_editing_text:
+                        # Inline editing mode
+                        buf = self.shortcut_edit_buffer
+                        cur = self.shortcut_edit_cursor_pos
+                        max_vis = inner_w - 7
+                        vis_start = max(0, cur - max_vis + 1) if cur > max_vis else 0
+                        vis_text = buf[vis_start:vis_start + max_vis]
+                        vis_cur = cur - vis_start
+                        text = f" {cursor} {vis_text}"
+                        padded = text + " " * max(0, inner_w - len(text))
+                        line = "║" + padded[:inner_w] + "║"
+                        self.stdscr.addnstr(row_y, start_x, line, overlay_w, val_attr)
+                        # Draw cursor
+                        cursor_x = start_x + 1 + 4 + vis_cur
+                        if cursor_x < start_x + overlay_w - 1:
+                            ch_under = buf[cur] if cur < len(buf) else " "
+                            self.stdscr.addnstr(
+                                row_y, cursor_x, ch_under, 1,
+                                curses.color_pair(self.CP_AGENT) | curses.A_REVERSE)
+                    else:
+                        text = f" {cursor} {entry}"
+                        padded = text + " " * max(0, inner_w - len(text))
+                        line = "║" + padded[:inner_w] + "║"
+                        self.stdscr.addnstr(row_y, start_x, line, overlay_w, line_attr)
+                elif idx == len(self._shortcut_strings):
+                    # [Add New] row
+                    cursor = "►" if is_sel else " "
+                    if is_sel and self.shortcut_editing_text:
+                        buf = self.shortcut_edit_buffer
+                        cur = self.shortcut_edit_cursor_pos
+                        max_vis = inner_w - 7
+                        vis_start = max(0, cur - max_vis + 1) if cur > max_vis else 0
+                        vis_text = buf[vis_start:vis_start + max_vis]
+                        vis_cur = cur - vis_start
+                        text = f" {cursor} {vis_text}"
+                        padded = text + " " * max(0, inner_w - len(text))
+                        line = "║" + padded[:inner_w] + "║"
+                        self.stdscr.addnstr(row_y, start_x, line, overlay_w, val_attr)
+                        cursor_x = start_x + 1 + 4 + vis_cur
+                        if cursor_x < start_x + overlay_w - 1:
+                            ch_under = buf[cur] if cur < len(buf) else " "
+                            self.stdscr.addnstr(
+                                row_y, cursor_x, ch_under, 1,
+                                curses.color_pair(self.CP_AGENT) | curses.A_REVERSE)
+                    else:
+                        text = f" {cursor} [Add New Shortcut]"
+                        padded = text + " " * max(0, inner_w - len(text))
+                        line = "║" + padded[:inner_w] + "║"
+                        self.stdscr.addnstr(row_y, start_x, line, overlay_w, line_attr)
+                else:
+                    blank = "║" + " " * inner_w + "║"
+                    self.stdscr.addnstr(row_y, start_x, blank, overlay_w, body_attr)
+
+            # Footer
+            if self.shortcut_editing_text:
+                footer_text = " Enter Save  Esc Cancel "
+            else:
+                footer_text = " Enter Edit  Del Remove  Esc Close "
+            footer_padded = footer_text.center(inner_w)
+            footer_line = "║" + footer_padded[:inner_w] + "║"
+            self.stdscr.addnstr(start_y + overlay_h - 2, start_x, footer_line,
+                                overlay_w, accent_attr)
+
+            # Bottom border
+            bottom = "╚" + "═" * inner_w + "╝"
+            self.stdscr.addnstr(start_y + overlay_h - 1, start_x, bottom,
+                                overlay_w, border_attr)
         except curses.error:
             pass
 
@@ -1940,6 +2215,79 @@ class BBSApp:
                 return
             # Other keys (including SPACE) fall through to main handler
 
+        # Handle shortcut editor overlay
+        if self.show_shortcut_editor:
+            if self.shortcut_editing_text:
+                if ch in (10, 13, curses.KEY_ENTER):
+                    # Save the edited/new shortcut
+                    text = self.shortcut_edit_buffer.strip()
+                    if text:
+                        idx = self.shortcut_editor_cursor
+                        if idx < len(self._shortcut_strings):
+                            self._shortcut_strings[idx] = text
+                        else:
+                            self._shortcut_strings.append(text)
+                            self.shortcut_editor_cursor = len(self._shortcut_strings)
+                        _save_shortcuts(self._shortcut_strings)
+                    self.shortcut_editing_text = False
+                elif ch == 27:
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+                    self.shortcut_editing_text = False
+                elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                    if self.shortcut_edit_cursor_pos > 0:
+                        b = self.shortcut_edit_buffer
+                        c = self.shortcut_edit_cursor_pos
+                        self.shortcut_edit_buffer = b[:c-1] + b[c:]
+                        self.shortcut_edit_cursor_pos -= 1
+                elif ch == curses.KEY_DC:
+                    b = self.shortcut_edit_buffer
+                    c = self.shortcut_edit_cursor_pos
+                    if c < len(b):
+                        self.shortcut_edit_buffer = b[:c] + b[c+1:]
+                elif ch == curses.KEY_LEFT:
+                    self.shortcut_edit_cursor_pos = max(0, self.shortcut_edit_cursor_pos - 1)
+                elif ch == curses.KEY_RIGHT:
+                    self.shortcut_edit_cursor_pos = min(
+                        len(self.shortcut_edit_buffer), self.shortcut_edit_cursor_pos + 1)
+                elif ch == curses.KEY_HOME or ch == 1:  # Ctrl+A
+                    self.shortcut_edit_cursor_pos = 0
+                elif ch == curses.KEY_END or ch == 5:  # Ctrl+E
+                    self.shortcut_edit_cursor_pos = len(self.shortcut_edit_buffer)
+                elif 32 <= ch <= 126:
+                    b = self.shortcut_edit_buffer
+                    c = self.shortcut_edit_cursor_pos
+                    self.shortcut_edit_buffer = b[:c] + chr(ch) + b[c:]
+                    self.shortcut_edit_cursor_pos += 1
+                return
+
+            if ch == 27:
+                self.show_shortcut_editor = False
+                self.stdscr.nodelay(True)
+                self.stdscr.getch()
+            elif ch == curses.KEY_UP:
+                if self.shortcut_editor_cursor > 0:
+                    self.shortcut_editor_cursor -= 1
+            elif ch == curses.KEY_DOWN:
+                if self.shortcut_editor_cursor < len(self._shortcut_strings):
+                    self.shortcut_editor_cursor += 1
+            elif ch in (10, 13, curses.KEY_ENTER):
+                idx = self.shortcut_editor_cursor
+                if idx < len(self._shortcut_strings):
+                    self.shortcut_edit_buffer = self._shortcut_strings[idx]
+                else:
+                    self.shortcut_edit_buffer = ""
+                self.shortcut_edit_cursor_pos = len(self.shortcut_edit_buffer)
+                self.shortcut_editing_text = True
+            elif ch in (curses.KEY_DC, 330):  # Delete key
+                idx = self.shortcut_editor_cursor
+                if idx < len(self._shortcut_strings):
+                    del self._shortcut_strings[idx]
+                    _save_shortcuts(self._shortcut_strings)
+                    if self.shortcut_editor_cursor > len(self._shortcut_strings):
+                        self.shortcut_editor_cursor = len(self._shortcut_strings)
+            return
+
         # Handle settings overlay navigation
         if self.show_settings_overlay:
             # Inline text editing mode (e.g. prompt library path)
@@ -1977,8 +2325,32 @@ class BBSApp:
                     self.settings_edit_cursor += 1
                 return
 
+            # TTS sub-menu navigation
+            if self.tts_submenu_open:
+                if ch in (ord("q"), ord("Q"), 27):
+                    self.tts_submenu_open = False
+                    if ch == 27:
+                        self.stdscr.nodelay(True)
+                        self.stdscr.getch()
+                elif ch == curses.KEY_UP:
+                    self.tts_submenu_cursor = (self.tts_submenu_cursor - 1) % len(self.tts_submenu_items)
+                elif ch == curses.KEY_DOWN:
+                    self.tts_submenu_cursor = (self.tts_submenu_cursor + 1) % len(self.tts_submenu_items)
+                elif ch == curses.KEY_LEFT:
+                    self._tts_submenu_cycle(-1)
+                elif ch == curses.KEY_RIGHT:
+                    self._tts_submenu_cycle(1)
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    item = self.tts_submenu_items[self.tts_submenu_cursor]
+                    if item.get("action"):
+                        self.tts_submenu_open = False
+                        self.show_settings_overlay = False
+                        item["action"]()
+                return
+
             if ch in (ord("o"), ord("O"), ord("q"), ord("Q"), 27):
                 self.show_settings_overlay = False
+                self.tts_submenu_open = False
                 if ch == 27:
                     self.stdscr.nodelay(True)
                     self.stdscr.getch()
@@ -1999,26 +2371,6 @@ class BBSApp:
                         self.show_settings_overlay = False
                         item["action"]()
             return
-
-        # Handle voice command listening result
-        if self.voice_cmd_listening:
-            # Ignore input while listening for voice command
-            return
-
-        # ESC (27) with no follow-up = voice command trigger
-        # ALT+key comes as ESC followed immediately by key, so check for bare ESC
-        if ch == 27:
-            # Check if another key follows (ALT combo)
-            self.stdscr.nodelay(True)
-            next_ch = self.stdscr.getch()
-            if next_ch == -1:
-                # Bare ESC — start voice command
-                if not self.recording:
-                    self._voice_command()
-                return
-            else:
-                # ALT+something — ignore for now
-                return
 
         # Handle confirmation dialog for [N]ew prompt
         if self.confirming_new:
@@ -2198,19 +2550,19 @@ class BBSApp:
             speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
 
         elif ch in (10, 13, curses.KEY_ENTER):
-            # Enter opens folder slug mode (allowed during recording for injection)
+            # Enter opens shortcuts browser (allowed during recording for injection)
             if (not self.refining
                     and self.agent_state in (AgentState.IDLE, AgentState.DONE)
-                    and self.working_dir):
+                    and (self.working_dir or self._shortcut_strings)):
                 self._scan_folder_slugs()
                 if self.folder_slug_list:
                     self.show_folder_slug = True
                     self.folder_slug_cursor = 0
                     self.folder_slug_scroll = 0
                 else:
-                    self._set_status("No folders found in working directory.")
-            elif not self.working_dir:
-                self._set_status("Set working directory in [O]ptions first.")
+                    self._set_status("No shortcuts or folders found.")
+            elif not self.working_dir and not self._shortcut_strings:
+                self._set_status("Set working directory or add shortcuts in [O]ptions.")
 
         elif ch == ord("h") or ch == ord("H"):
             self.show_help_overlay = True
@@ -2408,82 +2760,6 @@ class BBSApp:
                            f"Echo test done. Peak={peak:.3f} RMS={rms:.4f} "
                            f"({'good signal' if peak > 0.05 else 'very quiet!'})",
                            self.CP_STATUS))
-
-    # ─── Voice commands ──────────────────────────────────────────────
-
-    # Map spoken words to key actions
-    VOICE_COMMANDS = {
-        "record": " ", "recording": " ", "dictate": " ", "start": " ", "stop": " ",
-        "refine": "r", "summarize": "r", "compile": "r",
-        "direct": "d", "raw": "d",
-        "save": "s",
-        "new": "n",
-        "execute": "e", "run": "e", "send": "e",
-        "settings": "o", "options": "o", "config": "o",
-        "clear": "c",
-        "kill": "k",
-        "session": "w", "reset": "w",
-        "restart": "x", "reboot": "x", "reload": "x",
-        "quit": "q", "exit": "q",
-        "left": "LEFT", "previous": "LEFT", "back": "LEFT", "older": "LEFT",
-        "right": "RIGHT", "next": "RIGHT", "forward": "RIGHT", "newer": "RIGHT",
-    }
-
-    def _voice_command(self):
-        """Listen for a single spoken command word."""
-        self.voice_cmd_listening = True
-        self._set_status("Listening for command...", self.CP_RECORDING)
-        threading.Thread(target=self._do_voice_command, daemon=True).start()
-
-    def _do_voice_command(self):
-        """Record ~1.5s, transcribe, and dispatch as a key command."""
-        frames = []
-
-        def callback(indata, frame_count, time_info, status):
-            frames.append(indata[:, 0].copy())
-
-        stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
-            blocksize=BLOCK_SIZE, callback=callback)
-        stream.start()
-        time.sleep(1.5)
-        stream.stop()
-        stream.close()
-
-        if not frames:
-            self.ui_queue.put(("voice_cmd_result", None))
-            return
-
-        audio = np.concatenate(frames)
-        if len(audio) / SAMPLE_RATE < 0.2:
-            self.ui_queue.put(("voice_cmd_result", None))
-            return
-
-        text = transcribe(audio, self.whisper_model)
-        if not text:
-            self.ui_queue.put(("voice_cmd_result", None))
-            return
-
-        # Extract first word, lowercase, strip punctuation
-        word = text.strip().split()[0].lower().rstrip(".,!?;:")
-        self.ui_queue.put(("voice_cmd_result", word))
-
-    def _dispatch_voice_command(self, word: str):
-        """Map a spoken word to a key action and simulate it."""
-        action = self.VOICE_COMMANDS.get(word)
-        if action is None:
-            self._set_status(f"Unknown command: \"{word}\"")
-            return
-
-        self._set_status(f"Voice command: \"{word}\"")
-
-        # Simulate the keypress by injecting into curses
-        if action == "LEFT":
-            curses.ungetch(curses.KEY_LEFT)
-        elif action == "RIGHT":
-            curses.ungetch(curses.KEY_RIGHT)
-        else:
-            curses.ungetch(ord(action))
 
     # ─── Refine ────────────────────────────────────────────────────
 
@@ -2685,6 +2961,9 @@ class BBSApp:
         self.agent_state = AgentState.DOWNLOADING
         self.typewriter_queue.clear()
         self.agent_first_output = False
+        self._typewriter_line_color = None
+        self._tts_detect_buf = ''
+        self._tts_in_summary = False
         self._set_agent_welcome(40)
         threading.Thread(target=self._run_agent, daemon=True).start()
 
@@ -2716,6 +2995,9 @@ class BBSApp:
         self.agent_state = AgentState.DOWNLOADING
         self.typewriter_queue.clear()
         self.agent_first_output = False
+        self._typewriter_line_color = None
+        self._tts_detect_buf = ''
+        self._tts_in_summary = False
 
         # Reset agent pane with welcome text (visible until output arrives)
         self._set_agent_welcome(40)
@@ -2726,9 +3008,58 @@ class BBSApp:
         threading.Thread(target=self._run_agent, daemon=True).start()
 
     def _emit_typewriter(self, text):
-        """Queue text for typewriter display in the agent pane."""
-        for ch in text:
-            self.ui_queue.put(("typewriter_char", ch))
+        """Queue text for typewriter display in the agent pane.
+
+        Detects [TTS_SUMMARY] / [/TTS_SUMMARY] markers and switches
+        typewriter color to white for the TTS summary block.
+        """
+        self._tts_detect_buf = getattr(self, '_tts_detect_buf', '')
+        self._tts_in_summary = getattr(self, '_tts_in_summary', False)
+
+        self._tts_detect_buf += text
+
+        while self._tts_detect_buf:
+            if not self._tts_in_summary:
+                idx = self._tts_detect_buf.find('[TTS_SUMMARY]')
+                if idx == -1:
+                    # Flush all but last 13 chars (tag length) in case tag spans chunks
+                    safe = max(0, len(self._tts_detect_buf) - 13)
+                    for ch in self._tts_detect_buf[:safe]:
+                        self.ui_queue.put(("typewriter_char", ch))
+                    self._tts_detect_buf = self._tts_detect_buf[safe:]
+                    break
+                else:
+                    # Flush text before the tag
+                    for ch in self._tts_detect_buf[:idx]:
+                        self.ui_queue.put(("typewriter_char", ch))
+                    # Skip the tag itself, emit color change
+                    self._tts_detect_buf = self._tts_detect_buf[idx + 13:]
+                    self._tts_in_summary = True
+                    self.ui_queue.put(("typewriter_color", self.CP_TTS))
+            else:
+                idx = self._tts_detect_buf.find('[/TTS_SUMMARY]')
+                if idx == -1:
+                    safe = max(0, len(self._tts_detect_buf) - 14)
+                    for ch in self._tts_detect_buf[:safe]:
+                        self.ui_queue.put(("typewriter_char", ch))
+                    self._tts_detect_buf = self._tts_detect_buf[safe:]
+                    break
+                else:
+                    # Flush text before the closing tag
+                    for ch in self._tts_detect_buf[:idx]:
+                        self.ui_queue.put(("typewriter_char", ch))
+                    # Skip the closing tag, reset color
+                    self._tts_detect_buf = self._tts_detect_buf[idx + 14:]
+                    self._tts_in_summary = False
+                    self.ui_queue.put(("typewriter_color", None))
+
+    def _flush_tts_detect_buf(self):
+        """Flush any remaining chars in the TTS detection buffer."""
+        buf = getattr(self, '_tts_detect_buf', '')
+        if buf:
+            for ch in buf:
+                self.ui_queue.put(("typewriter_char", ch))
+            self._tts_detect_buf = ''
 
     def _format_tool_input(self, name, inp):
         """Format a tool_use input dict into a concise display string."""
@@ -2886,7 +3217,11 @@ class BBSApp:
 
             self.agent_process.wait()
 
-            # End marker
+            # Flush any remaining TTS detection buffer
+            self._flush_tts_detect_buf()
+
+            # End marker — reset color to default for the transmission footer
+            self.ui_queue.put(("typewriter_color", None))
             self._emit_typewriter("\n\n═══ END TRANSMISSION ═══\n")
 
             self.ui_queue.put(("agent_state", AgentState.DONE))
@@ -2950,11 +3285,27 @@ class BBSApp:
 
         while self.typewriter_queue and chars_this_frame < max_chars:
             ch = self.typewriter_queue[0]
+
+            # Handle color-change sentinel tuples
+            if isinstance(ch, tuple) and ch[0] == "color":
+                self.typewriter_queue.popleft()
+                self._typewriter_line_color = ch[1]  # None to reset
+                # Tag current last line with the new color
+                if self._typewriter_line_color is not None and self.agent_pane.lines:
+                    idx = len(self.agent_pane.lines) - 1
+                    self.agent_pane.line_colors[idx] = self._typewriter_line_color
+                continue
+
             delay = self.typewriter_line_delay if ch == "\n" else self.typewriter_char_delay
 
             if now - self.typewriter_last_time >= delay:
                 self.typewriter_queue.popleft()
+                prev_count = len(self.agent_pane.lines)
                 self.agent_pane.add_char_to_last_line(ch, right_width)
+                # Tag any newly created lines with the current override color
+                if self._typewriter_line_color is not None:
+                    for idx in range(prev_count, len(self.agent_pane.lines)):
+                        self.agent_pane.line_colors[idx] = self._typewriter_line_color
                 self.typewriter_last_time = now
                 chars_this_frame += 1
             else:
@@ -3035,15 +3386,11 @@ class BBSApp:
                 if msg[2]:
                     self.context_window_size = msg[2]
 
-            elif msg[0] == "voice_cmd_result":
-                self.voice_cmd_listening = False
-                if msg[1]:
-                    self._dispatch_voice_command(msg[1])
-                else:
-                    self._set_status("No command heard.")
-
             elif msg[0] == "typewriter_char":
                 self.typewriter_queue.append(msg[1])
+
+            elif msg[0] == "typewriter_color":
+                self.typewriter_queue.append(("color", msg[1]))
 
     def _set_status(self, msg: str, color: int = None):
         color = color if color is not None else self.CP_STATUS

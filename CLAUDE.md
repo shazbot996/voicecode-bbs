@@ -4,7 +4,7 @@ Voice-driven CLI interface for interacting with AI agents (Claude). Dictate prom
 
 ## Architecture
 
-- **`voicecode_bbs.py`** — Retro BBS-style voice-driven prompt engineering workshop with three-pane curses UI (Prompt Browser, Dictation Buffer, Agent Terminal), ZMODEM animations, typewriter streaming, TTS output, voice commands, favorites, session continuity, folder slug injection, and context metering.
+- **`voicecode_bbs.py`** — Retro BBS-style voice-driven prompt engineering workshop with three-pane curses UI (Prompt Browser, Dictation Buffer, Agent Terminal), ZMODEM animations, typewriter streaming, TTS output, favorites, session continuity, shortcuts injection, and context metering.
 - **`ask`** — Bash helper to run saved prompts through Claude CLI.
 
 ### Audio Pipeline
@@ -53,7 +53,7 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 - TTS summaries extracted from `[TTS_SUMMARY]...[/TTS_SUMMARY]` blocks in agent responses
 - Thread-safe UI updates via `queue.Queue`
 - Session continuity across prompts via `--resume` with session IDs
-- Mid-recording folder slug injection merges paths into transcripts using word-level timestamps
+- Mid-recording shortcuts injection merges paths into transcripts using word-level timestamps
 - No tests or CI currently
 
 ## BBS App Three-Pane Layout
@@ -86,7 +86,7 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | F | Add/remove prompt from favorites |
 | N | New prompt (clear buffer, keep session) |
 | C | Clear dictation buffer |
-| Enter | Folder slug browser (inject paths into dictation; works mid-recording) |
+| Enter | Shortcuts browser (inject strings/paths into dictation; works mid-recording) |
 | ←/→ | Browse saved prompts |
 | ↑/↓ | Cycle active/favorites/history views |
 | PgUp/PgDn | Scroll agent terminal |
@@ -97,5 +97,4 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | H | Help overlay |
 | A | About / title screen |
 | X | Restart application |
-| ESC | Voice command mode |
 | Q | Quit |
