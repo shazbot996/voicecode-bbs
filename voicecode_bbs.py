@@ -368,23 +368,17 @@ class TextPane:
         visible_height = height - 2
         content_width = width - 2  # inside the ║ borders
 
-        # Use welcome art centered in pane when no content
+        # Use welcome art left-justified in pane when no content
         if not self.lines and self.welcome_art:
             art_lines = self.welcome_art
-            # Vertically center the art
-            v_pad = max(0, (visible_height - len(art_lines)) // 2)
             for i in range(visible_height):
                 try:
                     win.addstr(y + 1 + i, x, "║", border_attr)
-                    art_idx = i - v_pad
-                    if 0 <= art_idx < len(art_lines):
-                        art_line = art_lines[art_idx]
-                        # Horizontally center
-                        h_pad = max(0, (content_width - len(art_line)) // 2)
-                        centered = " " * h_pad + art_line
-                        centered = centered[:content_width - 1]
-                        padding = " " * max(0, content_width - 1 - len(centered))
-                        win.addstr(y + 1 + i, x + 1, " " + centered[:content_width - 2] + padding,
+                    if i < len(art_lines):
+                        art_line = art_lines[i]
+                        art_line = art_line[:content_width - 1]
+                        padding = " " * max(0, content_width - 1 - len(art_line))
+                        win.addstr(y + 1 + i, x + 1, " " + art_line + padding,
                                    curses.color_pair(self.color_pair) | curses.A_DIM)
                     else:
                         win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),
@@ -945,7 +939,7 @@ class BBSApp:
                 self.prompt_pane.set_text(self.current_prompt, width)
             else:
                 self.prompt_pane.title = "NEW PROMPT — ready for dictation"
-                # Clear lines so welcome_art renders (centered & dimmed)
+                # Clear lines so welcome_art renders (left-justified & dimmed)
                 self.prompt_pane.lines = []
             self.prompt_pane.scroll_offset = 0
             return
@@ -974,7 +968,7 @@ class BBSApp:
         """Show info box in dictation buffer when it's empty."""
         if self.dictation_pane.lines:
             return  # don't overwrite existing content
-        # Clear lines so welcome_art renders (centered & dimmed)
+        # Clear lines so welcome_art renders (left-justified & dimmed)
         self.dictation_pane.lines = []
         self.dictation_pane.scroll_offset = 0
 
@@ -983,7 +977,7 @@ class BBSApp:
         if self.agent_welcome_shown:
             return
         self.agent_welcome_shown = True
-        # Clear lines so welcome_art renders (centered & dimmed)
+        # Clear lines so welcome_art renders (left-justified & dimmed)
         self.agent_pane.lines = []
         self.agent_pane.scroll_offset = 0
 
@@ -1211,9 +1205,6 @@ class BBSApp:
         elif self.recording:
             help_text = " [SPC] Stop recording"
             self._draw_bar(help_y, help_text, self.CP_HELP)
-        elif self.refining:
-            help_text = " ◌ Refining prompt with Claude..."
-            self._draw_bar(help_y, help_text, self.CP_STATUS)
         elif self.confirming_new:
             help_text = " ██ UNSAVED PROMPT — [Y] Save first  [N] Discard  [other] Cancel ██"
             self._draw_bar(help_y, help_text, self.CP_RECORDING)
@@ -1221,7 +1212,7 @@ class BBSApp:
             help_text = " ◌ Agent working... [K] to kill"
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
-            keys = " [Q]uit [X]Restart | [SPC]Rec [R]efine [E]xec [D]irect [S]ave [N]ew [C]lear [K]ill [←→]Browse [↑↓]View [Home]Reset | [ESC]Voice [O]pt [H]elp [A]bout"
+            keys = " [Q]uit [X]Restart | [SPC]Rec [R]efine [E]xec [D]irect [S]ave [N]ew [C]lear [K]ill [←→]Browse [↑↓]View | [ESC]Voice [O]pt [H]elp [A]bout"
             self._draw_bar(help_y, keys, self.CP_HELP)
 
         # ── Status bar ──
@@ -1290,7 +1281,6 @@ class BBSApp:
             "  K      Kill running agent",
             "  ←/→    Browse within current view",
             "  ↑/↓    Cycle active/favorites/history",
-            "  Home   Reset to new empty prompt",
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
@@ -1921,20 +1911,6 @@ class BBSApp:
                 self._set_status(f"Switched to {view_names[next_view]}. ({count} entries)")
             else:
                 self.prompt_pane.scroll_down(visible, 2)
-
-        elif ch == curses.KEY_HOME:
-            self.browser_view = "active"
-            self.browser_index = -1
-            self.current_prompt = None
-            self.prompt_version = 0
-            self.prompt_saved = True
-            self.fragments.clear()
-            self.dictation_pane.lines.clear()
-            self.dictation_pane.scroll_offset = 0
-            w = self.stdscr.getmaxyx()[1] // 2
-            self._load_browser_prompt(w)
-            self._set_dictation_info(w)
-            self._set_status("Reset to new prompt.")
 
         elif ch == curses.KEY_END:
             if not self.refining and not self.recording:

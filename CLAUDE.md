@@ -101,6 +101,5 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | H | Help overlay |
 | A | About / title screen |
 | X | Restart application |
-| Home | Reset scroll position |
 | ESC | Voice command mode |
 | Q | Quit |
