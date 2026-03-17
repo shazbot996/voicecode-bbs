@@ -81,19 +81,32 @@ def _save_shortcuts(shortcuts: list[str]):
 
 # ─── TTS globals ──────────────────────────────────────────────────────
 
-PIPER_VOICES_DIR = Path.home() / ".local/share/piper-voices"
-PIPER_VOICES = [
-    "en_US-amy-medium",
-    "en_US-lessac-medium",
-    "en_US-libritts-high",
-    "en_US-ryan-medium",
-    "en_GB-alan-medium",
-    "en_GB-jenny_dioco-medium",
-    "en_US-arctic-medium",
-    "en_US-hfc_female-medium",
-    "en_US-hfc_male-medium",
-    "en_US-joe-medium",
-]
+TTS_AVAILABLE = False
+try:
+    from piper.download_voices import download_voice
+    TTS_AVAILABLE = True
+
+except ImportError:
+    pass
+
+if TTS_AVAILABLE:
+    PIPER_VOICES_DIR = Path.home() / ".local/share/piper-voices"
+    PIPER_VOICES = [
+        "en_US-amy-medium",
+        "en_US-lessac-medium",
+        "en_US-libritts-high",
+        "en_US-ryan-medium",
+        "en_GB-alan-medium",
+        "en_GB-jenny_dioco-medium",
+        "en_US-arctic-medium",
+        "en_US-hfc_female-medium",
+        "en_US-hfc_male-medium",
+        "en_US-joe-medium",
+    ]
+else:
+    PIPER_VOICES_DIR = None
+    PIPER_VOICES = []
+
 
 # Virtual voice presets — use an existing model with custom piper parameters
 VOICE_PRESETS = {}
@@ -129,6 +142,8 @@ def extract_tts_summary(text: str) -> str:
 
 def get_tts_voice_model() -> Path:
     """Return the path to the currently selected Piper voice model."""
+    if not PIPER_VOICES:
+        return Path()
     voice = PIPER_VOICES[_tts_voice_index]
     preset = VOICE_PRESETS.get(voice)
     model_name = preset["model"] if preset else voice
@@ -137,6 +152,8 @@ def get_tts_voice_model() -> Path:
 
 def get_tts_piper_extra_args() -> list[str]:
     """Return extra piper CLI args for the current voice (e.g. preset tuning)."""
+    if not PIPER_VOICES:
+        return []
     voice = PIPER_VOICES[_tts_voice_index]
     preset = VOICE_PRESETS.get(voice)
     return list(preset["piper_args"]) if preset else []
@@ -144,11 +161,16 @@ def get_tts_piper_extra_args() -> list[str]:
 
 def get_tts_voice_name() -> str:
     """Return the short display name of the currently selected voice."""
+    if not PIPER_VOICES:
+        return "N/A"
     return PIPER_VOICES[_tts_voice_index]
+
 
 
 def cycle_tts_voice(direction: int) -> str:
     """Cycle the TTS voice forward (+1) or backward (-1). Returns new voice name."""
+    if not PIPER_VOICES:
+        return "N/A"
     global _tts_voice_index
     _tts_voice_index = (_tts_voice_index + direction) % len(PIPER_VOICES)
     voice = PIPER_VOICES[_tts_voice_index]
@@ -163,6 +185,8 @@ def delete_unused_voices() -> tuple[int, str]:
 
     Returns (count_deleted, current_voice_name).
     """
+    if not PIPER_VOICES:
+        return 0, "N/A"
     current = PIPER_VOICES[_tts_voice_index]
     # Resolve preset to its underlying model name
     preset = VOICE_PRESETS.get(current)
@@ -181,13 +205,17 @@ def delete_unused_voices() -> tuple[int, str]:
     return deleted, current
 
 
+
 def download_all_voices(on_progress=None, on_done=None):
     """Download all configured voice files in a background thread.
 
     on_progress(voice_name, index, total) is called after each voice.
     on_done(success_count, fail_count) is called when finished.
     """
-    from piper.download_voices import download_voice
+    if not TTS_AVAILABLE:
+        if on_done:
+            on_done(0, 0)
+        return
 
     def _run():
         PIPER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
@@ -209,9 +237,39 @@ def download_all_voices(on_progress=None, on_done=None):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def download_single_voice_model(voice: str, on_done=None):
+    """Download a single voice model file in a background thread."""
+    if not TTS_AVAILABLE:
+        if on_done:
+            on_done(False, "TTS not available")
+        return
+
+    def _run():
+        PIPER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            from piper.download_voices import download_voice
+            # Preset voices reuse another model's files — download that instead
+            model = voice
+            # VOICE_PRESETS is not defined globally, but let's check or use direct
+            # Wait, let's look if VOICE_PRESETS exists!
+            download_voice(model, PIPER_VOICES_DIR)
+            if on_done:
+                on_done(True, voice)
+        except Exception as e:
+            if on_done:
+                on_done(False, str(e))
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+
 def speak_text(text: str, on_done=None):
     """Speak text using Piper TTS + aplay in a background thread."""
     global _tts_process
+    if not TTS_AVAILABLE:
+        if on_done:
+            on_done()
+        return
     if not _tts_enabled:
         if on_done:
             on_done()
@@ -224,7 +282,11 @@ def speak_text(text: str, on_done=None):
         try:
             if not voice_model.exists():
                 return
+            
+            gain = float(_load_settings().get("tts_volume_gain", 1.0))
+
             # Pipe text through piper as raw PCM, then play with aplay.
+
             # Using --output-raw avoids per-sentence WAV headers that cause
             # aplay to stop after the first sentence.
             piper_cmd = ["piper", "--model", str(voice_model),
@@ -235,22 +297,32 @@ def speak_text(text: str, on_done=None):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
             )
-            play_proc = subprocess.Popen(
-                ["aplay", "-q", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-c", "1"],
-                stdin=piper_proc.stdout,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            _tts_process = play_proc
+            
             # Piper reads stdin line-by-line; collapse to one line so the
             # entire summary is synthesised, not just the first sentence.
             single_line = " ".join(text.split())
             piper_proc.stdin.write((single_line + "\n").encode("utf-8"))
             piper_proc.stdin.close()
+
+            # Read all output bytes
+            audio_bytes = piper_proc.stdout.read()
             piper_proc.stdout.close()
-            play_proc.wait()
+            piper_proc.wait()
+
+            if audio_bytes:
+                audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
+                if gain != 1.0:
+                    audio_array = (audio_array * gain).clip(-32768, 32767).astype(np.int16)
+                
+                # Use sounddevice instead of aplay for better Crostini compatibility
+                sd.play(audio_array, samplerate=22050)
+                # Keep reference to playing back if needed for aborting
+                # wait() blocks the background thread until finished speaking
+                sd.wait()
+
         except Exception:
             pass
+
         finally:
             _tts_process = None
             if on_done:
@@ -409,10 +481,10 @@ class TextPane:
                         art_line = art_line[:content_width - 1]
                         padding = " " * max(0, content_width - 1 - len(art_line))
                         win.addstr(y + 1 + i, x + 1, " " + art_line + padding,
-                                   curses.color_pair(self.color_pair) | curses.A_DIM)
+                                   curses.color_pair(self.color_pair) | curses.A_BOLD)
                     else:
                         win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),
-                                   curses.color_pair(self.color_pair))
+                                   curses.color_pair(self.color_pair) | curses.A_BOLD)
                     win.addnstr(y + 1 + i, x + width - 1, "║", 1, border_attr)
                 except curses.error:
                     pass
@@ -427,7 +499,8 @@ class TextPane:
                         line_idx = self.scroll_offset + i
                         line_cp = self.line_colors.get(line_idx, self.color_pair)
                         win.addstr(y + 1 + i, x + 1, " " + line + padding,
-                                   curses.color_pair(line_cp))
+                                   curses.color_pair(line_cp) | curses.A_BOLD)
+
                     else:
                         win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),
                                    curses.color_pair(self.color_pair))
@@ -678,6 +751,8 @@ class BBSApp:
         else:
             self.prompt_library = saved.get(
                 "prompt_library", str(Path(args.save_dir).expanduser()))
+        self.tts_volume_gain = float(saved.get("tts_volume_gain", 1.0))
+
         # Voicecode writes into a dedicated subfolder within the library
         self.save_base = Path(self.prompt_library).expanduser() / "voicecode"
         self.history_base = self.save_base / "history"
@@ -850,15 +925,29 @@ class BBSApp:
                 "get": lambda: self.min_speech_duration,
                 "set": self._set_min_speech,
             },
-            {
-                "key": "_action_tts_submenu",
-                "label": "[Enter] Text-to-Speech Settings",
-                "desc": "Configure TTS voices, libraries, and enable/disable",
-                "options": None,
-                "get": lambda: "ON" if self.tts_enabled else "OFF",
-                "set": None,
-                "action": self._open_tts_submenu,
-            },
+        ]
+        if TTS_AVAILABLE:
+            self.settings_items.append({
+                    "key": "_action_tts_submenu",
+                    "label": "[Enter] Text-to-Speech Settings",
+                    "desc": "Configure TTS voices, libraries, and enable/disable",
+                    "options": None,
+                    "get": lambda: "ON" if self.tts_enabled else "OFF",
+                    "set": None,
+                    "action": self._open_tts_submenu,
+                })
+        else:
+            self.settings_items.append({
+                    "key": "_action_tts_submenu",
+                    "label": "Text-to-Speech Settings",
+                    "desc": "TTS library not installed.",
+                    "options": None,
+                    "get": lambda: "UNAVAILABLE",
+                    "set": None,
+                    "action": None,
+                })
+
+        self.settings_items.extend([
             {
                 "key": "_action_echo_test",
                 "label": "[Enter] Echo / Mic Test",
@@ -877,7 +966,8 @@ class BBSApp:
                 "set": None,
                 "action": self._open_shortcut_editor,
             },
-        ]
+        ])
+
 
     def _build_tts_submenu_items(self):
         """Build the TTS sub-menu items list."""
@@ -891,6 +981,15 @@ class BBSApp:
                 "set": self._set_tts_enabled,
             },
             {
+                "key": "tts_volume_gain",
+                "label": "Volume Gain",
+                "desc": "Digital volume boost multiplier",
+                "options": ["1.0", "1.5", "2.0", "2.5", "3.0"],
+                "get": lambda: f"{self.tts_volume_gain:.1f}",
+                "set": self._set_tts_volume_gain,
+            },
+            {
+
                 "key": "tts_voice",
                 "label": "Configure Voices",
                 "desc": "Text-to-speech voice for spoken summaries",
@@ -898,6 +997,26 @@ class BBSApp:
                 "get": get_tts_voice_name,
                 "set": self._set_tts_voice,
             },
+            {
+                "key": "_action_test_speech",
+                "label": "[Enter] Test Current Voice",
+                "desc": "Speak a test sentence with the active voice profile",
+                "options": None,
+                "get": lambda: "",
+                "set": None,
+                "action": self._action_test_speech,
+            },
+            {
+                "key": "_action_download_current_voice",
+
+                "label": "[Enter] Download Current Voice Model",
+                "desc": "Fetch only the sound profile currently selected above",
+                "options": None,
+                "get": lambda: "",
+                "set": None,
+                "action": self._action_download_current_voice,
+            },
+
             {
                 "key": "_action_download_voices",
                 "label": "[Enter] Download All Voice Models",
@@ -932,6 +1051,15 @@ class BBSApp:
         self._persist_setting("tts_enabled", self.tts_enabled)
         state = "enabled" if self.tts_enabled else "disabled"
         self._set_status(f"Text-to-speech {state}")
+
+    def _set_tts_volume_gain(self, val):
+        try:
+            self.tts_volume_gain = float(val)
+        except ValueError:
+            self.tts_volume_gain = 1.0
+        self._persist_setting("tts_volume_gain", self.tts_volume_gain)
+        self._set_status(f"TTS Volume Gain set to {self.tts_volume_gain:.1f}x")
+
 
     def _tts_submenu_cycle(self, direction):
         """Cycle the current TTS sub-menu setting's value."""
@@ -993,6 +1121,36 @@ class BBSApp:
                 self._set_status(f"All {ok} voices downloaded.")
                 speak_text(f"All {ok} voices downloaded successfully.")
         download_all_voices(on_progress=_on_progress, on_done=_on_done)
+
+    def _action_test_speech(self):
+        curr_voice = get_tts_voice_name()
+        if curr_voice == "N/A":
+             self._set_status("No voice selected.")
+             return
+        model_path = get_tts_voice_model()
+        if not model_path.exists():
+             self._set_status(f"Voice not downloaded! Use the option below.")
+             return
+        speak_text("Standard system read-back test active. Hello from the Voice Code BBS.")
+
+    def _action_download_current_voice(self):
+
+        curr_voice = get_tts_voice_name()
+        if curr_voice == "N/A":
+            self._set_status("No voice selected or available.")
+            return
+
+        self._set_status(f"Downloading {curr_voice}...")
+        def _on_done(success, err_or_name):
+            if success:
+                self._set_status(f"Voice {err_or_name} downloaded.")
+                speak_text(f"Voice {err_or_name} downloaded successfully.")
+            else:
+                self._set_status(f"Failed to download voice: {err_or_name}")
+                speak_text(f"Voice download failed.")
+
+        download_single_voice_model(curr_voice, on_done=_on_done)
+
 
     def _action_clean_voices(self):
         deleted, kept = delete_unused_voices()
@@ -1212,24 +1370,34 @@ class BBSApp:
     def _init_colors(self):
         curses.start_color()
         curses.use_default_colors()
-        curses.init_pair(self.CP_HEADER, curses.COLOR_YELLOW, curses.COLOR_BLUE)
-        curses.init_pair(self.CP_PROMPT, curses.COLOR_WHITE, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_DICTATION, curses.COLOR_CYAN, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_STATUS, curses.COLOR_BLACK, curses.COLOR_CYAN)
-        curses.init_pair(self.CP_HELP, curses.COLOR_YELLOW, curses.COLOR_BLUE)
+
+        # Retro deep blue for background (fallback if not 256 color)
+        bg_blue = 18 if curses.COLORS >= 256 else curses.COLOR_BLUE
+
+        curses.init_pair(self.CP_HEADER, curses.COLOR_YELLOW, bg_blue)
+        curses.init_pair(self.CP_PROMPT, curses.COLOR_WHITE, -1)
+        curses.init_pair(self.CP_DICTATION, curses.COLOR_CYAN, -1)
+        curses.init_pair(self.CP_STATUS, curses.COLOR_WHITE, bg_blue)
+
+        curses.init_pair(self.CP_HELP, curses.COLOR_YELLOW, bg_blue)
         curses.init_pair(self.CP_RECORDING, curses.COLOR_WHITE, curses.COLOR_RED)
-        curses.init_pair(self.CP_BANNER, curses.COLOR_CYAN, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_ACCENT, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_AGENT, curses.COLOR_GREEN, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_XFER, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_VOICE, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_CTX_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_CTX_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-        curses.init_pair(self.CP_CTX_RED, curses.COLOR_RED, curses.COLOR_BLACK)
+        curses.init_pair(self.CP_BANNER, curses.COLOR_CYAN, -1)
+        curses.init_pair(self.CP_ACCENT, curses.COLOR_MAGENTA, -1)
+        curses.init_pair(self.CP_AGENT, curses.COLOR_GREEN, -1)
+        curses.init_pair(self.CP_XFER, curses.COLOR_YELLOW, -1)
+        curses.init_pair(self.CP_VOICE, curses.COLOR_YELLOW, -1)
+        curses.init_pair(self.CP_CTX_GREEN, curses.COLOR_GREEN, -1)
+        curses.init_pair(self.CP_CTX_YELLOW, curses.COLOR_YELLOW, -1)
+        curses.init_pair(self.CP_CTX_RED, curses.COLOR_RED, -1)
         curses.init_pair(self.CP_XTREE_BG, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-        curses.init_pair(self.CP_XTREE_SEL, curses.COLOR_YELLOW, curses.COLOR_BLUE)
+        curses.init_pair(self.CP_XTREE_SEL, curses.COLOR_YELLOW, bg_blue)
+
         curses.init_pair(self.CP_XTREE_BORDER, curses.COLOR_WHITE, curses.COLOR_YELLOW)
-        curses.init_pair(self.CP_TTS, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        if TTS_AVAILABLE:
+            curses.init_pair(self.CP_TTS, curses.COLOR_WHITE, -1)
+        else:
+            curses.init_pair(self.CP_TTS, curses.COLOR_GREEN, -1)
+
 
     def _draw_loading(self, msg: str):
         self.stdscr.clear()
@@ -1453,13 +1621,13 @@ class BBSApp:
             help_text = " ◌ Agent working... [K] to kill"
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
-            voice_label = "[V]oice"
+            voice_label = "[V]oice" if TTS_AVAILABLE else ""
             keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [←→]Browse [↑↓]View"
             self._draw_bar(help_y, keys, self.CP_HELP)
             # Draw [V]oice in red, right-justified
             w = self.stdscr.getmaxyx()[1]
             vx = w - len(voice_label) - 1
-            if vx > len(keys):
+            if TTS_AVAILABLE and vx > len(keys):
                 try:
                     self.stdscr.addnstr(help_y, vx, voice_label, w - vx - 1,
                                         curses.color_pair(self.CP_CTX_RED) | curses.A_BOLD)
@@ -1678,8 +1846,9 @@ class BBSApp:
         start_x = max(2, (w - overlay_w) // 2)
 
         border_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
-        body_attr = curses.color_pair(self.CP_HELP)
+        body_attr = curses.color_pair(self.CP_HELP) | curses.A_BOLD
         accent_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+
         sel_attr = curses.color_pair(self.CP_VOICE) | curses.A_BOLD
 
         inner_w = overlay_w - 2
@@ -1704,10 +1873,11 @@ class BBSApp:
             for i, (label, _action) in enumerate(self._escape_menu_items):
                 row = start_y + 4 + i
                 if i == self.escape_menu_cursor:
-                    line = f"  ► {label}  "
+                    line = f"  > {label}  "
                     attr = sel_attr
                 else:
                     line = f"    {label}  "
+
                     attr = body_attr
                 padded = line + " " * max(0, inner_w - len(line))
                 self.stdscr.addnstr(row, start_x,
@@ -1749,10 +1919,11 @@ class BBSApp:
         start_x = max(2, (w - overlay_w) // 2)
 
         border_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
-        body_attr = curses.color_pair(self.CP_HELP)
+        body_attr = curses.color_pair(self.CP_HELP) | curses.A_BOLD
         accent_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
         sel_attr = curses.color_pair(self.CP_RECORDING) | curses.A_BOLD
         val_attr = curses.color_pair(self.CP_AGENT) | curses.A_BOLD
+
 
         inner_w = overlay_w - 2
 
@@ -1779,8 +1950,9 @@ class BBSApp:
                 line_attr = sel_attr if is_selected else body_attr
 
                 # Setting label line
-                cursor = "►" if is_selected else " "
+                cursor = ">" if is_selected else " "
                 label = f" {cursor} {item['label']}"
+
 
                 is_editable = item.get("editable", False)
 
@@ -1845,11 +2017,12 @@ class BBSApp:
                     self.stdscr.addnstr(row, start_x, body_line, overlay_w, line_attr)
                 else:
                     current_val = str(item["get"]())
-                    # Build value display with ◄ ► arrows when selected
+                    # Build value display with < > arrows when selected
                     if is_selected:
-                        val_display = f"◄ {current_val} ►"
+                        val_display = f"< {current_val} >"
                     else:
                         val_display = f"  {current_val}  "
+
                     # Right-align the value
                     space = inner_w - len(label) - len(val_display) - 1
                     full_line = label + " " * max(1, space) + val_display + " "
@@ -2059,7 +2232,8 @@ class BBSApp:
 
                 if idx < len(self._shortcut_strings):
                     entry = self._shortcut_strings[idx]
-                    cursor = "►" if is_sel else " "
+                    cursor = ">" if is_sel else " "
+
                     if is_sel and self.shortcut_editing_text:
                         # Inline editing mode
                         buf = self.shortcut_edit_buffer
@@ -2086,9 +2260,10 @@ class BBSApp:
                         self.stdscr.addnstr(row_y, start_x, line, overlay_w, line_attr)
                 elif idx == len(self._shortcut_strings):
                     # [Add New] row
-                    cursor = "►" if is_sel else " "
+                    cursor = ">" if is_sel else " "
                     if is_sel and self.shortcut_editing_text:
                         buf = self.shortcut_edit_buffer
+
                         cur = self.shortcut_edit_cursor_pos
                         max_vis = inner_w - 7
                         vis_start = max(0, cur - max_vis + 1) if cur > max_vis else 0
@@ -2643,12 +2818,21 @@ class BBSApp:
         elif ch == ord("["):
             name = cycle_tts_voice(-1)
             self._set_status(f"Voice: {name}", self.CP_VOICE)
-            speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
+            model_path = get_tts_voice_model()
+            if not model_path or not model_path.exists():
+                self._set_status(f"Voice {name} not downloaded!", self.CP_VOICE)
+            else:
+                speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
 
         elif ch == ord("]"):
             name = cycle_tts_voice(1)
             self._set_status(f"Voice: {name}", self.CP_VOICE)
-            speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
+            model_path = get_tts_voice_model()
+            if not model_path or not model_path.exists():
+                self._set_status(f"Voice {name} not downloaded!", self.CP_VOICE)
+            else:
+                speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
+
 
         elif ch in (10, 13, curses.KEY_ENTER):
             # Enter opens shortcuts browser (allowed during recording for injection)
@@ -2781,6 +2965,8 @@ class BBSApp:
                              injections: list[tuple[float, str]] | None = None):
         # Remove live preview line, replace with final
         self.ui_queue.put(("remove_live_preview", None))
+        
+        peak = np.max(np.abs(audio)) if len(audio) > 0 else 0
 
         if injections:
             # Use word timestamps to insert folder paths at the right positions
@@ -2797,11 +2983,16 @@ class BBSApp:
             text = transcribe(audio, self.whisper_model)
 
         if not text:
-            self.ui_queue.put(("status", "No speech detected.", self.CP_STATUS))
+            msg = "No speech detected."
+            if peak < 0.005:
+                # Help diagnose Crostini mic drop issues
+                msg = "No speech detected (Mic volume too low?)"
+            self.ui_queue.put(("status", msg, self.CP_STATUS))
             return
         self.ui_queue.put(("fragment", text))
         label = f"Added: \"{text[:50]}\"" if len(text) > 50 else f"Added: \"{text}\""
         self.ui_queue.put(("status", label, self.CP_STATUS))
+
 
     @staticmethod
     def _merge_injections(words: list[tuple[float, float, str]],
