@@ -41,6 +41,72 @@ from version import __version__
 
 import json
 import numpy as np
+import ctypes
+
+# Suppress ALSA error/warning messages (e.g. "underrun occurred") that
+# bleed into stderr and corrupt the curses terminal.  Must run before
+# sounddevice or any ALSA client is initialised.
+_ALSA_ERROR_HANDLER_FUNC = ctypes.CFUNCTYPE(
+    None, ctypes.c_char_p, ctypes.c_int,
+    ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p)
+_alsa_error_handler = _ALSA_ERROR_HANDLER_FUNC(lambda *_: None)
+
+try:
+    _asound = ctypes.cdll.LoadLibrary("libasound.so.2")
+    _asound.snd_lib_error_set_handler(_alsa_error_handler)
+except OSError:
+    pass  # not Linux / no ALSA — nothing to suppress
+
+# ── Suppress PortAudio C-level stderr (pthread_join errors, etc.) ───
+# PortAudio writes errors directly to C stderr via fprintf().  These corrupt
+# the curses display.  We redirect file descriptor 2 to /dev/null while the
+# TUI is active and restore it on exit.
+_saved_stderr_fd: int | None = None
+
+def _suppress_stderr():
+    """Redirect fd 2 → /dev/null to silence PortAudio/ALSA C-level noise."""
+    global _saved_stderr_fd
+    try:
+        _saved_stderr_fd = os.dup(2)
+        _devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(_devnull, 2)
+        os.close(_devnull)
+    except OSError:
+        _saved_stderr_fd = None
+
+def _restore_stderr():
+    """Restore original stderr so post-exit tracebacks are visible."""
+    global _saved_stderr_fd
+    if _saved_stderr_fd is not None:
+        try:
+            os.dup2(_saved_stderr_fd, 2)
+            os.close(_saved_stderr_fd)
+        except OSError:
+            pass
+        _saved_stderr_fd = None
+
+def _check_audio_input_device() -> str | None:
+    """Return an error message if no working input device, else None."""
+    try:
+        dev = sd.query_devices(kind="input")
+        if dev is None:
+            return "No audio input device found."
+        if dev.get("max_input_channels", 0) < 1:
+            return f"Input device '{dev.get('name', '?')}' has no input channels."
+        return None
+    except sd.PortAudioError as e:
+        return f"Audio device error: {e}"
+    except Exception as e:
+        return f"Cannot query audio devices: {e}"
+
+def _safe_sd_play(audio, samplerate):
+    """Play audio via sounddevice, swallowing PortAudio errors."""
+    try:
+        sd.play(audio, samplerate=samplerate)
+        sd.wait()
+    except (sd.PortAudioError, OSError):
+        pass  # output device disappeared — nothing we can do
+
 import sounddevice as sd
 import torch
 
@@ -317,10 +383,7 @@ def speak_text(text: str, on_done=None):
                     audio_array = (audio_array * gain).clip(-32768, 32767).astype(np.int16)
                 
                 # Use sounddevice instead of aplay for better Crostini compatibility
-                sd.play(audio_array, samplerate=22050)
-                # Keep reference to playing back if needed for aborting
-                # wait() blocks the background thread until finished speaking
-                sd.wait()
+                _safe_sd_play(audio_array, samplerate=22050)
 
         except Exception:
             pass
@@ -664,6 +727,8 @@ class BBSApp:
     CP_XTREE_SEL = 16
     CP_XTREE_BORDER = 17
     CP_TTS = 18
+    CP_SECT_RED = 19
+    CP_SUBMENU = 20
 
     def __init__(self, args):
         self.args = args
@@ -816,9 +881,13 @@ class BBSApp:
         self.settings_edit_buffer = ""      # current text being edited
         self.settings_edit_cursor = 0       # cursor position within buffer
 
-        # TTS sub-menu state
+        # Sub-menu state
         self.tts_submenu_open = False
         self.tts_submenu_cursor = 0
+        self.tts_submenu_items = []
+        self.test_tools_submenu_open = False
+        self.test_tools_submenu_cursor = 0
+        self.test_tools_submenu_items = []
         self.tts_enabled = saved.get("tts_enabled", True)
         global _tts_enabled
         _tts_enabled = self.tts_enabled
@@ -875,6 +944,7 @@ class BBSApp:
     def _build_settings_items(self):
         """Build the list of settings for the settings modal."""
         self.settings_items = [
+            {"type": "section", "label": "REQUIRED CONFIGURATION", "style": "red"},
             {
                 "key": "prompt_library",
                 "label": "Prompt Library",
@@ -895,6 +965,7 @@ class BBSApp:
                 "editable": True,
                 "action": self._start_editing_working_dir,
             },
+            {"type": "section", "label": "VOICE SETTINGS", "style": "yellow"},
             {
                 "key": "whisper_model",
                 "label": "Whisper Model",
@@ -927,16 +998,18 @@ class BBSApp:
                 "get": lambda: self.min_speech_duration,
                 "set": self._set_min_speech,
             },
+            {"type": "section", "label": "TOOLS & CONFIGURATION", "style": "yellow"},
         ]
         if TTS_AVAILABLE:
             self.settings_items.append({
                     "key": "_action_tts_submenu",
-                    "label": "[Enter] Text-to-Speech Settings",
+                    "label": "Text-to-Speech Settings",
                     "desc": "Configure TTS voices, libraries, and enable/disable",
                     "options": None,
                     "get": lambda: "ON" if self.tts_enabled else "OFF",
                     "set": None,
                     "action": self._open_tts_submenu,
+                    "submenu": True,
                 })
         else:
             self.settings_items.append({
@@ -947,28 +1020,19 @@ class BBSApp:
                     "get": lambda: "UNAVAILABLE",
                     "set": None,
                     "action": None,
+                    "submenu": True,
                 })
 
-        self.settings_items.extend([
-            {
-                "key": "_action_echo_test",
-                "label": "[Enter] Echo / Mic Test",
-                "desc": "Record 1s of audio and play it back to test your mic",
-                "options": None,
-                "get": lambda: "",
-                "set": None,
-                "action": self._echo_test,
-            },
-            {
-                "key": "_action_edit_shortcuts",
-                "label": "[Enter] Edit Shortcuts",
-                "desc": "Manage shortcut strings for the Shortcuts browser (Enter key)",
-                "options": None,
-                "get": lambda: f"{len(self._shortcut_strings)} shortcut(s)",
-                "set": None,
-                "action": self._open_shortcut_editor,
-            },
-        ])
+        self.settings_items.append({
+            "key": "_action_test_tools_submenu",
+            "label": "Test Tools",
+            "desc": "Echo test, TTS test sound, and volume controls",
+            "options": None,
+            "get": lambda: "",
+            "set": None,
+            "action": self._open_test_tools_submenu,
+            "submenu": True,
+        })
 
 
     def _build_tts_submenu_items(self):
@@ -1044,6 +1108,48 @@ class BBSApp:
         self.tts_submenu_open = True
         self.tts_submenu_cursor = 0
         self.tts_submenu_items = self._build_tts_submenu_items()
+        self.show_settings_overlay = True  # keep modal open
+
+    def _build_test_tools_items(self):
+        """Build the Test Tools sub-menu items list."""
+        items = [
+            {
+                "key": "_action_echo_test",
+                "label": "[Enter] Echo / Mic Test",
+                "desc": "Record 1s of audio and play it back to test your mic",
+                "options": None,
+                "get": lambda: "",
+                "set": None,
+                "action": self._echo_test,
+            },
+        ]
+        if TTS_AVAILABLE:
+            items.extend([
+                {
+                    "key": "_action_test_speech",
+                    "label": "[Enter] Play TTS Test Sound",
+                    "desc": "Speak a test sentence with the active voice profile",
+                    "options": None,
+                    "get": lambda: "",
+                    "set": None,
+                    "action": self._action_test_speech,
+                },
+                {
+                    "key": "tts_volume_gain",
+                    "label": "TTS Volume Gain",
+                    "desc": "Digital volume boost multiplier",
+                    "options": ["1.0", "1.5", "2.0", "2.5", "3.0"],
+                    "get": lambda: f"{self.tts_volume_gain:.1f}",
+                    "set": self._set_tts_volume_gain,
+                },
+            ])
+        return items
+
+    def _open_test_tools_submenu(self):
+        """Open the Test Tools sub-menu."""
+        self.test_tools_submenu_open = True
+        self.test_tools_submenu_cursor = 0
+        self.test_tools_submenu_items = self._build_test_tools_items()
         self.show_settings_overlay = True  # keep modal open
 
     def _set_tts_enabled(self, val):
@@ -1187,7 +1293,9 @@ class BBSApp:
 
     def _commit_text_edit(self):
         """Dispatch text edit commit based on which setting is being edited."""
-        item = self.settings_items[self.settings_cursor]
+        item = self._settings_selectable_item()
+        if not item:
+            return
         if item["key"] == "prompt_library":
             self._commit_prompt_library()
         elif item["key"] == "working_dir":
@@ -1216,11 +1324,42 @@ class BBSApp:
         settings[key] = val
         _save_settings(settings)
 
+    def _settings_selectable_items(self):
+        """Return list of selectable (non-section) settings items."""
+        return [it for it in self.settings_items if it.get("type") != "section"]
+
+    def _settings_selectable_item(self):
+        """Return the currently selected settings item (skipping sections)."""
+        selectable = self._settings_selectable_items()
+        if 0 <= self.settings_cursor < len(selectable):
+            return selectable[self.settings_cursor]
+        return None
+
+    def _settings_cursor_move(self, direction):
+        """Move settings cursor, skipping section headers."""
+        selectable = self._settings_selectable_items()
+        if selectable:
+            self.settings_cursor = (self.settings_cursor + direction) % len(selectable)
+
     def _settings_cycle(self, direction):
         """Cycle the current setting's value left (-1) or right (+1)."""
-        item = self.settings_items[self.settings_cursor]
+        item = self._settings_selectable_item()
+        if not item or item.get("options") is None:
+            return  # action item or section, no cycling
+        options = item["options"]
+        current = item["get"]()
+        try:
+            idx = options.index(current)
+        except ValueError:
+            idx = 0
+        new_idx = (idx + direction) % len(options)
+        item["set"](options[new_idx])
+
+    def _test_tools_submenu_cycle(self, direction):
+        """Cycle the current Test Tools sub-menu setting's value."""
+        item = self.test_tools_submenu_items[self.test_tools_submenu_cursor]
         if item.get("options") is None:
-            return  # action item, no cycling
+            return
         options = item["options"]
         current = item["get"]()
         try:
@@ -1347,6 +1486,7 @@ class BBSApp:
 
     def run(self, stdscr):
         self.stdscr = stdscr
+        _suppress_stderr()   # silence PortAudio C-level noise while TUI is active
         self._init_colors()
         curses.curs_set(0)
         stdscr.nodelay(True)
@@ -1395,6 +1535,8 @@ class BBSApp:
         curses.init_pair(self.CP_XTREE_SEL, curses.COLOR_YELLOW, bg_blue)
 
         curses.init_pair(self.CP_XTREE_BORDER, curses.COLOR_WHITE, curses.COLOR_YELLOW)
+        curses.init_pair(self.CP_SECT_RED, curses.COLOR_RED, bg_blue)
+        curses.init_pair(self.CP_SUBMENU, curses.COLOR_CYAN, bg_blue)
         if TTS_AVAILABLE:
             curses.init_pair(self.CP_TTS, curses.COLOR_WHITE, -1)
         else:
@@ -1905,7 +2047,12 @@ class BBSApp:
             render_items = self.tts_submenu_items
             render_cursor = self.tts_submenu_cursor
             render_title = " TEXT-TO-SPEECH SETTINGS "
-            render_footer = " ↑↓ Navigate  ←→ Change  Enter Action  Q/Esc Back "
+            render_footer = " ↑↓ Navigate  ←→ Change  Enter Action  Esc Close "
+        elif self.test_tools_submenu_open:
+            render_items = self.test_tools_submenu_items
+            render_cursor = self.test_tools_submenu_cursor
+            render_title = " TEST TOOLS "
+            render_footer = " ↑↓ Navigate  ←→ Change  Enter Action  Esc Close "
         else:
             render_items = self.settings_items
             render_cursor = self.settings_cursor
@@ -1913,7 +2060,9 @@ class BBSApp:
             render_footer = " ↑↓ Navigate  ←→ Change  Enter Action  O/Esc Close "
 
         overlay_w = min(72, w - 6)
-        overlay_h = min(4 + len(render_items) * 3 + 3, h - 4)
+        # Count rows: sections take 1 row, regular items take 3 rows
+        item_rows = sum(1 if it.get("type") == "section" else 3 for it in render_items)
+        overlay_h = min(4 + item_rows + 3, h - 4)
         if overlay_w < 44 or overlay_h < 12:
             return
 
@@ -1942,18 +2091,41 @@ class BBSApp:
             sep = "╠" + "═" * inner_w + "╣"
             self.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
 
+            sect_red_attr = curses.color_pair(self.CP_SECT_RED) | curses.A_BOLD
+            sect_yellow_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
+            submenu_attr = curses.color_pair(self.CP_SUBMENU) | curses.A_BOLD
+
             row = start_y + 3
+            selectable_idx = -1  # track index among selectable items
             for i, item in enumerate(render_items):
+                if row + 1 >= start_y + overlay_h - 1:
+                    break
+
+                # Section header — not selectable
+                if item.get("type") == "section":
+                    s_attr = sect_red_attr if item.get("style") == "red" else sect_yellow_attr
+                    sect_label = f" ── {item['label']} "
+                    sect_padded = sect_label + "─" * max(0, inner_w - len(sect_label))
+                    sect_line = "║" + sect_padded[:inner_w] + "║"
+                    self.stdscr.addnstr(row, start_x, sect_line, overlay_w, s_attr)
+                    row += 1
+                    continue
+
+                selectable_idx += 1
                 if row + 2 >= start_y + overlay_h - 1:
                     break
 
-                is_selected = (i == render_cursor)
+                is_selected = (selectable_idx == render_cursor)
                 is_action = item.get("options") is None
-                line_attr = sel_attr if is_selected else body_attr
+                is_submenu = item.get("submenu", False)
+                line_attr = sel_attr if is_selected else (submenu_attr if is_submenu else body_attr)
 
                 # Setting label line
                 cursor = ">" if is_selected else " "
-                label = f" {cursor} {item['label']}"
+                if is_submenu:
+                    label = f" {cursor} {item['label']}  ▶"
+                else:
+                    label = f" {cursor} {item['label']}"
 
 
                 is_editable = item.get("editable", False)
@@ -2161,7 +2333,7 @@ class BBSApp:
                     self.stdscr.addnstr(row_y, overlay_x, blank, overlay_w, bg_attr)
 
             # Footer
-            footer_text = " ↑↓ Select  Enter Insert  Esc Cancel "
+            footer_text = " ↑↓ Select  Enter Insert  E Edit  Esc Cancel "
             footer_padded = footer_text.center(inner_w)
             footer_line = "║" + footer_padded[:inner_w] + "║"
             self.stdscr.addnstr(overlay_y + overlay_h - 2, overlay_x,
@@ -2439,6 +2611,8 @@ class BBSApp:
                 if action == "settings":
                     self.show_settings_overlay = True
                     self.settings_cursor = 0
+                    self.tts_submenu_open = False
+                    self.test_tools_submenu_open = False
                 elif action == "help":
                     self.show_help_overlay = True
                 elif action == "about":
@@ -2489,6 +2663,10 @@ class BBSApp:
                         ts = datetime.datetime.now().strftime("%H:%M:%S")
                         self.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
                         self._set_status(f"Inserted: {slug}")
+                return
+            elif ch in (ord("e"), ord("E")):
+                self.show_folder_slug = False
+                self._open_shortcut_editor()
                 return
             elif ch == 27:
                 self.show_folder_slug = False
@@ -2545,6 +2723,8 @@ class BBSApp:
 
             if ch == 27:
                 self.show_shortcut_editor = False
+                self._scan_folder_slugs()  # refresh to reflect edits
+                self.show_folder_slug = True  # return to folder menu
                 self.stdscr.nodelay(True)
                 self.stdscr.getch()
             elif ch == curses.KEY_UP:
@@ -2609,11 +2789,12 @@ class BBSApp:
 
             # TTS sub-menu navigation
             if self.tts_submenu_open:
-                if ch in (ord("q"), ord("Q"), 27):
+                if ch in (27,):
                     self.tts_submenu_open = False
-                    if ch == 27:
-                        self.stdscr.nodelay(True)
-                        self.stdscr.getch()
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+                elif ch in (ord("q"), ord("Q")):
+                    self.tts_submenu_open = False
                 elif ch == curses.KEY_UP:
                     self.tts_submenu_cursor = (self.tts_submenu_cursor - 1) % len(self.tts_submenu_items)
                 elif ch == curses.KEY_DOWN:
@@ -2625,30 +2806,53 @@ class BBSApp:
                 elif ch in (10, 13, curses.KEY_ENTER):
                     item = self.tts_submenu_items[self.tts_submenu_cursor]
                     if item.get("action"):
-                        self.tts_submenu_open = False
-                        self.show_settings_overlay = False
+                        item["action"]()
+                return
+
+            # Test Tools sub-menu navigation
+            if self.test_tools_submenu_open:
+                if ch in (27,):
+                    self.test_tools_submenu_open = False
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+                elif ch in (ord("q"), ord("Q")):
+                    self.test_tools_submenu_open = False
+                elif ch == curses.KEY_UP:
+                    self.test_tools_submenu_cursor = (self.test_tools_submenu_cursor - 1) % len(self.test_tools_submenu_items)
+                elif ch == curses.KEY_DOWN:
+                    self.test_tools_submenu_cursor = (self.test_tools_submenu_cursor + 1) % len(self.test_tools_submenu_items)
+                elif ch == curses.KEY_LEFT:
+                    self._test_tools_submenu_cycle(-1)
+                elif ch == curses.KEY_RIGHT:
+                    self._test_tools_submenu_cycle(1)
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    item = self.test_tools_submenu_items[self.test_tools_submenu_cursor]
+                    if item.get("action"):
                         item["action"]()
                 return
 
             if ch in (ord("o"), ord("O"), ord("q"), ord("Q"), 27):
                 self.show_settings_overlay = False
                 self.tts_submenu_open = False
+                self.test_tools_submenu_open = False
                 if ch == 27:
                     self.stdscr.nodelay(True)
                     self.stdscr.getch()
             elif ch == curses.KEY_UP:
-                self.settings_cursor = (self.settings_cursor - 1) % len(self.settings_items)
+                self._settings_cursor_move(-1)
             elif ch == curses.KEY_DOWN:
-                self.settings_cursor = (self.settings_cursor + 1) % len(self.settings_items)
+                self._settings_cursor_move(1)
             elif ch == curses.KEY_LEFT:
                 self._settings_cycle(-1)
             elif ch == curses.KEY_RIGHT:
                 self._settings_cycle(1)
             elif ch in (10, 13, curses.KEY_ENTER):
-                item = self.settings_items[self.settings_cursor]
-                if item.get("action"):
+                item = self._settings_selectable_item()
+                if item and item.get("action"):
                     if item.get("editable"):
                         item["action"]()  # keep modal open for editing
+                    elif item.get("submenu"):
+                        item["action"]()  # submenu openers keep modal open
                     else:
                         self.show_settings_overlay = False
                         item["action"]()
@@ -2867,6 +3071,12 @@ class BBSApp:
     # ─── Recording ─────────────────────────────────────────────────
 
     def _start_recording(self):
+        # Pre-flight: check audio input device is available
+        dev_err = _check_audio_input_device()
+        if dev_err:
+            self._set_status(f"Mic error: {dev_err}", self.CP_RECORDING)
+            return
+
         self.recording = True
         self._rec_stop_event = threading.Event()
         with self.audio_lock:
@@ -2882,10 +3092,15 @@ class BBSApp:
 
         self._set_status("██ RECORDING — press SPACE to stop ██", self.CP_RECORDING)
 
-        self._audio_stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
-            blocksize=BLOCK_SIZE, callback=self._audio_callback)
-        self._audio_stream.start()
+        try:
+            self._audio_stream = sd.InputStream(
+                samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
+                blocksize=BLOCK_SIZE, callback=self._audio_callback)
+            self._audio_stream.start()
+        except (sd.PortAudioError, OSError) as e:
+            self.recording = False
+            self._set_status(f"Audio device error: {e}", self.CP_RECORDING)
+            return
 
         # Start live transcription thread
         self._live_transcribe_thread = threading.Thread(
@@ -2893,6 +3108,11 @@ class BBSApp:
         self._live_transcribe_thread.start()
 
     def _audio_callback(self, indata, frames, time_info, status):
+        if status:
+            # Device error (e.g. input overflow, device disconnected)
+            self.ui_queue.put(("status",
+                               f"Audio: {status}",
+                               self.CP_RECORDING))
         with self.audio_lock:
             self.audio_frames.append(indata[:, 0].copy())
 
@@ -3023,6 +3243,10 @@ class BBSApp:
 
     def _echo_test(self):
         """Record 1 second of audio and play it back immediately."""
+        dev_err = _check_audio_input_device()
+        if dev_err:
+            self._set_status(f"Echo test failed: {dev_err}", self.CP_RECORDING)
+            return
         self._set_status("Echo test: recording 1 second...", self.CP_RECORDING)
         threading.Thread(target=self._do_echo_test, daemon=True).start()
 
@@ -3033,13 +3257,24 @@ class BBSApp:
             frames.append(indata.copy())
 
         # Record 1 second
-        stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
-            blocksize=BLOCK_SIZE, callback=callback)
-        stream.start()
+        try:
+            stream = sd.InputStream(
+                samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
+                blocksize=BLOCK_SIZE, callback=callback)
+            stream.start()
+        except (sd.PortAudioError, OSError) as e:
+            self.ui_queue.put(("status",
+                               f"Echo test: mic open failed — {e}",
+                               self.CP_RECORDING))
+            return
+
         time.sleep(1.0)
-        stream.stop()
-        stream.close()
+
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            pass  # stream teardown errors are non-fatal
 
         if not frames:
             self.ui_queue.put(("status", "Echo test: no audio captured.", self.CP_STATUS))
@@ -3054,8 +3289,14 @@ class BBSApp:
                            self.CP_STATUS))
 
         # Play it back at the default output device
-        sd.play(audio, samplerate=SAMPLE_RATE)
-        sd.wait()
+        try:
+            sd.play(audio, samplerate=SAMPLE_RATE)
+            sd.wait()
+        except (sd.PortAudioError, OSError) as e:
+            self.ui_queue.put(("status",
+                               f"Echo test: playback failed — {e}",
+                               self.CP_RECORDING))
+            return
 
         self.ui_queue.put(("status",
                            f"Echo test done. Peak={peak:.3f} RMS={rms:.4f} "
@@ -3741,7 +3982,10 @@ def main():
     args = parser.parse_args()
 
     app = BBSApp(args)
-    curses.wrapper(lambda stdscr: app.run(stdscr))
+    try:
+        curses.wrapper(lambda stdscr: app.run(stdscr))
+    finally:
+        _restore_stderr()
 
     if app.restart:
         os.execv(sys.executable, [sys.executable] + sys.argv)
