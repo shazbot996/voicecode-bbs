@@ -16,6 +16,8 @@
 
 **Currently supports Claude CLI.** Gemini support is coming very soon.
 
+![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
+
 ---
 
 ## Quick Start
