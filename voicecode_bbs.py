@@ -101,10 +101,31 @@ def _check_audio_input_device() -> str | None:
         return f"Cannot query audio devices: {e}"
 
 def _safe_sd_play(audio, samplerate):
-    """Play audio via sounddevice, swallowing PortAudio errors."""
+    """Play audio via sounddevice with smooth buffering.
+
+    Converts to float32 and uses an OutputStream with explicit blocksize
+    to avoid choppy playback on WSL2 / PulseAudio.  Short fade-in/out
+    prevents clicks at audio boundaries.
+    """
     try:
-        sd.play(audio, samplerate=samplerate)
-        sd.wait()
+        # Convert int16 → float32 for better precision and gain handling
+        audio_f = audio.astype(np.float32) / 32768.0
+
+        # Fade-in/out (5ms each) to eliminate start/end clicks
+        fade_len = min(int(samplerate * 0.005), len(audio_f) // 2)
+        if fade_len > 0:
+            audio_f[:fade_len] *= np.linspace(0, 1, fade_len, dtype=np.float32)
+            audio_f[-fade_len:] *= np.linspace(1, 0, fade_len, dtype=np.float32)
+
+        # Stream with large blocksize to avoid PulseAudio underruns
+        blocksize = 4096
+        with sd.OutputStream(samplerate=samplerate, channels=1,
+                             dtype='float32', blocksize=blocksize,
+                             latency='high') as stream:
+            # Write in blocksize chunks
+            for i in range(0, len(audio_f), blocksize):
+                chunk = audio_f[i:i + blocksize]
+                stream.write(chunk.reshape(-1, 1))
     except (sd.PortAudioError, OSError):
         pass  # output device disappeared — nothing we can do
 
@@ -381,9 +402,14 @@ def speak_text(text: str, on_done=None):
             if audio_bytes:
                 audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
                 if gain != 1.0:
-                    audio_array = (audio_array * gain).clip(-32768, 32767).astype(np.int16)
-                
-                # Use sounddevice instead of aplay for better Crostini compatibility
+                    # Apply gain in float32 to avoid hard clipping distortion
+                    audio_f = audio_array.astype(np.float32) * gain
+                    # Soft-clip via tanh to avoid harsh digital distortion
+                    peak = np.max(np.abs(audio_f))
+                    if peak > 32767:
+                        audio_f = audio_f * (32767.0 / peak)
+                    audio_array = audio_f.astype(np.int16)
+
                 _safe_sd_play(audio_array, samplerate=22050)
 
         except Exception:
