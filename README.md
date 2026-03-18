@@ -138,6 +138,8 @@ Or press **D** to skip refinement and send raw dictation directly.
  Ready                                                      Protocol: ZMODEM/1.0
 ```
 
+![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
+
 - **Prompt Browser** (top-left) — View and browse your refined prompts. Favorites indicators on the left border.
 - **Dictation Buffer** (bottom-left) — Watch voice fragments accumulate in real-time.
 - **Agent Terminal** (right) — ZMODEM transfer animation, then typewriter-streamed responses with context meter.
