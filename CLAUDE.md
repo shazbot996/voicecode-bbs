@@ -17,7 +17,7 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 
 - Sample rate: 16kHz, mono, 30ms blocks (480 samples)
 - VAD threshold: 0.5, silence timeout: 1.5s, min speech: 0.3s
-- Typewriter effect: 12ms/char (~83 CPS)
+- Typewriter effect: 1.5ms/char (~667 CPS)
 
 ## Tech Stack
 

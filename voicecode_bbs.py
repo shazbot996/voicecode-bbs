@@ -28,6 +28,7 @@ import sys
 import os
 import threading
 import queue
+import signal
 import subprocess
 import time
 import datetime
@@ -911,6 +912,7 @@ class BBSApp:
         # Agent state
         self.agent_state = AgentState.IDLE
         self.agent_process = None
+        self._agent_cancel = threading.Event()
         self.last_tts_summary = ""
 
         # Session continuity — reuse session_id across prompts
@@ -929,8 +931,8 @@ class BBSApp:
         # Typewriter state
         self.typewriter_queue: collections.deque = collections.deque()
         self.typewriter_last_time = 0.0
-        self.typewriter_char_delay = 0.003  # seconds per char (~333 cps)
-        self.typewriter_line_delay = 0.01   # extra delay at newlines
+        self.typewriter_char_delay = 0.0004  # seconds per char (~2500 cps)
+        self.typewriter_line_delay = 0.001  # extra delay at newlines
         self._typewriter_line_color = None  # per-line color override (None = default)
         self.agent_first_output = False      # tracks if agent has produced any output
         self.agent_welcome_shown = False     # True after initial welcome art displayed
@@ -3610,6 +3612,7 @@ class BBSApp:
         self._tts_detect_buf = ''
         self._tts_in_summary = False
         self._set_agent_welcome(40)
+        self._agent_cancel.clear()
         threading.Thread(target=self._run_agent, daemon=True).start()
 
     # ─── Agent execution ──────────────────────────────────────────
@@ -3650,6 +3653,7 @@ class BBSApp:
         self._set_status("Initiating ZMODEM transfer to agent...")
 
         # Start agent after a brief animation delay
+        self._agent_cancel.clear()
         threading.Thread(target=self._run_agent, daemon=True).start()
 
     def _emit_typewriter(self, text):
@@ -3743,8 +3747,9 @@ class BBSApp:
 
     def _run_agent(self):
         """Run claude agent in background, streaming verbose output."""
-        # Let the download animation play for ~3 seconds
-        time.sleep(3.0)
+        # Let the download animation play for ~3 seconds (cancellable)
+        if self._agent_cancel.wait(3.0):
+            return  # cancelled during animation
 
         self.ui_queue.put(("agent_state", AgentState.RECEIVING))
         self.ui_queue.put(("status", "Agent receiving transmission...", self.CP_STATUS))
@@ -3860,7 +3865,12 @@ class BBSApp:
 
                 # Skip system, rate_limit_event, etc.
 
-            self.agent_process.wait()
+            # If the agent was killed, don't post completion messages
+            if self._agent_cancel.is_set():
+                return
+
+            if self.agent_process:
+                self.agent_process.wait()
 
             # Flush any remaining TTS detection buffer
             self._flush_tts_detect_buf()
@@ -3883,22 +3893,34 @@ class BBSApp:
                 self.ui_queue.put(("status", "Speaking summary...", self.CP_STATUS))
 
         except FileNotFoundError:
-            self.ui_queue.put(("agent_state", AgentState.DONE))
-            self.ui_queue.put(("status", "Error: 'claude' CLI not found!", self.CP_STATUS))
+            if not self._agent_cancel.is_set():
+                self.ui_queue.put(("agent_state", AgentState.DONE))
+                self.ui_queue.put(("status", "Error: 'claude' CLI not found!", self.CP_STATUS))
         except Exception as e:
-            self.ui_queue.put(("agent_state", AgentState.DONE))
-            self.ui_queue.put(("status", f"Agent error: {e}", self.CP_STATUS))
+            if not self._agent_cancel.is_set():
+                self.ui_queue.put(("agent_state", AgentState.DONE))
+                self.ui_queue.put(("status", f"Agent error: {e}", self.CP_STATUS))
 
     def _kill_agent(self):
-        if self.agent_process:
-            try:
-                self.agent_process.kill()
-            except Exception:
-                pass
-            self.agent_process = None
+        # Signal the cancel event so the animation sleep exits early
+        self._agent_cancel.set()
+        proc = self.agent_process
+        self.agent_process = None
         stop_speaking()
         self.agent_state = AgentState.IDLE
         self.typewriter_queue.clear()
+        if proc:
+            # Terminate in background to avoid blocking the UI thread
+            def _reap():
+                try:
+                    proc.terminate()  # SIGTERM for graceful shutdown
+                    try:
+                        proc.wait(timeout=3.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()  # SIGKILL as last resort
+                except Exception:
+                    pass
+            threading.Thread(target=_reap, daemon=True).start()
         # Restore source pane if still pending
         if self._agent_source_pane is not None:
             self._agent_source_pane.color_pair = self._agent_source_original_color
@@ -3926,7 +3948,7 @@ class BBSApp:
 
         # Process multiple chars per frame to keep up, but with timing
         chars_this_frame = 0
-        max_chars = 40  # burst up to 40 chars per frame for verbose streaming
+        max_chars = 80  # burst up to 80 chars per frame for verbose streaming
 
         while self.typewriter_queue and chars_this_frame < max_chars:
             ch = self.typewriter_queue[0]
@@ -3953,6 +3975,7 @@ class BBSApp:
                         self.agent_pane.line_colors[idx] = self._typewriter_line_color
                 self.typewriter_last_time = now
                 chars_this_frame += 1
+                now = time.time()  # re-sample so burst timing works within frame
             else:
                 break
 
