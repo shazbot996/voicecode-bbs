@@ -3,7 +3,7 @@
 VoiceCode BBS - A retro BBS-style voice-driven prompt workshop & agent terminal.
 
           ╔═══════════════════════════════════════╗
-          ║  V O I C E C O D E   B B S   v2.0     ║
+          ║  V O I C E C O D E   B B S   v2.1     ║
           ║  "Your voice, your prompt, your way"  ║
           ╚═══════════════════════════════════════╝
 
@@ -36,6 +36,8 @@ import argparse
 import random
 import collections
 from pathlib import Path
+
+from version import __version__
 
 import json
 import numpy as np
@@ -626,7 +628,7 @@ ZMODEM_FRAMES = [
 
 # ─── Main BBS Application ─────────────────────────────────────────────
 
-BANNER = r"""
+BANNER = f"""
 ██╗   ██╗ ██████╗ ██╗ ██████╗███████╗ ██████╗ ██████╗ ██████╗ ███████╗
  ██║   ██║██╔═══██╗██║██╔════╝██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝
  ██║   ██║██║   ██║██║██║     █████╗  ██║     ██║   ██║██║  ██║█████╗
@@ -635,7 +637,7 @@ BANNER = r"""
    ╚═══╝   ╚═════╝ ╚═╝ ╚═════╝╚══════╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
                                                             @schiele
                   ╔════════════════════════════════╗
-                  ║     B  ·  B  ·  S    v2.0      ║
+                  ║     B  ·  B  ·  S    v{__version__}      ║
                   ║  Voice-Driven Prompt Workshop  ║
                   ╚════════════════════════════════╝                   """
 
@@ -728,7 +730,7 @@ class BBSApp:
         self.current_prompt: str | None = None
         self.prompt_version = 0
 
-        self.status_msg = "Welcome to VoiceCode BBS v2.0!"
+        self.status_msg = f"Welcome to VoiceCode BBS v{__version__}!"
         self.status_color = self.CP_STATUS
         self.running = True
         self.restart = False
@@ -1436,7 +1438,7 @@ class BBSApp:
             return
 
         # ── Header bar ──
-        header = " VOICECODE BBS v2.0"
+        header = f" VOICECODE BBS v{__version__}"
         now = datetime.datetime.now().strftime("%H:%M:%S")
         sysop = f"SysOp: {os.getenv('USER', '?')}"
         voice_tag = f"Voice: {get_tts_voice_name()}"
@@ -1685,7 +1687,7 @@ class BBSApp:
         # Content lines for the help overlay
         content = [
             "",
-            "  V O I C E C O D E   B B S   v2.0",
+            f"  V O I C E C O D E   B B S   v{__version__}",
             "  Voice-Driven Prompt Workshop",
             "",
             "  ── How It Works ──────────────────",
@@ -1779,7 +1781,7 @@ class BBSApp:
             "  ╦  ╦╔═╗╦╔═╗╔═╗╔═╗╔═╗╔╦╗╔═╗",
             "  ╚╗╔╝║ ║║║  ║╣ ║  ║ ║ ║║║╣ ",
             "   ╚╝ ╚═╝╩╚═╝╚═╝╚═╝╚═╝═╩╝╚═╝",
-            "          B  B  S   v2.0",
+            f"          B  B  S   v{__version__}",
             "",
             "  ── About ─────────────────────",
             "  Voice-driven prompt workshop",
@@ -3703,7 +3705,7 @@ class BBSApp:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="VoiceCode BBS v2.0 - Voice-Driven Prompt Workshop & Agent Terminal",
+        description=f"VoiceCode BBS v{__version__} - Voice-Driven Prompt Workshop & Agent Terminal",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             ╔═══════════════════════════════════════════════════════╗
