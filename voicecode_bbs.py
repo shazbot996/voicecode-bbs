@@ -17,7 +17,7 @@ Layout:
 
 Workflow:
   1. Dictate fragments → [R]efine into prompt
-  2. [S]ave prompt to <library>/voicecode/YYYY/MM/DD/
+  2. [S]ave prompt to <library>/voicecode/
   3. [←→] Browse saved prompts
   4. [E]xecute — sends prompt to Claude agent (right pane)
   5. Watch the ZMODEM transfer animation + typewriter response
@@ -42,6 +42,7 @@ from pathlib import Path
 from version import __version__
 
 import json
+import re
 import numpy as np
 import ctypes
 
@@ -146,6 +147,29 @@ def _save_shortcuts(shortcuts: list[str]):
     """Persist shortcut strings to disk."""
     SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     SHORTCUTS_FILE.write_text("\n".join(shortcuts) + "\n" if shortcuts else "")
+
+
+def _slug_from_text(text: str, max_words: int = 5) -> str:
+    """Derive a short filesystem-safe slug from prompt text."""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            break
+    else:
+        stripped = text.strip()
+    words = re.sub(r"[^a-z0-9\s]", "", stripped.lower()).split()[:max_words]
+    return "_".join(words) if words else "prompt"
+
+
+def _next_seq(directory: Path) -> int:
+    """Return the next sequence number for flat-indexed files in directory."""
+    max_seq = 0
+    if directory.exists():
+        for p in directory.iterdir():
+            m = re.match(r"(\d+)_", p.name)
+            if m:
+                max_seq = max(max_seq, int(m.group(1)))
+    return max_seq + 1
 
 
 # ─── TTS globals ──────────────────────────────────────────────────────
@@ -754,7 +778,7 @@ class BBSApp:
             "  [END] Clear working prompt & buffer",
             "",
             "  ←→ to browse saved prompts",
-            "  ↑↓ cycle active/favorites/saved",
+            "  ↑↓ cycle views  1-0 load favorites",
         ]
         self.dictation_pane.welcome_art = [
             "╔══════════════════════════════════════╗",
@@ -768,6 +792,7 @@ class BBSApp:
             "",
             "  [R] Refine → merges into the Prompt above",
             "  [D] Direct → sends straight to the Agent",
+            "  [U] Undo   → remove last entry",
             "  [C] Clear  → wipe and start over",
             "",
             "                         [P] Replay TTS ♪",
@@ -827,20 +852,23 @@ class BBSApp:
         # Voicecode writes into a dedicated subfolder within the library
         self.save_base = Path(self.prompt_library).expanduser() / "voicecode"
         self.history_base = self.save_base / "history"
-        self.favorites_base = self.save_base / "favorites"
         self.saved_prompts: list[Path] = []
         self.history_prompts: list[Path] = []
-        self.favorites_prompts: list[Path] = []
+        self.favorites_slots: list[str | None] = [None] * 10  # 10 numbered slots (keys 1-9, 0)
         self.browser_index: int = -1
         self.browser_view: str = "active"  # "active", "history" (saved), or "favorites"
         self._scan_saved_prompts()
         self._scan_history_prompts()
-        self._scan_favorites_prompts()
+        self._load_favorites_slots()
 
         # Prompt saved state
         self.prompt_saved = True  # no unsaved prompt at start
         self.confirming_new = False  # for [N] save confirmation dialog
         self.confirming_edit_historical = False  # for editing a historical prompt
+        self.choosing_fav_slot = False  # for [F] slot selection
+        self.confirming_fav_overwrite = False  # for overwrite confirmation
+        self._pending_fav_slot: int = -1  # slot index pending overwrite confirm
+        self._pending_fav_path: str = ""  # path pending favorites assignment
 
         # Working directory for folder slug mode
         self.working_dir = saved.get("working_dir", "")
@@ -1342,8 +1370,10 @@ class BBSApp:
             new_path = str(Path("~/prompts").expanduser())
         self.prompt_library = new_path
         self.save_base = Path(new_path).expanduser() / "voicecode"
+        self.history_base = self.save_base / "history"
         self._persist_setting("prompt_library", new_path)
         self._scan_saved_prompts()
+        self._scan_history_prompts()
         self.settings_editing_text = False
         self._set_status(f"Prompt library → {new_path}/voicecode/")
 
@@ -1453,16 +1483,36 @@ class BBSApp:
 
     def _scan_saved_prompts(self):
         self.saved_prompts = sorted(
-            p for p in self.save_base.rglob("prompt_*.md")
-            if not str(p).startswith(str(self.history_base))
-            and not str(p).startswith(str(self.favorites_base))
+            p for p in self.save_base.glob("[0-9]*_*.md")
         )
 
     def _scan_history_prompts(self):
-        self.history_prompts = sorted(self.history_base.rglob("prompt_*.md"))
+        self.history_prompts = sorted(self.history_base.glob("[0-9]*_*.md"))
 
-    def _scan_favorites_prompts(self):
-        self.favorites_prompts = sorted(self.favorites_base.rglob("prompt_*.md"))
+    def _load_favorites_slots(self):
+        """Load 10-slot favorites from settings."""
+        saved = _load_settings()
+        slots = saved.get("favorites_slots", [None] * 10)
+        # Ensure exactly 10 slots
+        self.favorites_slots = (slots + [None] * 10)[:10]
+        # Validate paths still exist
+        for i, p in enumerate(self.favorites_slots):
+            if p and not Path(p).exists():
+                self.favorites_slots[i] = None
+
+    def _save_favorites_slots(self):
+        """Persist 10-slot favorites to settings."""
+        settings = _load_settings()
+        settings["favorites_slots"] = self.favorites_slots
+        _save_settings(settings)
+
+    def _favorites_as_paths(self) -> list[Path]:
+        """Return list of Path objects for occupied favorites slots, in slot order."""
+        return [Path(p) for p in self.favorites_slots if p]
+
+    def _favorites_slot_count(self) -> int:
+        """Return number of occupied favorites slots."""
+        return sum(1 for p in self.favorites_slots if p)
 
     # ─── Persistent dictation buffer ──────────────────────────────
 
@@ -1501,12 +1551,24 @@ class BBSApp:
         except (OSError, json.JSONDecodeError, KeyError):
             pass
 
+    def _rebuild_dictation_pane(self):
+        """Rebuild dictation pane lines from current fragments list."""
+        left_width = self.stdscr.getmaxyx()[1] // 2
+        self.dictation_pane.lines.clear()
+        self.dictation_pane.scroll_offset = 0
+        if self.fragments:
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            for frag in self.fragments:
+                self.dictation_pane.add_line(f"[{ts}] {frag}", left_width)
+        else:
+            self._set_dictation_info(left_width)
+
     def _current_browser_list(self) -> list[Path]:
         """Return the prompt list for the current browser view."""
         if self.browser_view == "history":
             return self.history_prompts
         if self.browser_view == "favorites":
-            return self.favorites_prompts
+            return self._favorites_as_paths()
         return self.saved_prompts
 
     def _load_browser_prompt(self, width: int):
@@ -1517,10 +1579,12 @@ class BBSApp:
         if self.browser_index < 0 or self.browser_index >= len(prompt_list):
             self.browser_index = -1
             if self.browser_view == "favorites":
-                self.prompt_pane.title = "FAVORITES BROWSER"
+                self.prompt_pane.title = "FAVORITES [1-9, 0]"
+                slots_info = self._format_favorites_slots()
                 self.prompt_pane.set_text(
-                    "(no favorite selected)\n\n"
-                    f"Favorite prompts: {len(self.favorites_prompts)}  ←→ to browse\n"
+                    f"★ Favorites — {self._favorites_slot_count()}/10 slots used\n\n"
+                    f"{slots_info}\n\n"
+                    "Press 1-9/0 to quick-load\n"
                     "↑↓ switch views\n"
                     "HOME reset to new prompt", width)
             elif self.browser_view == "history":
@@ -1544,16 +1608,27 @@ class BBSApp:
             return
 
         path = prompt_list[self.browser_index]
-        base = (self.history_base if self.browser_view == "history"
-                else self.favorites_base if self.browser_view == "favorites"
-                else self.save_base)
-        try:
-            rel = path.relative_to(base)
-        except ValueError:
-            rel = path
-        n = len(prompt_list)
-        idx = self.browser_index + 1
-        self.prompt_pane.title = f"[{idx}/{n}] {view_label}: {rel}"
+        if self.browser_view == "favorites":
+            # Find which slot this favorite is in
+            slot_label = "★"
+            for si, sp in enumerate(self.favorites_slots):
+                if sp and Path(sp) == path:
+                    key = str((si + 1) % 10)
+                    slot_label = f"★ Slot {si + 1} [key {key}]"
+                    break
+            n = len(prompt_list)
+            idx = self.browser_index + 1
+            self.prompt_pane.title = f"[{idx}/{n}] {slot_label}"
+        else:
+            base = (self.history_base if self.browser_view == "history"
+                    else self.save_base)
+            try:
+                rel = path.relative_to(base)
+            except ValueError:
+                rel = path
+            n = len(prompt_list)
+            idx = self.browser_index + 1
+            self.prompt_pane.title = f"[{idx}/{n}] {view_label}: {rel}"
 
         try:
             content = path.read_text()
@@ -1730,7 +1805,7 @@ class BBSApp:
         else:
             browse_info = f"Session v{self.prompt_version}"
         node_info = (f" {browse_info} │ Saved: {len(self.saved_prompts)} │ "
-                     f"Favs: {len(self.favorites_prompts)} │ "
+                     f"Favs: {self._favorites_slot_count()}/10 │ "
                      f"Saved: {len(self.history_prompts)} │ "
                      f"Frags: {len(self.fragments)} │ Agent: {self.agent_state.upper()} ")
         divider = "─" * 2 + node_info + "─" * max(0, w - 2 - len(node_info))
@@ -1898,8 +1973,8 @@ class BBSApp:
                     pass
 
         # ── Favorites hint on prompt pane top border (drawn after arrow to take priority) ──
-        if self.browser_view == "history" and self.browser_index >= 0:
-            fav_hint = " [F] ★ Favorite "
+        if self.browser_view == "favorites" and self.browser_index >= 0:
+            fav_hint = " [F] Remove "
             fav_x = left_width - len(fav_hint) - 1
             if fav_x > 4:
                 try:
@@ -1907,8 +1982,8 @@ class BBSApp:
                                        curses.color_pair(self.CP_RECORDING) | curses.A_BOLD)
                 except curses.error:
                     pass
-        elif self.browser_view == "favorites" and self.browser_index >= 0:
-            fav_hint = " [F] Remove "
+        elif self.browser_index >= 0 or self.current_prompt or self.executed_prompt_text:
+            fav_hint = " [F] ★ Fav slot "
             fav_x = left_width - len(fav_hint) - 1
             if fav_x > 4:
                 try:
@@ -1956,12 +2031,19 @@ class BBSApp:
         elif self.confirming_edit_historical:
             help_text = " ██ EDIT HISTORICAL PROMPT? — [Y] Copy as new working prompt  [other] Cancel ██"
             self._draw_bar(help_y, help_text, self.CP_RECORDING)
+        elif self.choosing_fav_slot:
+            help_text = " ██ CHOOSE FAVORITES SLOT — [1-9, 0] to assign  [ESC/other] Cancel ██"
+            self._draw_bar(help_y, help_text, self.CP_RECORDING)
+        elif self.confirming_fav_overwrite:
+            slot_num = self._pending_fav_slot + 1
+            help_text = f" ██ SLOT {slot_num} OCCUPIED — [Y] Overwrite  [other] Cancel ██"
+            self._draw_bar(help_y, help_text, self.CP_RECORDING)
         elif self.agent_state in (AgentState.DOWNLOADING, AgentState.RECEIVING):
             help_text = " ◌ Agent working... [K] to kill"
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
             voice_label = "[V]oice" if TTS_AVAILABLE else ""
-            keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [Tab]Shortcuts"
+            keys = " [Q]uit [X]Restart | [S]ave [N]ew [U]ndo [C]lear [K]ill [W]NewSess [Tab]Shortcuts"
             self._draw_bar(help_y, keys, self.CP_HELP)
             # Draw [V]oice in red, right-justified
             w = self.stdscr.getmaxyx()[1]
@@ -2038,8 +2120,10 @@ class BBSApp:
             "  E      Execute current prompt",
             "  D      Direct execute (skip refine)",
             "  S      Save prompt to disk",
-            "  F      Add/remove favorites",
+            "  F      Assign to favorites slot",
+            "  1-0    Quick-load favorites 1-10",
             "  N      New prompt",
+            "  U      Undo last dictation entry",
             "  C      Clear dictation buffer",
             "  K      Kill running agent",
             "  W      New session (clear context)",
@@ -3301,6 +3385,26 @@ class BBSApp:
                 self._set_status("Edit cancelled.")
             return
 
+        # Handle favorites slot selection
+        if self.choosing_fav_slot:
+            self.choosing_fav_slot = False
+            slot_idx = self._key_to_fav_slot(ch)
+            if slot_idx >= 0:
+                self._assign_to_fav_slot(slot_idx)
+            else:
+                self._set_status("Favorites assignment cancelled.")
+            return
+
+        # Handle favorites overwrite confirmation
+        if self.confirming_fav_overwrite:
+            self.confirming_fav_overwrite = False
+            if ch == ord("y") or ch == ord("Y"):
+                self._do_assign_fav_slot(self._pending_fav_slot)
+            else:
+                self._pending_fav_slot = -1
+                self._set_status("Favorites assignment cancelled.")
+            return
+
         # Handle direct text entry mode in dictation buffer
         if self.typing_mode:
             if ch in (10, 13, curses.KEY_ENTER):
@@ -3409,7 +3513,7 @@ class BBSApp:
                 if self.browser_view == "favorites" and self.browser_index >= 0:
                     self._remove_from_favorites()
                 else:
-                    self._add_to_favorites()
+                    self._add_to_favorites(None)
 
         elif ch == ord("e") or ch == ord("E"):
             if self.agent_state in (AgentState.IDLE, AgentState.DONE):
@@ -3418,6 +3522,16 @@ class BBSApp:
         elif ch == ord("n") or ch == ord("N"):
             if not self.refining and not self.recording:
                 self._new_prompt()
+
+        elif ch == ord("u") or ch == ord("U"):
+            if self.fragments:
+                removed = self.fragments.pop()
+                self._persist_buffer()
+                self._rebuild_dictation_pane()
+                preview = removed[:40] + "…" if len(removed) > 40 else removed
+                self._set_status(f"Undid: {preview}")
+            else:
+                self._set_status("Nothing to undo.")
 
         elif ch == ord("c") or ch == ord("C"):
             self.fragments.clear()
@@ -3469,7 +3583,7 @@ class BBSApp:
                 if next_view == "history":
                     self._scan_history_prompts()
                 elif next_view == "favorites":
-                    self._scan_favorites_prompts()
+                    self._load_favorites_slots()
                 self.browser_view = next_view
                 self.browser_index = -1
                 self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
@@ -3496,7 +3610,7 @@ class BBSApp:
                 if next_view == "history":
                     self._scan_history_prompts()
                 elif next_view == "favorites":
-                    self._scan_favorites_prompts()
+                    self._load_favorites_slots()
                 self.browser_view = next_view
                 self.browser_index = -1
                 self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
@@ -3543,6 +3657,11 @@ class BBSApp:
             else:
                 speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
 
+
+        elif ord("0") <= ch <= ord("9"):
+            # Number keys 1-9, 0 → quick-load favorites slots
+            if not self.recording and not self.refining:
+                self._quick_load_favorite(ch)
 
         elif ch in (10, 13, curses.KEY_ENTER):
             # Enter starts direct text entry in dictation buffer
@@ -3876,12 +3995,11 @@ class BBSApp:
             return
 
         now = datetime.datetime.now()
-        date_dir = self.save_base / now.strftime("%Y/%m/%d")
-        date_dir.mkdir(parents=True, exist_ok=True)
+        self.save_base.mkdir(parents=True, exist_ok=True)
 
-        existing = sorted(date_dir.glob("prompt_*.md"))
-        seq = len(existing) + 1
-        filename = date_dir / f"prompt_{seq:03d}.md"
+        seq = _next_seq(self.save_base)
+        slug = _slug_from_text(self.current_prompt)
+        filename = self.save_base / f"{seq:03d}_{slug}.md"
 
         with open(filename, "w") as f:
             f.write(f"# Prompt v{self.prompt_version}\n")
@@ -3900,113 +4018,162 @@ class BBSApp:
         if not prompt_text:
             return
         now = datetime.datetime.now()
-        date_dir = self.history_base / now.strftime("%Y/%m/%d")
-        date_dir.mkdir(parents=True, exist_ok=True)
-        existing = sorted(date_dir.glob("prompt_*.md"))
-        seq = len(existing) + 1
-        filename = date_dir / f"prompt_{seq:03d}.md"
+        self.history_base.mkdir(parents=True, exist_ok=True)
+        seq = _next_seq(self.history_base)
+        slug = _slug_from_text(prompt_text)
+        filename = self.history_base / f"{seq:03d}_{slug}.md"
         with open(filename, "w") as f:
             f.write(f"# Executed: {now.isoformat()}\n\n")
             f.write(prompt_text)
             f.write("\n")
         self._scan_history_prompts()
 
-    def _add_to_favorites(self):
-        """Move the currently browsed prompt into the favorites folder."""
+    def _key_to_fav_slot(self, ch: int) -> int:
+        """Convert a key code to a favorites slot index (0-9), or -1 if invalid."""
+        if ord("1") <= ch <= ord("9"):
+            return ch - ord("1")  # keys 1-9 → slots 0-8
+        if ch == ord("0"):
+            return 9  # key 0 → slot 9 (10th)
+        return -1
+
+    def _format_favorites_slots(self) -> str:
+        """Format the 10 favorites slots for display."""
+        lines = []
+        for i in range(10):
+            key = str((i + 1) % 10)  # 1,2,...,9,0
+            path = self.favorites_slots[i]
+            if path:
+                p = Path(path)
+                try:
+                    content = p.read_text()
+                    # Get first non-comment, non-empty line as preview
+                    preview = ""
+                    for line in content.split("\n"):
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("#"):
+                            preview = stripped[:50]
+                            if len(stripped) > 50:
+                                preview += "…"
+                            break
+                    if not preview:
+                        preview = p.name
+                except Exception:
+                    preview = p.name
+                lines.append(f"  [{key}] ★ {preview}")
+            else:
+                lines.append(f"  [{key}]   (empty)")
+        return "\n".join(lines)
+
+    def _add_to_favorites(self, slot_idx: int | None):
+        """Start favorites assignment: prompt user for slot if not given."""
+        # Determine the source path to favorite
         prompt_list = self._current_browser_list()
         source_path = None
         if self.browser_index >= 0 and self.browser_index < len(prompt_list):
             source_path = prompt_list[self.browser_index]
 
         if source_path and source_path.exists():
-            # Move the file into favorites
-            now = datetime.datetime.now()
-            date_dir = self.favorites_base / now.strftime("%Y/%m/%d")
-            date_dir.mkdir(parents=True, exist_ok=True)
-            existing = sorted(date_dir.glob("prompt_*.md"))
-            seq = len(existing) + 1
-            dest = date_dir / f"prompt_{seq:03d}.md"
-            try:
-                shutil.move(str(source_path), str(dest))
-                # Clean up empty parent directories from the source
-                parent = source_path.parent
-                src_base = (self.history_base if self.browser_view == "history"
-                            else self.save_base)
-                while parent != src_base:
-                    try:
-                        parent.rmdir()
-                    except OSError:
-                        break
-                    parent = parent.parent
-            except Exception as e:
-                self._set_status(f"Error moving to favorites: {e}")
-                return
+            # Source is a file on disk — store its path directly
+            pass
         else:
-            # No source file — write current prompt text as a new favorite
+            # No source file — need to save current prompt text first
             prompt_text = self._get_active_prompt_text()
             if not prompt_text and self.current_prompt:
                 prompt_text = self.current_prompt
             if not prompt_text:
                 self._set_status("No prompt to favorite. Browse or refine one first!")
                 return
+            # Write to a file in the save dir
             now = datetime.datetime.now()
-            date_dir = self.favorites_base / now.strftime("%Y/%m/%d")
-            date_dir.mkdir(parents=True, exist_ok=True)
-            existing = sorted(date_dir.glob("prompt_*.md"))
-            seq = len(existing) + 1
-            dest = date_dir / f"prompt_{seq:03d}.md"
+            self.save_base.mkdir(parents=True, exist_ok=True)
+            seq = _next_seq(self.save_base)
+            slug = _slug_from_text(prompt_text)
+            dest = self.save_base / f"{seq:03d}_{slug}.md"
             with open(dest, "w") as f:
                 f.write(f"# Favorited: {now.isoformat()}\n\n")
                 f.write(prompt_text)
                 f.write("\n")
+            source_path = dest
+            self._scan_saved_prompts()
 
-        # Rescan all lists since the source list changed too
-        self._scan_saved_prompts()
-        self._scan_history_prompts()
-        self._scan_favorites_prompts()
-        self.browser_index = -1
-        self._set_status(f"★ Added to favorites! ({len(self.favorites_prompts)} total)")
+        self._pending_fav_path = str(source_path)
+
+        if slot_idx is not None:
+            self._assign_to_fav_slot(slot_idx)
+        else:
+            self.choosing_fav_slot = True
+            self._set_status("Choose favorites slot [1-9, 0] or any other key to cancel")
+
+    def _assign_to_fav_slot(self, slot_idx: int):
+        """Assign to slot, with overwrite confirmation if occupied."""
+        if self.favorites_slots[slot_idx]:
+            self._pending_fav_slot = slot_idx
+            self.confirming_fav_overwrite = True
+            slot_num = slot_idx + 1
+            self._set_status(f"Slot {slot_num} already has a favorite. Overwrite? [Y/other]")
+        else:
+            self._do_assign_fav_slot(slot_idx)
+
+    def _do_assign_fav_slot(self, slot_idx: int):
+        """Actually assign the pending path to the given slot."""
+        self.favorites_slots[slot_idx] = self._pending_fav_path
+        self._save_favorites_slots()
+        self._pending_fav_slot = -1
+        slot_num = slot_idx + 1
+        key = str(slot_num % 10)
+        self._set_status(f"★ Saved to favorites slot {slot_num} [key {key}]! ({self._favorites_slot_count()}/10)")
 
     def _remove_from_favorites(self):
-        """Move the currently browsed favorite into the history folder."""
+        """Remove the currently browsed favorite from its slot."""
         if self.browser_view != "favorites" or self.browser_index < 0:
             self._set_status("No favorite selected to remove.")
             return
-        if self.browser_index >= len(self.favorites_prompts):
+        # Find which slot corresponds to this browser index
+        fav_paths = self._favorites_as_paths()
+        if self.browser_index >= len(fav_paths):
             self._set_status("No favorite selected to remove.")
             return
-
-        path = self.favorites_prompts[self.browser_index]
-        try:
-            # Move file to history
-            now = datetime.datetime.now()
-            date_dir = self.history_base / now.strftime("%Y/%m/%d")
-            date_dir.mkdir(parents=True, exist_ok=True)
-            existing = sorted(date_dir.glob("prompt_*.md"))
-            seq = len(existing) + 1
-            dest = date_dir / f"prompt_{seq:03d}.md"
-            shutil.move(str(path), str(dest))
-            # Clean up empty parent directories from favorites
-            parent = path.parent
-            while parent != self.favorites_base:
-                try:
-                    parent.rmdir()
-                except OSError:
-                    break
-                parent = parent.parent
-        except Exception as e:
-            self._set_status(f"Error removing favorite: {e}")
-            return
-
-        self._scan_history_prompts()
-        self._scan_favorites_prompts()
+        target = fav_paths[self.browser_index]
+        # Find and clear the slot
+        for i, p in enumerate(self.favorites_slots):
+            if p and Path(p) == target:
+                self.favorites_slots[i] = None
+                break
+        self._save_favorites_slots()
         # Adjust browser index
-        if self.favorites_prompts:
-            self.browser_index = min(self.browser_index, len(self.favorites_prompts) - 1)
+        remaining = self._favorites_as_paths()
+        if remaining:
+            self.browser_index = min(self.browser_index, len(remaining) - 1)
         else:
             self.browser_index = -1
         self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
-        self._set_status(f"Removed from favorites. ({len(self.favorites_prompts)} remaining)")
+        self._set_status(f"Removed from favorites. ({self._favorites_slot_count()}/10 remaining)")
+
+    def _quick_load_favorite(self, ch: int):
+        """Quick-load a favorite by number key."""
+        slot_idx = self._key_to_fav_slot(ch)
+        if slot_idx < 0:
+            return
+        path_str = self.favorites_slots[slot_idx]
+        slot_num = slot_idx + 1
+        if not path_str:
+            self._set_status(f"Favorites slot {slot_num} is empty.")
+            return
+        path = Path(path_str)
+        if not path.exists():
+            self.favorites_slots[slot_idx] = None
+            self._save_favorites_slots()
+            self._set_status(f"Favorites slot {slot_num}: file no longer exists (cleared).")
+            return
+        # Switch to favorites view and select this item
+        self.browser_view = "favorites"
+        fav_paths = self._favorites_as_paths()
+        try:
+            self.browser_index = fav_paths.index(path)
+        except ValueError:
+            self.browser_index = -1
+        self._load_browser_prompt(self.stdscr.getmaxyx()[1] // 2)
+        self._set_status(f"★ Loaded favorites slot {slot_num}. Press E to execute.")
 
     # ─── New prompt ─────────────────────────────────────────────────
 
@@ -4589,6 +4756,7 @@ def main():
             ║    S        Save prompt to dated folder               ║
             ║    N        New prompt (prompts save if unsaved)      ║
             ║    E        Execute prompt (send to agent)            ║
+            ║    U        Undo last dictation entry                  ║
             ║    C        Clear dictation buffer                    ║
             ║    ←→       Browse saved prompts                      ║
             ║    ↑↓       Scroll prompt pane                        ║

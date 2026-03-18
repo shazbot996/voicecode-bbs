@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ask <prompt_file>
-#   ask ~/prompts/2026/03/15/prompt_001.md
+#   ask ~/prompts/voicecode/001_some_useful_name.md
 #   ask latest    # runs the most recently saved prompt
 
 set -euo pipefail
@@ -14,7 +14,7 @@ if [ $# -eq 0 ]; then
     echo "Usage: ask <prompt_file|latest>"
     echo ""
     echo "Saved prompts:"
-    find "$PROMPT_DIR" -name "prompt_*.md" -type f 2>/dev/null | sort | tail -10
+    find "$PROMPT_DIR" -name "[0-9]*_*.md" -type f 2>/dev/null | sort | tail -10
     exit 1
 fi
 
@@ -22,7 +22,7 @@ TARGET="$1"
 shift
 
 if [ "$TARGET" = "latest" ]; then
-    TARGET=$(find "$PROMPT_DIR" -name "prompt_*.md" -type f 2>/dev/null | sort | tail -1)
+    TARGET=$(find "$PROMPT_DIR" -name "[0-9]*_*.md" -type f 2>/dev/null | sort | tail -1)
     if [ -z "$TARGET" ]; then
         echo "No saved prompts found in $PROMPT_DIR"
         exit 1
