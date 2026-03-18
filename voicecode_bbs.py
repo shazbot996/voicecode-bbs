@@ -3,7 +3,7 @@
 VoiceCode BBS - A retro BBS-style voice-driven prompt workshop & agent terminal.
 
           ╔═══════════════════════════════════════╗
-          ║  V O I C E C O D E   B B S   v2.1     ║
+          ║  V O I C E C O D E   B B S   v2.2     ║
           ║  "Your voice, your prompt, your way"  ║
           ╚═══════════════════════════════════════╝
 
@@ -840,6 +840,7 @@ class BBSApp:
         # Prompt saved state
         self.prompt_saved = True  # no unsaved prompt at start
         self.confirming_new = False  # for [N] save confirmation dialog
+        self.confirming_edit_historical = False  # for editing a historical prompt
 
         # Working directory for folder slug mode
         self.working_dir = saved.get("working_dir", "")
@@ -936,9 +937,7 @@ class BBSApp:
 
         # Typewriter state
         self.typewriter_queue: collections.deque = collections.deque()
-        self.typewriter_last_time = 0.0
-        self.typewriter_char_delay = 0.0004  # seconds per char (~2500 cps)
-        self.typewriter_line_delay = 0.001  # extra delay at newlines
+        self.typewriter_last_time = 0.0  # unused, kept for compat
         self._typewriter_line_color = None  # per-line color override (None = default)
         self.agent_first_output = False      # tracks if agent has produced any output
         self.agent_welcome_shown = False     # True after initial welcome art displayed
@@ -1460,6 +1459,43 @@ class BBSApp:
     def _scan_favorites_prompts(self):
         self.favorites_prompts = sorted(self.favorites_base.rglob("prompt_*.md"))
 
+    # ─── Persistent dictation buffer ──────────────────────────────
+
+    def _active_buffer_path(self) -> Path:
+        return self.save_base / "active_buffer.json"
+
+    def _persist_buffer(self):
+        """Save current fragments to disk for crash recovery."""
+        path = self._active_buffer_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = [{"text": f} for f in self.fragments]
+            path.write_text(json.dumps(data), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _clear_buffer_file(self):
+        """Remove the persisted buffer file."""
+        try:
+            self._active_buffer_path().unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _load_persisted_buffer(self, width: int):
+        """Restore fragments from a previous session if present."""
+        path = self._active_buffer_path()
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for entry in data:
+                text = entry["text"]
+                self.fragments.append(text)
+                ts = datetime.datetime.now().strftime("%H:%M:%S")
+                self.dictation_pane.add_line(f"[{ts}] {text}", width)
+        except (OSError, json.JSONDecodeError, KeyError):
+            pass
+
     def _current_browser_list(self) -> list[Path]:
         """Return the prompt list for the current browser view."""
         if self.browser_view == "history":
@@ -1582,6 +1618,7 @@ class BBSApp:
 
         self._load_browser_prompt(80)
         self._set_dictation_info(80)
+        self._load_persisted_buffer(80)
         self._set_agent_welcome(40)
 
         try:
@@ -1809,7 +1846,26 @@ class BBSApp:
             except curses.error:
                 pass
 
-        # ── Favorites hint on prompt pane top border ──
+        # ── Arrow key control indicator (yellow, top-right of active pane) ──
+        arrow_label = " [←→] "
+        arrow_attr = curses.color_pair(self.CP_XFER) | curses.A_BOLD
+        if self.show_folder_slug:
+            # Shortcuts browser open: agent terminal has arrow key control
+            arrow_x = left_width + right_width - len(arrow_label) - 1
+            try:
+                self.stdscr.addstr(content_y, arrow_x, arrow_label, arrow_attr)
+            except curses.error:
+                pass
+        else:
+            # Normal mode: prompt browser has arrow key control
+            arrow_x = left_width - len(arrow_label) - 1
+            if arrow_x > 4:
+                try:
+                    self.stdscr.addstr(content_y, arrow_x, arrow_label, arrow_attr)
+                except curses.error:
+                    pass
+
+        # ── Favorites hint on prompt pane top border (drawn after arrow to take priority) ──
         if self.browser_view == "history" and self.browser_index >= 0:
             fav_hint = " [F] ★ Favorite "
             fav_x = left_width - len(fav_hint) - 1
@@ -1861,6 +1917,9 @@ class BBSApp:
             self._draw_bar(help_y, help_text, self.CP_HELP)
         elif self.confirming_new:
             help_text = " ██ UNSAVED PROMPT — [Y] Save first  [N] Discard  [other] Cancel ██"
+            self._draw_bar(help_y, help_text, self.CP_RECORDING)
+        elif self.confirming_edit_historical:
+            help_text = " ██ EDIT HISTORICAL PROMPT? — [Y] Copy as new working prompt  [other] Cancel ██"
             self._draw_bar(help_y, help_text, self.CP_RECORDING)
         elif self.agent_state in (AgentState.DOWNLOADING, AgentState.RECEIVING):
             help_text = " ◌ Agent working... [K] to kill"
@@ -2762,10 +2821,30 @@ class BBSApp:
         return "".join(chr(c) for c in buf if 0 < c < 0x110000)
 
     def _inject_paste(self, text: str):
-        """Inject pasted text into the dictation buffer or recording stream."""
+        """Inject pasted text into the active text field, dictation buffer, or recording stream."""
         text = text.strip()
         if not text:
             return
+
+        # If a modal text field is active, insert there instead of dictation
+        if self.shortcut_editing_text:
+            # Collapse to single line for text field
+            flat = " ".join(text.splitlines())
+            b = self.shortcut_edit_buffer
+            c = self.shortcut_edit_cursor_pos
+            self.shortcut_edit_buffer = b[:c] + flat + b[c:]
+            self.shortcut_edit_cursor_pos += len(flat)
+            self._set_status("Pasted into editor")
+            return
+        if self.settings_editing_text:
+            flat = " ".join(text.splitlines())
+            b = self.settings_edit_buffer
+            c = self.settings_edit_cursor
+            self.settings_edit_buffer = b[:c] + flat + b[c:]
+            self.settings_edit_cursor += len(flat)
+            self._set_status("Pasted into editor")
+            return
+
         # Collapse to single line for dictation (newlines → spaces)
         text = " ".join(text.splitlines())
 
@@ -2783,6 +2862,7 @@ class BBSApp:
         else:
             left_width = self.stdscr.getmaxyx()[1] * 2 // 5
             self.fragments.append(text)
+            self._persist_buffer()
             ts = datetime.datetime.now().strftime("%H:%M:%S")
             self.dictation_pane.add_line(f"[{ts}] {text}", left_width)
             self._set_status(f"Pasted: {truncated}")
@@ -2893,6 +2973,7 @@ class BBSApp:
                     else:
                         left_width = self.stdscr.getmaxyx()[1] * 2 // 5
                         self.fragments.append(slug)
+                        self._persist_buffer()
                         ts = datetime.datetime.now().strftime("%H:%M:%S")
                         self.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
                         self._set_status(f"Inserted: {slug}")
@@ -2930,8 +3011,23 @@ class BBSApp:
                     self.shortcut_editing_text = False
                 elif ch == 27:
                     self.stdscr.nodelay(True)
-                    self.stdscr.getch()
-                    self.shortcut_editing_text = False
+                    next_ch = self.stdscr.getch()
+                    if next_ch == 91:  # '[' — CSI sequence
+                        csi = []
+                        while True:
+                            c = self.stdscr.getch()
+                            if c == -1:
+                                break
+                            csi.append(c)
+                            if 64 <= c <= 126:
+                                break
+                        if csi == [50, 48, 48, 126]:  # "200~" — bracketed paste
+                            pasted = self._read_paste_content()
+                            self._inject_paste(pasted)
+                        # else: ignore unknown CSI sequence
+                    else:
+                        # Pure ESC — cancel editing
+                        self.shortcut_editing_text = False
                 elif ch in (curses.KEY_BACKSPACE, 127, 8):
                     if self.shortcut_edit_cursor_pos > 0:
                         b = self.shortcut_edit_buffer
@@ -2996,8 +3092,23 @@ class BBSApp:
                     self._commit_text_edit()
                 elif ch == 27:
                     self.stdscr.nodelay(True)
-                    self.stdscr.getch()
-                    self._cancel_text_edit()
+                    next_ch = self.stdscr.getch()
+                    if next_ch == 91:  # '[' — CSI sequence
+                        csi = []
+                        while True:
+                            c = self.stdscr.getch()
+                            if c == -1:
+                                break
+                            csi.append(c)
+                            if 64 <= c <= 126:
+                                break
+                        if csi == [50, 48, 48, 126]:  # "200~" — bracketed paste
+                            pasted = self._read_paste_content()
+                            self._inject_paste(pasted)
+                        # else: ignore unknown CSI sequence
+                    else:
+                        # Pure ESC — cancel editing
+                        self._cancel_text_edit()
                 elif ch in (curses.KEY_BACKSPACE, 127, 8):
                     if self.settings_edit_cursor > 0:
                         b = self.settings_edit_buffer
@@ -3130,6 +3241,17 @@ class BBSApp:
                 self._set_status("New prompt cancelled.")
             return
 
+        # Handle confirmation dialog for editing a historical prompt
+        if self.confirming_edit_historical:
+            if ch == ord("y") or ch == ord("Y"):
+                self.confirming_edit_historical = False
+                self._copy_historical_to_current()
+            else:
+                # Any other key cancels
+                self.confirming_edit_historical = False
+                self._set_status("Edit cancelled.")
+            return
+
         if ch == ord("q") or ch == ord("Q"):
             self._kill_agent()
             self.running = False
@@ -3155,7 +3277,10 @@ class BBSApp:
 
         elif ch == ord("r") or ch == ord("R"):
             if not self.refining and not self.recording:
-                self._start_refine()
+                if self.browser_index >= 0:
+                    self._confirm_edit_historical()
+                else:
+                    self._start_refine()
 
         elif ch == ord("d") or ch == ord("D"):
             if not self.refining and not self.recording:
@@ -3182,6 +3307,7 @@ class BBSApp:
 
         elif ch == ord("c") or ch == ord("C"):
             self.fragments.clear()
+            self._clear_buffer_file()
             self.dictation_pane.lines.clear()
             self.dictation_pane.scroll_offset = 0
             self._set_dictation_info(self.stdscr.getmaxyx()[1] // 2)
@@ -3781,6 +3907,7 @@ class BBSApp:
         """Actually reset to a new prompt."""
         self._clear_executed_prompt()
         self.fragments.clear()
+        self._clear_buffer_file()
         self.current_prompt = None
         self.prompt_version = 0
         self.prompt_saved = True
@@ -3794,6 +3921,35 @@ class BBSApp:
         self._set_agent_welcome(w)
         self._set_status("New prompt started. Dictate away!")
 
+    # ─── Edit historical prompt ──────────────────────────────────
+
+    def _confirm_edit_historical(self):
+        """Show confirmation before editing a historical/saved prompt."""
+        self.confirming_edit_historical = True
+        self._set_status("Edit this historical prompt? [Y] Copy as new working prompt / [other] Cancel")
+
+    def _copy_historical_to_current(self):
+        """Copy the currently browsed historical prompt into the current prompt slot."""
+        prompt_text = self._get_active_prompt_text()
+        if not prompt_text:
+            self._set_status("Could not read historical prompt.")
+            return
+        # Reset state for a fresh working prompt
+        self._clear_executed_prompt()
+        self.fragments.clear()
+        self._clear_buffer_file()
+        self.current_prompt = prompt_text
+        self.prompt_version = 1
+        self.prompt_saved = False
+        self.dictation_pane.lines.clear()
+        self.dictation_pane.scroll_offset = 0
+        self.browser_view = "active"
+        self.browser_index = -1
+        w = self.stdscr.getmaxyx()[1] // 2
+        self._load_browser_prompt(w)
+        self._set_dictation_info(w)
+        self._set_status("Historical prompt copied as new working prompt. Dictate to refine or press E to execute.")
+
     # ─── Direct execution (skip refinement) ────────────────────────
 
     def _execute_raw(self):
@@ -3806,6 +3962,7 @@ class BBSApp:
             return
         prompt_text = " ".join(self.fragments)
         self.fragments.clear()
+        self._clear_buffer_file()
         self._save_to_history(prompt_text)
         # Show executed prompt in yellow in the prompt browser (persists until new prompt)
         self.executed_prompt_text = prompt_text
@@ -3853,6 +4010,15 @@ class BBSApp:
         self.browser_index = -1
         w = self.stdscr.getmaxyx()[1] // 2
         self._load_browser_prompt(w)
+
+        # Clear prompt state so next dictation starts fresh
+        self.fragments.clear()
+        self._clear_buffer_file()
+        self.current_prompt = None
+        self.prompt_version = 0
+        self.prompt_saved = True
+        self.dictation_pane.lines.clear()
+        self.dictation_pane.scroll_offset = 0
 
         self._save_to_history(prompt_text)
 
@@ -4164,19 +4330,17 @@ class BBSApp:
         if not self.typewriter_queue:
             return
 
-        now = time.time()
         right_width = self.stdscr.getmaxyx()[1] - self.stdscr.getmaxyx()[1] // 2
 
-        # Process multiple chars per frame to keep up, but with timing
+        # Drain up to max_chars per frame for fast streaming
         chars_this_frame = 0
-        max_chars = 80  # burst up to 80 chars per frame for verbose streaming
+        max_chars = 512
 
         while self.typewriter_queue and chars_this_frame < max_chars:
-            ch = self.typewriter_queue[0]
+            ch = self.typewriter_queue.popleft()
 
             # Handle color-change sentinel tuples
             if isinstance(ch, tuple) and ch[0] == "color":
-                self.typewriter_queue.popleft()
                 self._typewriter_line_color = ch[1]  # None to reset
                 # Tag current last line with the new color
                 if self._typewriter_line_color is not None and self.agent_pane.lines:
@@ -4184,21 +4348,13 @@ class BBSApp:
                     self.agent_pane.line_colors[idx] = self._typewriter_line_color
                 continue
 
-            delay = self.typewriter_line_delay if ch == "\n" else self.typewriter_char_delay
-
-            if now - self.typewriter_last_time >= delay:
-                self.typewriter_queue.popleft()
-                prev_count = len(self.agent_pane.lines)
-                self.agent_pane.add_char_to_last_line(ch, right_width)
-                # Tag any newly created lines with the current override color
-                if self._typewriter_line_color is not None:
-                    for idx in range(prev_count, len(self.agent_pane.lines)):
-                        self.agent_pane.line_colors[idx] = self._typewriter_line_color
-                self.typewriter_last_time = now
-                chars_this_frame += 1
-                now = time.time()  # re-sample so burst timing works within frame
-            else:
-                break
+            prev_count = len(self.agent_pane.lines)
+            self.agent_pane.add_char_to_last_line(ch, right_width)
+            # Tag any newly created lines with the current override color
+            if self._typewriter_line_color is not None:
+                for idx in range(prev_count, len(self.agent_pane.lines)):
+                    self.agent_pane.line_colors[idx] = self._typewriter_line_color
+            chars_this_frame += 1
 
     # ─── UI queue processing ───────────────────────────────────────
 
@@ -4246,6 +4402,7 @@ class BBSApp:
                     self._clear_executed_prompt()
                     self._load_browser_prompt(left_width)
                 self.fragments.append(text)
+                self._persist_buffer()
                 ts = datetime.datetime.now().strftime("%H:%M:%S")
                 self.dictation_pane.add_line(f"[{ts}] {text}", left_width)
 
@@ -4257,6 +4414,7 @@ class BBSApp:
                 self._load_browser_prompt(left_width)
                 # Clear fragments and dictation after refinement
                 self.fragments.clear()
+                self._clear_buffer_file()
                 self.dictation_pane.lines.clear()
                 self.dictation_pane.scroll_offset = 0
                 self._set_dictation_info(left_width)
