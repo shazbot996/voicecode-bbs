@@ -2467,7 +2467,7 @@ class BBSApp:
         overlay_y = content_y + 2
         overlay_w = right_width - 6
         overlay_h = content_height - 4
-        if overlay_w < 20 or overlay_h < 6:
+        if overlay_w < 20 or overlay_h < 7:
             return
 
         bg_attr = curses.color_pair(self.CP_XTREE_BG)
@@ -2475,12 +2475,17 @@ class BBSApp:
         border_attr = curses.color_pair(self.CP_XTREE_BORDER) | curses.A_BOLD
 
         inner_w = overlay_w - 2
-        inner_h = overlay_h - 5  # border + tabs + separator + footer + border
+        inner_h = overlay_h - 6  # border + subtitle + tabs + separator + footer + border
 
         try:
             # Top border
             top = "╔" + "═" * inner_w + "╗"
             self.stdscr.addnstr(overlay_y, overlay_x, top, overlay_w, border_attr)
+
+            # Subtitle
+            subtitle = ' <-- "String Injector"! '
+            subtitle_line = "║" + subtitle.center(inner_w) + "║"
+            self.stdscr.addnstr(overlay_y + 1, overlay_x, subtitle_line, overlay_w, border_attr)
 
             # Category tabs row
             cat = self._browser_category
@@ -2496,11 +2501,11 @@ class BBSApp:
             tabs_padded = tabs.center(inner_w)[:inner_w]
             tabs_line = "║" + tabs_padded + "║"
             # Highlight active tab
-            self.stdscr.addnstr(overlay_y + 1, overlay_x, tabs_line, overlay_w, border_attr)
+            self.stdscr.addnstr(overlay_y + 2, overlay_x, tabs_line, overlay_w, border_attr)
 
             # Tab separator
             sep = "╠" + "═" * inner_w + "╣"
-            self.stdscr.addnstr(overlay_y + 2, overlay_x, sep, overlay_w, border_attr)
+            self.stdscr.addnstr(overlay_y + 3, overlay_x, sep, overlay_w, border_attr)
 
             # Scrolling: keep cursor visible
             if self.folder_slug_cursor < self.folder_slug_scroll:
@@ -2528,7 +2533,7 @@ class BBSApp:
                 ]
                 hint_attr = curses.color_pair(self.CP_XTREE_BORDER)
                 for i in range(inner_h):
-                    row_y = overlay_y + 3 + i
+                    row_y = overlay_y + 4 + i
                     if i < len(hint_lines):
                         text = hint_lines[i].center(inner_w)[:inner_w]
                     else:
@@ -2538,7 +2543,7 @@ class BBSApp:
                                         hint_attr if i < len(hint_lines) else bg_attr)
             else:
                 for i in range(inner_h):
-                    row_y = overlay_y + 3 + i
+                    row_y = overlay_y + 4 + i
                     idx = self.folder_slug_scroll + i
                     if idx < len(self.folder_slug_list):
                         entry = self.folder_slug_list[idx]
@@ -2585,7 +2590,7 @@ class BBSApp:
         overlay_w = min(68, w - 6)
         # +1 for the [Add New] row
         num_entries = len(self._shortcut_strings) + 1
-        overlay_h = min(5 + num_entries + 2, h - 4)
+        overlay_h = min(4 + num_entries + 2, h - 4)
         if overlay_w < 40 or overlay_h < 6:
             return
 
@@ -2599,7 +2604,7 @@ class BBSApp:
         val_attr = curses.color_pair(self.CP_AGENT) | curses.A_BOLD
 
         inner_w = overlay_w - 2
-        inner_h = overlay_h - 6  # borders + title + subtitle + footer
+        inner_h = overlay_h - 5  # borders + title + separator + footer
 
         try:
             # Top border
@@ -2611,14 +2616,9 @@ class BBSApp:
             title_line = "║" + title.center(inner_w) + "║"
             self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
 
-            # Subtitle
-            subtitle = ' <-- a.k.a. "string injector"! '
-            subtitle_line = "║" + subtitle.center(inner_w) + "║"
-            self.stdscr.addnstr(start_y + 2, start_x, subtitle_line, overlay_w, body_attr)
-
             # Title separator
             sep = "╠" + "═" * inner_w + "╣"
-            self.stdscr.addnstr(start_y + 3, start_x, sep, overlay_w, border_attr)
+            self.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
 
             # Scrolling
             if self.shortcut_editor_cursor < self.shortcut_editor_scroll:
@@ -2628,7 +2628,7 @@ class BBSApp:
 
             # List rows
             for i in range(inner_h):
-                row_y = start_y + 4 + i
+                row_y = start_y + 3 + i
                 idx = self.shortcut_editor_scroll + i
                 is_sel = (idx == self.shortcut_editor_cursor)
                 line_attr = sel_attr if is_sel else body_attr
