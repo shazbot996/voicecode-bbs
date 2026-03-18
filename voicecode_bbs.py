@@ -729,6 +729,7 @@ class BBSApp:
     CP_TTS = 18
     CP_SECT_RED = 19
     CP_SUBMENU = 20
+    CP_SETTINGS_TITLE = 21
 
     def __init__(self, args):
         self.args = args
@@ -887,6 +888,8 @@ class BBSApp:
         self.tts_submenu_items = []
         self.test_tools_submenu_open = False
         self.test_tools_submenu_cursor = 0
+        self.voice_submenu_open = False
+        self.voice_submenu_cursor = 0
         self.test_tools_submenu_items = []
         self.tts_enabled = saved.get("tts_enabled", True)
         global _tts_enabled
@@ -944,7 +947,7 @@ class BBSApp:
     def _build_settings_items(self):
         """Build the list of settings for the settings modal."""
         self.settings_items = [
-            {"type": "section", "label": "REQUIRED CONFIGURATION", "style": "red"},
+            {"type": "section", "label": "TOOLS & CONFIGURATION", "style": "yellow"},
             {
                 "key": "prompt_library",
                 "label": "Prompt Library",
@@ -965,40 +968,16 @@ class BBSApp:
                 "editable": True,
                 "action": self._start_editing_working_dir,
             },
-            {"type": "section", "label": "VOICE SETTINGS", "style": "yellow"},
             {
-                "key": "whisper_model",
-                "label": "Whisper Model",
-                "desc": "Speech-to-text model (larger = slower but more accurate)",
-                "options": ["tiny.en", "base.en", "small.en", "medium.en"],
+                "key": "_action_voice_submenu",
+                "label": "Voice Settings",
+                "desc": "Whisper model, VAD threshold, silence timeout, min speech",
+                "options": None,
                 "get": lambda: self.whisper_model,
-                "set": self._set_whisper_model,
+                "set": None,
+                "action": self._open_voice_submenu,
+                "submenu": True,
             },
-            {
-                "key": "vad_threshold",
-                "label": "VAD Threshold",
-                "desc": "Voice activity sensitivity (lower = more sensitive)",
-                "options": [0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
-                "get": lambda: self.vad_threshold,
-                "set": self._set_vad_threshold,
-            },
-            {
-                "key": "silence_timeout",
-                "label": "Silence Timeout",
-                "desc": "Seconds of silence before auto-stop (handsfree mode)",
-                "options": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
-                "get": lambda: self.silence_timeout,
-                "set": self._set_silence_timeout,
-            },
-            {
-                "key": "min_speech_duration",
-                "label": "Min Speech Duration",
-                "desc": "Minimum seconds of speech to accept a recording",
-                "options": [0.1, 0.2, 0.3, 0.5, 0.7, 1.0],
-                "get": lambda: self.min_speech_duration,
-                "set": self._set_min_speech,
-            },
-            {"type": "section", "label": "TOOLS & CONFIGURATION", "style": "yellow"},
         ]
         if TTS_AVAILABLE:
             self.settings_items.append({
@@ -1102,6 +1081,64 @@ class BBSApp:
                 "action": self._action_clean_voices,
             },
         ]
+
+    def _build_voice_submenu_items(self):
+        """Build the Voice Settings sub-menu items list."""
+        return [
+            {
+                "key": "whisper_model",
+                "label": "Whisper Model",
+                "desc": "Speech-to-text model (larger = slower but more accurate)",
+                "options": ["tiny.en", "base.en", "small.en", "medium.en"],
+                "get": lambda: self.whisper_model,
+                "set": self._set_whisper_model,
+            },
+            {
+                "key": "vad_threshold",
+                "label": "VAD Threshold",
+                "desc": "Voice activity sensitivity (lower = more sensitive)",
+                "options": [0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+                "get": lambda: self.vad_threshold,
+                "set": self._set_vad_threshold,
+            },
+            {
+                "key": "silence_timeout",
+                "label": "Silence Timeout",
+                "desc": "Seconds of silence before auto-stop (handsfree mode)",
+                "options": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+                "get": lambda: self.silence_timeout,
+                "set": self._set_silence_timeout,
+            },
+            {
+                "key": "min_speech_duration",
+                "label": "Min Speech Duration",
+                "desc": "Minimum seconds of speech to accept a recording",
+                "options": [0.1, 0.2, 0.3, 0.5, 0.7, 1.0],
+                "get": lambda: self.min_speech_duration,
+                "set": self._set_min_speech,
+            },
+        ]
+
+    def _open_voice_submenu(self):
+        """Open the Voice Settings sub-menu."""
+        self.voice_submenu_open = True
+        self.voice_submenu_cursor = 0
+        self.voice_submenu_items = self._build_voice_submenu_items()
+        self.show_settings_overlay = True  # keep modal open
+
+    def _voice_submenu_cycle(self, direction):
+        """Cycle the current Voice sub-menu setting's value."""
+        item = self.voice_submenu_items[self.voice_submenu_cursor]
+        if item.get("options") is None:
+            return
+        options = item["options"]
+        current = item["get"]()
+        try:
+            idx = options.index(current)
+        except ValueError:
+            idx = 0
+        new_idx = (idx + direction) % len(options)
+        item["set"](options[new_idx])
 
     def _open_tts_submenu(self):
         """Open the TTS settings sub-menu."""
@@ -1537,6 +1574,7 @@ class BBSApp:
         curses.init_pair(self.CP_XTREE_BORDER, curses.COLOR_WHITE, curses.COLOR_YELLOW)
         curses.init_pair(self.CP_SECT_RED, curses.COLOR_RED, bg_blue)
         curses.init_pair(self.CP_SUBMENU, curses.COLOR_CYAN, bg_blue)
+        curses.init_pair(self.CP_SETTINGS_TITLE, curses.COLOR_BLACK, curses.COLOR_YELLOW)
         if TTS_AVAILABLE:
             curses.init_pair(self.CP_TTS, curses.COLOR_WHITE, -1)
         else:
@@ -2043,7 +2081,12 @@ class BBSApp:
         h, w = self.stdscr.getmaxyx()
 
         # Determine which items/cursor/title to render
-        if self.tts_submenu_open:
+        if self.voice_submenu_open:
+            render_items = self.voice_submenu_items
+            render_cursor = self.voice_submenu_cursor
+            render_title = " VOICE SETTINGS "
+            render_footer = " ↑↓ Navigate  ←→ Change  Esc Close "
+        elif self.tts_submenu_open:
             render_items = self.tts_submenu_items
             render_cursor = self.tts_submenu_cursor
             render_title = " TEXT-TO-SPEECH SETTINGS "
@@ -2056,7 +2099,7 @@ class BBSApp:
         else:
             render_items = self.settings_items
             render_cursor = self.settings_cursor
-            render_title = " SETTINGS — VOICE CONFIG "
+            render_title = " SETTINGS "
             render_footer = " ↑↓ Navigate  ←→ Change  Enter Action  O/Esc Close "
 
         overlay_w = min(72, w - 6)
@@ -2083,9 +2126,10 @@ class BBSApp:
             top = "╔" + "═" * inner_w + "╗"
             self.stdscr.addnstr(start_y, start_x, top, overlay_w, border_attr)
 
-            # Title bar
+            # Title bar (yellow background)
+            title_attr = curses.color_pair(self.CP_SETTINGS_TITLE) | curses.A_BOLD
             title_line = "║" + render_title.center(inner_w) + "║"
-            self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
+            self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, title_attr)
 
             # Title separator
             sep = "╠" + "═" * inner_w + "╣"
@@ -2613,6 +2657,7 @@ class BBSApp:
                     self.settings_cursor = 0
                     self.tts_submenu_open = False
                     self.test_tools_submenu_open = False
+                    self.voice_submenu_open = False
                 elif action == "help":
                     self.show_help_overlay = True
                 elif action == "about":
@@ -2787,6 +2832,24 @@ class BBSApp:
                     self.settings_edit_cursor += 1
                 return
 
+            # Voice sub-menu navigation
+            if self.voice_submenu_open:
+                if ch in (27,):
+                    self.voice_submenu_open = False
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+                elif ch in (ord("q"), ord("Q")):
+                    self.voice_submenu_open = False
+                elif ch == curses.KEY_UP:
+                    self.voice_submenu_cursor = (self.voice_submenu_cursor - 1) % len(self.voice_submenu_items)
+                elif ch == curses.KEY_DOWN:
+                    self.voice_submenu_cursor = (self.voice_submenu_cursor + 1) % len(self.voice_submenu_items)
+                elif ch == curses.KEY_LEFT:
+                    self._voice_submenu_cycle(-1)
+                elif ch == curses.KEY_RIGHT:
+                    self._voice_submenu_cycle(1)
+                return
+
             # TTS sub-menu navigation
             if self.tts_submenu_open:
                 if ch in (27,):
@@ -2835,6 +2898,7 @@ class BBSApp:
                 self.show_settings_overlay = False
                 self.tts_submenu_open = False
                 self.test_tools_submenu_open = False
+                self.voice_submenu_open = False
                 if ch == 27:
                     self.stdscr.nodelay(True)
                     self.stdscr.getch()
