@@ -2585,7 +2585,7 @@ class BBSApp:
         overlay_w = min(68, w - 6)
         # +1 for the [Add New] row
         num_entries = len(self._shortcut_strings) + 1
-        overlay_h = min(4 + num_entries + 2, h - 4)
+        overlay_h = min(5 + num_entries + 2, h - 4)
         if overlay_w < 40 or overlay_h < 6:
             return
 
@@ -2599,7 +2599,7 @@ class BBSApp:
         val_attr = curses.color_pair(self.CP_AGENT) | curses.A_BOLD
 
         inner_w = overlay_w - 2
-        inner_h = overlay_h - 5  # borders + title + footer
+        inner_h = overlay_h - 6  # borders + title + subtitle + footer
 
         try:
             # Top border
@@ -2611,9 +2611,14 @@ class BBSApp:
             title_line = "║" + title.center(inner_w) + "║"
             self.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
 
+            # Subtitle
+            subtitle = ' <-- a.k.a. "string injector"! '
+            subtitle_line = "║" + subtitle.center(inner_w) + "║"
+            self.stdscr.addnstr(start_y + 2, start_x, subtitle_line, overlay_w, body_attr)
+
             # Title separator
             sep = "╠" + "═" * inner_w + "╣"
-            self.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
+            self.stdscr.addnstr(start_y + 3, start_x, sep, overlay_w, border_attr)
 
             # Scrolling
             if self.shortcut_editor_cursor < self.shortcut_editor_scroll:
@@ -2623,7 +2628,7 @@ class BBSApp:
 
             # List rows
             for i in range(inner_h):
-                row_y = start_y + 3 + i
+                row_y = start_y + 4 + i
                 idx = self.shortcut_editor_scroll + i
                 is_sel = (idx == self.shortcut_editor_cursor)
                 line_attr = sel_attr if is_sel else body_attr
@@ -4334,7 +4339,7 @@ class BBSApp:
 
         # Drain up to max_chars per frame for fast streaming
         chars_this_frame = 0
-        max_chars = 512
+        max_chars = 256
 
         while self.typewriter_queue and chars_this_frame < max_chars:
             ch = self.typewriter_queue.popleft()
