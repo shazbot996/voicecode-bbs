@@ -87,7 +87,8 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | F | Add/remove prompt from favorites |
 | N | New prompt (clear buffer, keep session) |
 | C | Clear dictation buffer |
-| Enter | Shortcuts browser (inject strings/paths into dictation; works mid-recording) |
+| Enter | Type text directly into dictation buffer (Enter to submit, ESC to cancel) |
+| Tab | Shortcuts browser (inject strings/paths into dictation; works mid-recording) |
 | ←/→ | Browse saved prompts |
 | ↑/↓ | Cycle active/favorites/saved views |
 | Home | Return to current prompt |

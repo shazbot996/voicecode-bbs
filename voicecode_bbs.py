@@ -760,7 +760,7 @@ class BBSApp:
             "╔══════════════════════════════════════╗",
             "║      ◆  DICTATION  BUFFER  ◆         ║",
             "║   Voice fragments appear here as     ║",
-            "║   you record with SPACE.             ║",
+            "║   you record (SPACE) or type (Enter).║",
             "╚══════════════════════════════════════╝",
             "",
             "  This is your scratchpad for voice input.",
@@ -785,7 +785,7 @@ class BBSApp:
             "",
             "  ── Quick Start ─────────────────",
             "",
-            "  SPACE ··· Record voice",
+            "  SPACE ··· Record voice / Enter ··· Type text",
             "  R     ··· Refine into prompt",
             "  E     ··· Execute prompt",
             "  D     ··· Direct execute",
@@ -883,6 +883,11 @@ class BBSApp:
 
         # Mid-recording folder injections: [(audio_seconds, text), ...]
         self._recording_injections: list[tuple[float, str]] = []
+
+        # Direct text entry mode (Enter key in dictation buffer)
+        self.typing_mode = False
+        self.typing_buffer = ""
+        self.typing_cursor = 0
 
         # Settings overlay state
         self.show_settings_overlay = False
@@ -1767,6 +1772,33 @@ class BBSApp:
         self.dictation_pane.draw(self.stdscr, content_y + prompt_height, 0,
                                  dictation_height, left_width)
 
+        # ── Typing mode input line (overlays last content line of dictation pane) ──
+        if self.typing_mode:
+            type_y = content_y + prompt_height + dictation_height - 2  # just above bottom border
+            type_x = 1
+            type_w = left_width - 2
+            if type_w > 4 and type_y > content_y + prompt_height:
+                prefix = "▸ "
+                avail = type_w - len(prefix)
+                buf = self.typing_buffer
+                cur = self.typing_cursor
+                # Scroll the buffer if cursor is past visible area
+                scroll = max(0, cur - avail + 1)
+                visible = buf[scroll:scroll + avail]
+                cursor_pos_in_vis = cur - scroll
+                padded = prefix + visible + " " * max(0, avail - len(visible))
+                entry_attr = curses.color_pair(self.CP_VOICE) | curses.A_BOLD
+                try:
+                    self.stdscr.addnstr(type_y, type_x, padded, type_w, entry_attr)
+                    # Draw cursor
+                    cx = type_x + len(prefix) + cursor_pos_in_vis
+                    if cx < type_x + type_w:
+                        ch_under = buf[cur] if cur < len(buf) else " "
+                        self.stdscr.addstr(type_y, cx, ch_under,
+                                           entry_attr | curses.A_REVERSE)
+                except curses.error:
+                    pass
+
         # Right: Agent terminal (full height)
         if self.agent_state == AgentState.DOWNLOADING:
             self._draw_agent_xfer(content_y, left_width, content_height, right_width)
@@ -1912,7 +1944,10 @@ class BBSApp:
 
         # ── Help bar ──
         help_y = h - 2
-        if self.recording:
+        if self.typing_mode:
+            help_text = " TYPING ▸ [Enter] Submit  [ESC] Cancel  — Type text directly into dictation buffer"
+            self._draw_bar(help_y, help_text, self.CP_VOICE)
+        elif self.recording:
             help_text = " [SPC] Stop recording"
             self._draw_bar(help_y, help_text, self.CP_HELP)
         elif self.confirming_new:
@@ -2011,6 +2046,7 @@ class BBSApp:
             "  ←/→    Browse within current view",
             "  ↑/↓    Cycle active/favorites/saved",
             "  Home   Return to current prompt",
+            "  Enter  Type text into dictation",
             "  Tab    Shortcuts browser",
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
@@ -2841,6 +2877,14 @@ class BBSApp:
             self.shortcut_edit_cursor_pos += len(flat)
             self._set_status("Pasted into editor")
             return
+        if self.typing_mode:
+            flat = " ".join(text.splitlines())
+            b = self.typing_buffer
+            c = self.typing_cursor
+            self.typing_buffer = b[:c] + flat + b[c:]
+            self.typing_cursor += len(flat)
+            self._set_status("Pasted into text entry")
+            return
         if self.settings_editing_text:
             flat = " ".join(text.splitlines())
             b = self.settings_edit_buffer
@@ -3257,6 +3301,71 @@ class BBSApp:
                 self._set_status("Edit cancelled.")
             return
 
+        # Handle direct text entry mode in dictation buffer
+        if self.typing_mode:
+            if ch in (10, 13, curses.KEY_ENTER):
+                # Submit the typed text as a fragment
+                text = self.typing_buffer.strip()
+                if text:
+                    left_width = self.stdscr.getmaxyx()[1] // 2
+                    self.fragments.append(text)
+                    self._persist_buffer()
+                    ts = datetime.datetime.now().strftime("%H:%M:%S")
+                    self.dictation_pane.add_line(f"[{ts}] {text}", left_width)
+                    self._set_status("Text entry added.")
+                else:
+                    self._set_status("Empty entry discarded.")
+                self.typing_mode = False
+                self.typing_buffer = ""
+                self.typing_cursor = 0
+            elif ch == 27:
+                # ESC cancels typing mode
+                self.typing_mode = False
+                self.typing_buffer = ""
+                self.typing_cursor = 0
+                self._set_status("Text entry cancelled.")
+                self.stdscr.nodelay(True)
+                next_ch = self.stdscr.getch()
+                if next_ch == 91:  # '[' — CSI sequence (could be paste)
+                    csi = []
+                    while True:
+                        c = self.stdscr.getch()
+                        if c == -1:
+                            break
+                        csi.append(c)
+                        if 64 <= c <= 126:
+                            break
+                    if csi == [50, 48, 48, 126]:  # bracketed paste
+                        pasted = self._read_paste_content()
+                        # Re-enter typing mode with pasted content
+                        self.typing_mode = True
+                        self.typing_buffer = " ".join(pasted.strip().splitlines())
+                        self.typing_cursor = len(self.typing_buffer)
+            elif ch == curses.KEY_LEFT:
+                if self.typing_cursor > 0:
+                    self.typing_cursor -= 1
+            elif ch == curses.KEY_RIGHT:
+                if self.typing_cursor < len(self.typing_buffer):
+                    self.typing_cursor += 1
+            elif ch == curses.KEY_HOME:
+                self.typing_cursor = 0
+            elif ch == curses.KEY_END:
+                self.typing_cursor = len(self.typing_buffer)
+            elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                if self.typing_cursor > 0:
+                    b = self.typing_buffer
+                    self.typing_buffer = b[:self.typing_cursor - 1] + b[self.typing_cursor:]
+                    self.typing_cursor -= 1
+            elif ch in (curses.KEY_DC, 330):
+                if self.typing_cursor < len(self.typing_buffer):
+                    b = self.typing_buffer
+                    self.typing_buffer = b[:self.typing_cursor] + b[self.typing_cursor + 1:]
+            elif 32 <= ch <= 126:
+                b = self.typing_buffer
+                self.typing_buffer = b[:self.typing_cursor] + chr(ch) + b[self.typing_cursor:]
+                self.typing_cursor += 1
+            return
+
         if ch == ord("q") or ch == ord("Q"):
             self._kill_agent()
             self.running = False
@@ -3434,6 +3543,15 @@ class BBSApp:
             else:
                 speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
 
+
+        elif ch in (10, 13, curses.KEY_ENTER):
+            # Enter starts direct text entry in dictation buffer
+            if not self.recording and not self.refining:
+                self.typing_mode = True
+                self.typing_buffer = ""
+                self.typing_cursor = 0
+                ts = datetime.datetime.now().strftime("%H:%M:%S")
+                self._set_status(f"[{ts}] Type text, Enter to submit, ESC to cancel")
 
         elif ch == 9:  # Tab
             # Tab opens shortcuts browser (allowed during recording for injection)
