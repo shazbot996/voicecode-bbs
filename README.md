@@ -178,10 +178,15 @@ Press **Enter** to open the folder slug browser — a navigable overlay listing 
 
 ```bash
 git clone <repo-url> && cd voicecode
+make init
+```
 
+Or manually:
+
+```bash
 python -m venv venv
 source venv/bin/activate
-
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
 
@@ -238,7 +243,7 @@ python voicecode_bbs.py --model small.en
 |-----------|-----------|
 | Language | Python 3.12 |
 | Speech-to-Text | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (tiny.en / base.en / small.en / medium.en) |
-| Voice Activity Detection | [Silero VAD](https://github.com/snakers4/silero-vad) + PyTorch |
+| Voice Activity Detection | [Silero VAD](https://github.com/snakers4/silero-vad) + PyTorch (CPU-only) |
 | Text-to-Speech | [Piper TTS](https://github.com/rhasspy/piper) |
 | Audio Capture | sounddevice + NumPy |
 | Terminal UI | Python curses |

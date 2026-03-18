@@ -23,11 +23,12 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 
 - **Python 3.12** — no build system, pure Python
 - **faster-whisper** — speech-to-text (models: tiny.en, base.en, small.en, medium.en)
-- **silero-vad** / **torch** — voice activity detection
+- **silero-vad** / **torch** (CPU-only) — voice activity detection
 - **sounddevice** / **numpy** — audio capture
 - **piper-tts** — text-to-speech via `piper` CLI + `aplay`
 - **curses** — terminal UI (BBS app)
 - Dependencies in `requirements.txt`, virtualenv in `venv/`
+- PyTorch installed CPU-only via `--index-url https://download.pytorch.org/whl/cpu` (VAD doesn't need CUDA)
 
 ## Running
 
@@ -88,7 +89,8 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | C | Clear dictation buffer |
 | Enter | Shortcuts browser (inject strings/paths into dictation; works mid-recording) |
 | ←/→ | Browse saved prompts |
-| ↑/↓ | Cycle active/favorites/history views |
+| ↑/↓ | Cycle active/favorites/saved views |
+| Home | Return to current prompt |
 | PgUp/PgDn | Scroll agent terminal |
 | O | Settings / voice config |
 | K | Kill running agent |
