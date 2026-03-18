@@ -1711,6 +1711,17 @@ class BBSApp:
         self.prompt_pane.draw(self.stdscr, content_y, 0,
                               prompt_height, left_width)
 
+        # ── Prompt pane bottom border: browse/view hints ──
+        prompt_bottom_y = content_y + prompt_height - 1
+        browse_hint = " [←→]Browse [↑↓]View "
+        bh_x = left_width - len(browse_hint) - 1
+        if bh_x > 1:
+            try:
+                self.stdscr.addstr(prompt_bottom_y, bh_x, browse_hint,
+                                   curses.color_pair(self.prompt_pane.color_pair) | curses.A_BOLD)
+            except curses.error:
+                pass
+
         # Bottom-left: Dictation buffer
         self.dictation_pane.draw(self.stdscr, content_y + prompt_height, 0,
                                  dictation_height, left_width)
@@ -1852,7 +1863,7 @@ class BBSApp:
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
             voice_label = "[V]oice" if TTS_AVAILABLE else ""
-            keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [←→]Browse [↑↓]View"
+            keys = " [Q]uit [X]Restart | [S]ave [N]ew [C]lear [K]ill [W]NewSess [Tab]Shortcuts"
             self._draw_bar(help_y, keys, self.CP_HELP)
             # Draw [V]oice in red, right-justified
             w = self.stdscr.getmaxyx()[1]
@@ -2366,9 +2377,10 @@ class BBSApp:
         doc_root = Path(self.documents_dir).expanduser() if self.documents_dir else None
         if doc_root and doc_root.is_dir():
             try:
-                for md_file in sorted(doc_root.rglob("*.md")):
-                    if not any(p.startswith(".") for p in md_file.relative_to(doc_root).parts):
-                        docs.append(str(md_file.relative_to(doc_root)))
+                md_files = [f for f in doc_root.rglob("*.md")
+                            if not any(p.startswith(".") for p in f.relative_to(doc_root).parts)]
+                for md_file in sorted(md_files, key=lambda f: f.stat().st_mtime, reverse=True):
+                    docs.append(str(md_file.relative_to(doc_root)))
             except (PermissionError, OSError):
                 pass
         self._browser_cat_lists[2] = docs
