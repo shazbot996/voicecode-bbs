@@ -788,6 +788,7 @@ class BBSApp:
             "  E     ··· Execute prompt",
             "  D     ··· Direct execute",
             "  W     ··· New session (clear context)",
+            "  O     ··· Options / Settings",
             "  H     ··· Full help screen",
             "  ESC   ··· Main menu",
         ]
@@ -1892,7 +1893,9 @@ class BBSApp:
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
+            "  O      Options / Settings",
             "  H      This help screen",
+            "  X      Restart application",
             "  Q      Quit",
             "  ESC    Main menu (Options/About...)",
             "",
@@ -3121,6 +3124,13 @@ class BBSApp:
 
         elif ch == ord("h") or ch == ord("H"):
             self.show_help_overlay = True
+
+        elif ch == ord("o") or ch == ord("O"):
+            self.show_settings_overlay = True
+            self.settings_cursor = 0
+            self.tts_submenu_open = False
+            self.test_tools_submenu_open = False
+            self.voice_submenu_open = False
 
         elif ch == 27:
             # ESC key — open the main menu
