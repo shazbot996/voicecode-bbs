@@ -35,6 +35,7 @@ import textwrap
 import argparse
 import random
 import collections
+import shutil
 from pathlib import Path
 
 from version import __version__
@@ -929,8 +930,8 @@ class BBSApp:
         # Typewriter state
         self.typewriter_queue: collections.deque = collections.deque()
         self.typewriter_last_time = 0.0
-        self.typewriter_char_delay = 0.006  # seconds per char (~167 cps)
-        self.typewriter_line_delay = 0.02   # extra delay at newlines
+        self.typewriter_char_delay = 0.003  # seconds per char (~333 cps)
+        self.typewriter_line_delay = 0.01   # extra delay at newlines
         self._typewriter_line_color = None  # per-line color override (None = default)
         self.agent_first_output = False      # tracks if agent has produced any output
         self.agent_welcome_shown = False     # True after initial welcome art displayed
@@ -3440,29 +3441,63 @@ class BBSApp:
         self._scan_history_prompts()
 
     def _add_to_favorites(self):
-        """Add the currently browsed prompt to favorites."""
-        prompt_text = self._get_active_prompt_text()
-        if not prompt_text and self.current_prompt:
-            prompt_text = self.current_prompt
-        if not prompt_text:
-            self._set_status("No prompt to favorite. Browse or refine one first!")
-            return
+        """Move the currently browsed prompt into the favorites folder."""
+        prompt_list = self._current_browser_list()
+        source_path = None
+        if self.browser_index >= 0 and self.browser_index < len(prompt_list):
+            source_path = prompt_list[self.browser_index]
 
-        now = datetime.datetime.now()
-        date_dir = self.favorites_base / now.strftime("%Y/%m/%d")
-        date_dir.mkdir(parents=True, exist_ok=True)
-        existing = sorted(date_dir.glob("prompt_*.md"))
-        seq = len(existing) + 1
-        filename = date_dir / f"prompt_{seq:03d}.md"
-        with open(filename, "w") as f:
-            f.write(f"# Favorited: {now.isoformat()}\n\n")
-            f.write(prompt_text)
-            f.write("\n")
+        if source_path and source_path.exists():
+            # Move the file into favorites
+            now = datetime.datetime.now()
+            date_dir = self.favorites_base / now.strftime("%Y/%m/%d")
+            date_dir.mkdir(parents=True, exist_ok=True)
+            existing = sorted(date_dir.glob("prompt_*.md"))
+            seq = len(existing) + 1
+            dest = date_dir / f"prompt_{seq:03d}.md"
+            try:
+                shutil.move(str(source_path), str(dest))
+                # Clean up empty parent directories from the source
+                parent = source_path.parent
+                src_base = (self.history_base if self.browser_view == "history"
+                            else self.save_base)
+                while parent != src_base:
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                    parent = parent.parent
+            except Exception as e:
+                self._set_status(f"Error moving to favorites: {e}")
+                return
+        else:
+            # No source file — write current prompt text as a new favorite
+            prompt_text = self._get_active_prompt_text()
+            if not prompt_text and self.current_prompt:
+                prompt_text = self.current_prompt
+            if not prompt_text:
+                self._set_status("No prompt to favorite. Browse or refine one first!")
+                return
+            now = datetime.datetime.now()
+            date_dir = self.favorites_base / now.strftime("%Y/%m/%d")
+            date_dir.mkdir(parents=True, exist_ok=True)
+            existing = sorted(date_dir.glob("prompt_*.md"))
+            seq = len(existing) + 1
+            dest = date_dir / f"prompt_{seq:03d}.md"
+            with open(dest, "w") as f:
+                f.write(f"# Favorited: {now.isoformat()}\n\n")
+                f.write(prompt_text)
+                f.write("\n")
+
+        # Rescan all lists since the source list changed too
+        self._scan_saved_prompts()
+        self._scan_history_prompts()
         self._scan_favorites_prompts()
+        self.browser_index = -1
         self._set_status(f"★ Added to favorites! ({len(self.favorites_prompts)} total)")
 
     def _remove_from_favorites(self):
-        """Remove the currently browsed favorite and return it to history."""
+        """Move the currently browsed favorite into the history folder."""
         if self.browser_view != "favorites" or self.browser_index < 0:
             self._set_status("No favorite selected to remove.")
             return
@@ -3472,14 +3507,19 @@ class BBSApp:
 
         path = self.favorites_prompts[self.browser_index]
         try:
-            # Read content before deleting
-            content = path.read_text()
-            path.unlink()
-            # Clean up empty parent directories
+            # Move file to history
+            now = datetime.datetime.now()
+            date_dir = self.history_base / now.strftime("%Y/%m/%d")
+            date_dir.mkdir(parents=True, exist_ok=True)
+            existing = sorted(date_dir.glob("prompt_*.md"))
+            seq = len(existing) + 1
+            dest = date_dir / f"prompt_{seq:03d}.md"
+            shutil.move(str(path), str(dest))
+            # Clean up empty parent directories from favorites
             parent = path.parent
             while parent != self.favorites_base:
                 try:
-                    parent.rmdir()  # only removes if empty
+                    parent.rmdir()
                 except OSError:
                     break
                 parent = parent.parent
@@ -3487,17 +3527,7 @@ class BBSApp:
             self._set_status(f"Error removing favorite: {e}")
             return
 
-        # Save to history so it's not lost
-        now = datetime.datetime.now()
-        date_dir = self.history_base / now.strftime("%Y/%m/%d")
-        date_dir.mkdir(parents=True, exist_ok=True)
-        existing = sorted(date_dir.glob("prompt_*.md"))
-        seq = len(existing) + 1
-        filename = date_dir / f"prompt_{seq:03d}.md"
-        with open(filename, "w") as f:
-            f.write(content)
         self._scan_history_prompts()
-
         self._scan_favorites_prompts()
         # Adjust browser index
         if self.favorites_prompts:
@@ -3897,7 +3927,7 @@ class BBSApp:
 
         # Process multiple chars per frame to keep up, but with timing
         chars_this_frame = 0
-        max_chars = 20  # burst up to 20 chars per frame for verbose streaming
+        max_chars = 40  # burst up to 40 chars per frame for verbose streaming
 
         while self.typewriter_queue and chars_this_frame < max_chars:
             ch = self.typewriter_queue[0]
