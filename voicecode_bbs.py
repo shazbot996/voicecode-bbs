@@ -1532,6 +1532,11 @@ class BBSApp:
         stdscr.nodelay(True)
         stdscr.timeout(16)  # ~60fps for smooth animations
 
+        # Enable bracketed paste mode so pasted text arrives as a single
+        # delimited block instead of individual keystrokes.
+        sys.stdout.write("\x1b[?2004h")
+        sys.stdout.flush()
+
         self._draw_loading("Loading Silero VAD model...")
         get_vad_model()
         self._draw_loading("Loading Whisper model...")
@@ -1543,11 +1548,16 @@ class BBSApp:
         self._set_dictation_info(80)
         self._set_agent_welcome(40)
 
-        while self.running:
-            self._process_ui_queue()
-            self._process_typewriter()
-            self._draw()
-            self._handle_input()
+        try:
+            while self.running:
+                self._process_ui_queue()
+                self._process_typewriter()
+                self._draw()
+                self._handle_input()
+        finally:
+            # Disable bracketed paste mode before exiting curses
+            sys.stdout.write("\x1b[?2004l")
+            sys.stdout.flush()
 
     def _init_colors(self):
         curses.start_color()
@@ -2618,6 +2628,59 @@ class BBSApp:
         except curses.error:
             pass
 
+    # ─── Bracketed paste handling ────────────────────────────────
+
+    def _read_paste_content(self) -> str:
+        """Read characters until the bracketed-paste end sequence ESC[201~."""
+        buf: list[int] = []
+        # Switch to short blocking reads so we drain the paste quickly
+        self.stdscr.timeout(50)
+        max_chars = 10_000  # safety cap
+        try:
+            while len(buf) < max_chars:
+                c = self.stdscr.getch()
+                if c == -1:
+                    # Small gap — if we already have content, assume paste ended
+                    # without a proper close bracket (unsupported terminal)
+                    if buf:
+                        break
+                    continue
+                buf.append(c)
+                # Check for paste-end: ESC [ 2 0 1 ~ (27 91 50 48 49 126)
+                if (len(buf) >= 6
+                        and buf[-6:] == [27, 91, 50, 48, 49, 126]):
+                    buf = buf[:-6]
+                    break
+        finally:
+            self.stdscr.timeout(16)  # restore normal timeout
+        return "".join(chr(c) for c in buf if 0 < c < 0x110000)
+
+    def _inject_paste(self, text: str):
+        """Inject pasted text into the dictation buffer or recording stream."""
+        text = text.strip()
+        if not text:
+            return
+        # Collapse to single line for dictation (newlines → spaces)
+        text = " ".join(text.splitlines())
+
+        truncated = text[:40] + ("…" if len(text) > 40 else "")
+        if self.recording:
+            # Same injection path as shortcut/folder slug injection
+            with self.audio_lock:
+                audio_secs = (sum(len(f) for f in self.audio_frames)
+                              / SAMPLE_RATE) if self.audio_frames else 0.0
+            self._recording_injections.append((audio_secs, text))
+            preview = self._live_preview_text
+            combined = f"{preview} {text}" if preview else text
+            self.ui_queue.put(("live_preview", combined))
+            self._set_status(f"Pasted: {truncated}")
+        else:
+            left_width = self.stdscr.getmaxyx()[1] * 2 // 5
+            self.fragments.append(text)
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            self.dictation_pane.add_line(f"[{ts}] {text}", left_width)
+            self._set_status(f"Pasted: {truncated}")
+
     # ─── Input handling ────────────────────────────────────────────
 
     def _handle_input(self):
@@ -3135,14 +3198,29 @@ class BBSApp:
             self.voice_submenu_open = False
 
         elif ch == 27:
-            # ESC key — open the main menu
-            # Consume any follow-up byte from ESC sequence (arrow keys etc.)
+            # ESC key — could be menu, arrow key, or bracketed paste start
             self.stdscr.nodelay(True)
             next_ch = self.stdscr.getch()
             if next_ch == -1:
                 # Pure ESC press — open menu
                 self.show_escape_menu = True
                 self.escape_menu_cursor = 0
+            elif next_ch == 91:  # '[' — CSI sequence
+                # Read remaining CSI params to check for paste start "200~"
+                csi = []
+                while True:
+                    c = self.stdscr.getch()
+                    if c == -1:
+                        break
+                    csi.append(c)
+                    # CSI terminates at 0x40-0x7E (letters, ~, etc.)
+                    if 64 <= c <= 126:
+                        break
+                if csi == [50, 48, 48, 126]:  # "200~" — bracketed paste start
+                    pasted = self._read_paste_content()
+                    self._inject_paste(pasted)
+                # Otherwise it was a normal escape sequence (arrow key etc.)
+                # which curses already handled via KEY_UP/DOWN/etc.
 
     # ─── Recording ─────────────────────────────────────────────────
 
