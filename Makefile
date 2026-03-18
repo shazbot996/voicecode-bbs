@@ -10,6 +10,7 @@ help: ## Show this help
 init: ## Create venv and install all dependencies
 	$(PYTHON) -m venv $(VENV)
 	$(VENV)/bin/pip install --upgrade pip
+	$(VENV)/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
 	$(VENV)/bin/pip install -r requirements.txt
 
 voicecode: ## Run the BBS application
