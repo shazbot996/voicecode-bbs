@@ -842,6 +842,7 @@ class BBSApp:
 
         # Working directory for folder slug mode
         self.working_dir = saved.get("working_dir", "")
+        self.documents_dir = saved.get("documents_dir", "")
 
         # Help overlay state
         self.show_help_overlay = False
@@ -865,6 +866,10 @@ class BBSApp:
         self.folder_slug_scroll = 0
         self._shortcut_strings: list[str] = _load_shortcuts()
         self._shortcut_count = 0  # how many items at the top are shortcuts
+        # Browser category: 0=Shortcuts, 1=Project Folders, 2=Documents
+        self._browser_category = 0
+        self._browser_categories = ["Shortcuts", "Project Folders", "Documents"]
+        self._browser_cat_lists: list[list[str]] = [[], [], []]
 
         # Shortcut editor overlay state
         self.show_shortcut_editor = False
@@ -970,6 +975,16 @@ class BBSApp:
                 "set": None,
                 "editable": True,
                 "action": self._start_editing_working_dir,
+            },
+            {
+                "key": "documents_dir",
+                "label": "Documents Directory",
+                "desc": "Root folder for markdown documents browser (Enter key)",
+                "options": None,
+                "get": lambda: self.documents_dir or "(not set)",
+                "set": None,
+                "editable": True,
+                "action": self._start_editing_documents_dir,
             },
             {
                 "key": "_action_voice_submenu",
@@ -1340,6 +1355,8 @@ class BBSApp:
             self._commit_prompt_library()
         elif item["key"] == "working_dir":
             self._commit_working_dir()
+        elif item["key"] == "documents_dir":
+            self._commit_documents_dir()
 
     def _start_editing_working_dir(self):
         """Enter inline text editing mode for the working directory path."""
@@ -1358,6 +1375,24 @@ class BBSApp:
             self._set_status(f"Working directory → {new_path}")
         else:
             self._set_status("Working directory cleared.")
+
+    def _start_editing_documents_dir(self):
+        """Enter inline text editing mode for the documents directory path."""
+        self.settings_editing_text = True
+        self.settings_edit_buffer = self.documents_dir
+        self.settings_edit_cursor = len(self.settings_edit_buffer)
+        self.show_settings_overlay = True
+
+    def _commit_documents_dir(self):
+        """Apply the edited documents directory path."""
+        new_path = self.settings_edit_buffer.strip()
+        self.documents_dir = new_path
+        self._persist_setting("documents_dir", new_path)
+        self.settings_editing_text = False
+        if new_path:
+            self._set_status(f"Documents directory → {new_path}")
+        else:
+            self._set_status("Documents directory cleared.")
 
     def _persist_setting(self, key, val):
         settings = _load_settings()
@@ -1901,7 +1936,7 @@ class BBSApp:
             "  W      New session (clear context)",
             "  ←/→    Browse within current view",
             "  ↑/↓    Cycle active/favorites/history",
-            "  Enter  Shortcuts browser",
+            "  Tab    Shortcuts browser",
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
@@ -2302,12 +2337,15 @@ class BBSApp:
             pass
 
     def _scan_folder_slugs(self):
-        """Build shortcuts list: user shortcuts first, then folder entries."""
-        shortcuts = list(self._shortcut_strings)
-        self._shortcut_count = len(shortcuts)
-        dirs = []
-        root = Path(self.working_dir).expanduser()
-        if root.is_dir():
+        """Build three category lists: shortcuts, project folders, documents."""
+        self._shortcut_strings = _load_shortcuts()
+        # Category 0: Shortcuts
+        self._browser_cat_lists[0] = list(self._shortcut_strings)
+
+        # Category 1: Project Folders
+        dirs: list[str] = []
+        root = Path(self.working_dir).expanduser() if self.working_dir else None
+        if root and root.is_dir():
             try:
                 for entry in sorted(root.iterdir()):
                     if entry.is_dir() and not entry.name.startswith("."):
@@ -2321,10 +2359,25 @@ class BBSApp:
                             pass
             except PermissionError:
                 pass
-        self.folder_slug_list = shortcuts + dirs
+        self._browser_cat_lists[1] = dirs
+
+        # Category 2: Documents (.md files recursive)
+        docs: list[str] = []
+        doc_root = Path(self.documents_dir).expanduser() if self.documents_dir else None
+        if doc_root and doc_root.is_dir():
+            try:
+                for md_file in sorted(doc_root.rglob("*.md")):
+                    if not any(p.startswith(".") for p in md_file.relative_to(doc_root).parts):
+                        docs.append(str(md_file.relative_to(doc_root)))
+            except (PermissionError, OSError):
+                pass
+        self._browser_cat_lists[2] = docs
+
+        # Flat list is the active category's list (for cursor/scroll compat)
+        self.folder_slug_list = self._browser_cat_lists[self._browser_category]
 
     def _draw_folder_slug_overlay(self):
-        """Draw the Shortcuts overlay on the agent pane."""
+        """Draw the categorised browser overlay on the agent pane."""
         h, w = self.stdscr.getmaxyx()
 
         # Agent pane geometry
@@ -2346,19 +2399,30 @@ class BBSApp:
         border_attr = curses.color_pair(self.CP_XTREE_BORDER) | curses.A_BOLD
 
         inner_w = overlay_w - 2
-        inner_h = overlay_h - 4  # top border + title + footer + bottom border
+        inner_h = overlay_h - 5  # border + tabs + separator + footer + border
 
         try:
             # Top border
             top = "╔" + "═" * inner_w + "╗"
             self.stdscr.addnstr(overlay_y, overlay_x, top, overlay_w, border_attr)
 
-            # Title bar
-            title = " SHORTCUTS "
-            title_line = "║" + title.center(inner_w) + "║"
-            self.stdscr.addnstr(overlay_y + 1, overlay_x, title_line, overlay_w, border_attr)
+            # Category tabs row
+            cat = self._browser_category
+            tabs = ""
+            for i, name in enumerate(self._browser_categories):
+                count = len(self._browser_cat_lists[i])
+                label = f" {name} ({count}) "
+                if i == cat:
+                    label = f"[{label}]"
+                else:
+                    label = f" {label} "
+                tabs += label
+            tabs_padded = tabs.center(inner_w)[:inner_w]
+            tabs_line = "║" + tabs_padded + "║"
+            # Highlight active tab
+            self.stdscr.addnstr(overlay_y + 1, overlay_x, tabs_line, overlay_w, border_attr)
 
-            # Title separator
+            # Tab separator
             sep = "╠" + "═" * inner_w + "╣"
             self.stdscr.addnstr(overlay_y + 2, overlay_x, sep, overlay_w, border_attr)
 
@@ -2368,31 +2432,56 @@ class BBSApp:
             elif self.folder_slug_cursor >= self.folder_slug_scroll + inner_h:
                 self.folder_slug_scroll = self.folder_slug_cursor - inner_h + 1
 
-            # List rows: shortcuts first, then folders (continuous)
-            for i in range(inner_h):
-                row_y = overlay_y + 3 + i
-                idx = self.folder_slug_scroll + i
-                if idx < len(self.folder_slug_list):
-                    entry = self.folder_slug_list[idx]
-                    is_sel = (idx == self.folder_slug_cursor)
-                    is_shortcut = idx < self._shortcut_count
-                    if is_shortcut:
-                        icon = "⚡ " if is_sel else "⚡ "
+            # Icon per category
+            cat_icons = {0: "⚡", 1: "📁", 2: "📄"}
+            cat_icons_sel = {0: "⚡", 1: "📂", 2: "📄"}
+            icon_base = cat_icons.get(cat, "·")
+            icon_sel = cat_icons_sel.get(cat, "·")
+
+            # List rows
+            # Show hint when Documents tab is active but not configured
+            show_not_configured = (cat == 2 and not self.documents_dir
+                                   and not self.folder_slug_list)
+            if show_not_configured:
+                hint_lines = [
+                    "",
+                    "Documents directory not configured.",
+                    "",
+                    "Press O to open Options and set",
+                    "the Documents Directory path.",
+                ]
+                hint_attr = curses.color_pair(self.CP_XTREE_BORDER)
+                for i in range(inner_h):
+                    row_y = overlay_y + 3 + i
+                    if i < len(hint_lines):
+                        text = hint_lines[i].center(inner_w)[:inner_w]
                     else:
-                        icon = "📂 " if is_sel else "📁 "
-                    text = f" {icon}{entry}"
-                    # len() counts emoji as 1 char but it displays as 2 cells
-                    display_w = len(text) + 1  # +1 for double-width emoji
-                    padded = text[:inner_w] + " " * max(0, inner_w - display_w)
-                    line = "║" + padded + "║"
-                    attr = sel_attr if is_sel else bg_attr
-                    self.stdscr.addnstr(row_y, overlay_x, line, overlay_w, attr)
-                else:
-                    blank = "║" + " " * inner_w + "║"
-                    self.stdscr.addnstr(row_y, overlay_x, blank, overlay_w, bg_attr)
+                        text = " " * inner_w
+                    line = "║" + text + "║"
+                    self.stdscr.addnstr(row_y, overlay_x, line, overlay_w,
+                                        hint_attr if i < len(hint_lines) else bg_attr)
+            else:
+                for i in range(inner_h):
+                    row_y = overlay_y + 3 + i
+                    idx = self.folder_slug_scroll + i
+                    if idx < len(self.folder_slug_list):
+                        entry = self.folder_slug_list[idx]
+                        is_sel = (idx == self.folder_slug_cursor)
+                        icon = icon_sel if is_sel else icon_base
+                        text = f" {icon} {entry}"
+                        # +1 for double-width emoji
+                        display_w = len(text) + 1
+                        padded = text[:inner_w] + " " * max(0, inner_w - display_w)
+                        line = "║" + padded + "║"
+                        attr = sel_attr if is_sel else bg_attr
+                        self.stdscr.addnstr(row_y, overlay_x, line, overlay_w, attr)
+                    else:
+                        blank = "║" + " " * inner_w + "║"
+                        self.stdscr.addnstr(row_y, overlay_x, blank, overlay_w, bg_attr)
 
             # Footer
-            footer_text = " ↑↓ Select  Enter Insert  E Edit  Esc Cancel "
+            edit_hint = "  E Edit" if cat == 0 else ""
+            footer_text = f" ←→ Tab  ↑↓ Select  Enter Insert{edit_hint}  Tab/Esc Close "
             footer_padded = footer_text.center(inner_w)
             footer_line = "║" + footer_padded[:inner_w] + "║"
             self.stdscr.addnstr(overlay_y + overlay_h - 2, overlay_x,
@@ -2755,6 +2844,20 @@ class BBSApp:
                 if self.folder_slug_cursor < len(self.folder_slug_list) - 1:
                     self.folder_slug_cursor += 1
                 return
+            elif ch == curses.KEY_LEFT:
+                # Switch to previous category
+                self._browser_category = (self._browser_category - 1) % len(self._browser_categories)
+                self.folder_slug_list = self._browser_cat_lists[self._browser_category]
+                self.folder_slug_cursor = 0
+                self.folder_slug_scroll = 0
+                return
+            elif ch == curses.KEY_RIGHT:
+                # Switch to next category
+                self._browser_category = (self._browser_category + 1) % len(self._browser_categories)
+                self.folder_slug_list = self._browser_cat_lists[self._browser_category]
+                self.folder_slug_cursor = 0
+                self.folder_slug_scroll = 0
+                return
             elif ch in (10, 13, curses.KEY_ENTER):
                 if self.folder_slug_list:
                     slug = self.folder_slug_list[self.folder_slug_cursor]
@@ -2778,8 +2881,13 @@ class BBSApp:
                         self._set_status(f"Inserted: {slug}")
                 return
             elif ch in (ord("e"), ord("E")):
+                # Only allow editing in the Shortcuts category
+                if self._browser_category == 0:
+                    self.show_folder_slug = False
+                    self._open_shortcut_editor()
+                return
+            elif ch == 9:  # Tab closes shortcuts browser
                 self.show_folder_slug = False
-                self._open_shortcut_editor()
                 return
             elif ch == 27:
                 self.show_folder_slug = False
@@ -3172,19 +3280,30 @@ class BBSApp:
                 speak_text(f"Voice changed to {name.replace('-', ' ').replace('_', ' ')}")
 
 
-        elif ch in (10, 13, curses.KEY_ENTER):
-            # Enter opens shortcuts browser (allowed during recording for injection)
+        elif ch == 9:  # Tab
+            # Tab opens shortcuts browser (allowed during recording for injection)
             if (not self.refining
                     and self.agent_state in (AgentState.IDLE, AgentState.DONE)
-                    and (self.working_dir or self._shortcut_strings)):
+                    and (self.working_dir or self._shortcut_strings
+                         or self.documents_dir)):
                 self._scan_folder_slugs()
-                if self.folder_slug_list:
+                # Pick first non-empty category, or stay on current
+                has_any = any(self._browser_cat_lists)
+                if has_any:
+                    # If current category is empty, jump to first non-empty
+                    if not self._browser_cat_lists[self._browser_category]:
+                        for i, lst in enumerate(self._browser_cat_lists):
+                            if lst:
+                                self._browser_category = i
+                                break
+                    self.folder_slug_list = self._browser_cat_lists[self._browser_category]
                     self.show_folder_slug = True
                     self.folder_slug_cursor = 0
                     self.folder_slug_scroll = 0
                 else:
-                    self._set_status("No shortcuts or folders found.")
-            elif not self.working_dir and not self._shortcut_strings:
+                    self._set_status("No shortcuts, folders, or documents found.")
+            elif (not self.working_dir and not self._shortcut_strings
+                  and not self.documents_dir):
                 self._set_status("Set working directory or add shortcuts in ESC → Options.")
 
         elif ch == ord("h") or ch == ord("H"):
