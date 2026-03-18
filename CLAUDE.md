@@ -28,7 +28,7 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 - **piper-tts** — text-to-speech via `piper` CLI + `aplay`
 - **curses** — terminal UI (BBS app)
 - Dependencies in `requirements.txt`, virtualenv in `venv/`
-- PyTorch installed CPU-only via `--index-url https://download.pytorch.org/whl/cpu` (VAD doesn't need CUDA)
+- PyTorch installed CPU-only via `--index-url https://download.pytorch.org/whl/cpu`
 
 ## Running
 
@@ -49,7 +49,7 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 
 - Models (VAD, Whisper) are lazy-loaded on first use for fast startup
 - Background threads use `daemon=True`
-- Prompts saved to `~/prompts/voicecode/NNN_slug.md` (flat directory, sequentially indexed)
+- Prompts saved to `~/prompts/voicecode/history/NNN_slug.md` (flat directory, sequentially indexed)
 - Comment lines (`#`) in prompt files are stripped before execution
 - TTS summaries extracted from `[TTS_SUMMARY]...[/TTS_SUMMARY]` blocks in agent responses
 - Thread-safe UI updates via `queue.Queue`
@@ -83,7 +83,6 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | R | Refine fragments into prompt |
 | E | Execute current prompt |
 | D | Direct execute (skip refinement) |
-| S | Save prompt |
 | F | Assign prompt to favorites slot (1-10) |
 | 1-9, 0 | Quick-load favorites slot 1-10 |
 | N | New prompt (clear buffer, keep session) |
@@ -91,8 +90,8 @@ python voicecode_bbs.py --model small.en --save-dir ~/my-prompts
 | C | Clear dictation buffer |
 | Enter | Type text directly into dictation buffer (Enter to submit, ESC to cancel) |
 | Tab | Shortcuts browser (inject strings/paths into dictation; works mid-recording) |
-| ←/→ | Browse saved prompts |
-| ↑/↓ | Cycle active/favorites/saved views |
+| ←/→ | Browse prompt history |
+| ↑/↓ | Cycle active/favorites views |
 | Home | Return to current prompt |
 | PgUp/PgDn | Scroll agent terminal |
 | O | Settings / voice config |

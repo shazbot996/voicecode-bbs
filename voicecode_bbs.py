@@ -2218,7 +2218,6 @@ class BBSApp:
             "",
             "  ── Author ────────────────────",
             "  Charles Schiele",
-            "  charles.schiele@gmail.com",
             "  github.com/shazbot996/voicecode-bbs",
             "",
             "  ── Built With ────────────────",

@@ -14,32 +14,98 @@
 > A retro BBS-style voice-driven prompt workshop for AI agents.
 > Dictate prompts, refine them with AI, and execute them — all by voice.
 
+**Currently supports Claude CLI.** Gemini support is coming very soon.
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **Python 3.12+**
+- **Linux** with ALSA (for TTS playback via `aplay`)
+- A working **microphone**
+- [**Claude CLI**](https://docs.anthropic.com/en/docs/claude-cli) installed and authenticated
+
+### Install
+
+```bash
+git clone https://github.com/shazbot996/voicecode-bbs.git
+cd voicecode-bbs
+
+# Automated setup (checks system deps, creates venv, installs everything)
+make init
+
+# Or manually:
+python -m venv venv
+source venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+```
+
+System dependencies (installed via your package manager):
+- `libportaudio2` — audio capture
+- `alsa-utils` — TTS playback (`aplay`)
+
+### Run
+
+```bash
+source venv/bin/activate
+python voicecode_bbs.py
+```
+
+Options:
+```bash
+python voicecode_bbs.py --model small.en    # Use a larger Whisper model for better accuracy
+python voicecode_bbs.py --save-dir ~/prompts # Custom prompt library location
+```
+
+### Run a Saved Prompt
+
+```bash
+./ask latest                                    # Execute the most recent prompt
+./ask ~/prompts/voicecode/history/001_my_prompt.md  # Execute a specific prompt
+```
+
 ---
 
 ## What Is This?
 
-VoiceCode is a voice-first CLI interface for working with Claude and other AI agents. Speak your ideas, let AI shape them into well-crafted prompts, then fire them off — no keyboard required.
-VoiceCode is a CLI voice dictation system that is built to dictate prompts for AI agents. It can be used to dictate direct commands to an AI agent, as well as to iteratively construct and refine a prompt.  Note: This system is not intended to produce a spec! This document replaces the hand prompt curation folder of my original prompt library design - the prompts/personal/ folder was where I usually do the majority of "new" thinking in building with AI.  I build prompts there to instruct code assist to build the specs themselves!  So my builds are always indirect: describe what I want in as much detail as I can, and ask code assist to generate either a spec for the solution, or a plan for the implementation of the idea.  In every case, my first step is the hard part, since sometimes I work directly with code assisst, and other times I write a prompt file. Prompt file histories are often important to have!  
+VoiceCode is a voice-first CLI for working with AI agents. Speak your ideas, let AI shape them into well-crafted prompts, then fire them off — no keyboard required.
 
-This application is intended to bridge the gap between hand prompt file editing and extemporaneous vibe code editing.
+This is not a general-purpose dictation tool. It is purpose-built for the prompt engineering workflow: you dictate fragments of what you want, refine them into a structured prompt with AI assistance, then execute that prompt against an agent. Prompt histories are preserved so you can browse and re-execute previous work.
 
-The main interface is `voicecode_bbs.py` — a full curses three-pane TUI styled after 1990s bulletin board systems, with ZMODEM animations, typewriter streaming, TTS output, voice commands, favorites, session continuity, folder slug injection, and context metering.
-
-A companion `ask` script runs saved prompts through Claude CLI.
+The interface is a full curses TUI styled after 1990s bulletin board systems, with ZMODEM animations, typewriter streaming, and all the retro charm you remember (or wish you did).
 
 ---
 
-## The BBS Experience
-
-The flagship app is a retro terminal UI inspired by 1980s/90s bulletin board systems. Author was a SysOp of a very famous Wildcat! BBS in 1991. He had a dedicated phone line of his own. In his room!
-
-### Three-Pane Layout
-
-Here's what the BBS interface looks like in the terminal:
+## The Workflow
 
 ```
- VOICECODE BBS v2.0                     Voice: hfc_female  SysOp: falken  21:37:42
-──Session v3 │ Saved: 12 │ History: 5 │ Frags: 3 │ Agent: IDLE────────────────────
+  1. DICTATE         2. REFINE           3. EXECUTE          4. LISTEN
+ ┌──────────┐     ┌──────────┐       ┌──────────┐       ┌──────────┐
+ │  Speak   │     │ AI turns │       │  Prompt  │       │ Response │
+ │  your    │ ──► │ fragments│  ──►  │  sent to │  ──►  │ streamed │
+ │  ideas   │     │ into a   │       │  Claude  │       │ back w/  │
+ │          │     │ prompt   │       │  CLI     │       │ TTS      │
+ └──────────┘     └──────────┘       └──────────┘       └──────────┘
+    [SPACE]           [R]                [E]                [P]
+```
+
+1. **Dictate** — Press SPACE to record. Speak naturally; fragments accumulate in the buffer.
+2. **Refine** — Press R to have AI synthesize your fragments into a polished prompt.
+3. **Execute** — Press E to send the prompt to Claude. Watch the ZMODEM animation, then the response streams in with a typewriter effect.
+4. **Listen** — The agent's TTS summary is read aloud. Press P to replay.
+
+Or press **D** to skip refinement and send raw dictation directly.
+
+---
+
+## Three-Pane Layout
+
+```
+ VOICECODE BBS v2.4                     Voice: hfc_female  SysOp: falken  21:37:42
+──Session v3 │ Favs: 3/10 │ History: 12 │ Frags: 3 │ Agent: IDLE────────────────────
 ┌── PROMPT BROWSER ────────────────┐┌── AGENT TERMINAL ──────────────────────────┐
 │                                  ││                                            │
 │  Write a Python function that    ││  ═══ INCOMING TRANSMISSION ═══             │
@@ -66,45 +132,56 @@ Here's what the BBS interface looks like in the terminal:
 │                                  ││  ```                                       │
 │                                  ││                                            │
 └──────────────────────────────────┘└────────────────────────────────────────────┘
- [Q]uit | [SPC]Rec [R]efine [E]xec [D]irect [S]ave [N]ew [←→]Browse | [ESC]Voice
- Ready — 12 prompts saved                                    Protocol: ZMODEM/1.0
+ [Q]uit [X]Restart | [N]ew [U]ndo [C]lear [K]ill [W]NewSess [Tab]Shortcuts
+ Ready                                                      Protocol: ZMODEM/1.0
 ```
 
-- **Prompt Browser** (top-left) — View and browse your refined prompts
-- **Dictation Buffer** (bottom-left) — Watch voice fragments accumulate in real-time
-- **Agent Terminal** (right) — ZMODEM transfer animation, then typewriter-streamed responses
+- **Prompt Browser** (top-left) — View and browse your refined prompts. Favorites indicators on the left border.
+- **Dictation Buffer** (bottom-left) — Watch voice fragments accumulate in real-time.
+- **Agent Terminal** (right) — ZMODEM transfer animation, then typewriter-streamed responses with context meter.
 
-### The Workflow
+---
 
-```
-  1. DICTATE         2. REFINE           3. EXECUTE          4. LISTEN
- ┌──────────┐     ┌──────────┐       ┌──────────┐       ┌──────────┐
- │  Speak   │     │ AI turns │       │  Prompt  │       │ Response │
- │  your    │ ──► │ fragments│  ──►  │  sent to │  ──►  │ streamed │
- │  ideas   │     │ into a   │       │  Claude  │       │ back w/  │
- │          │     │ prompt   │       │  CLI     │       │ TTS      │
- └──────────┘     └──────────┘       └──────────┘       └──────────┘
-    [SPACE]           [R]                [E]                [P]
-```
+## Keyboard Controls
 
-1. **Dictate** — Press SPACE to record. Speak naturally; fragments accumulate in the buffer.
-2. **Refine** — Press R to have AI synthesize your fragments into a polished prompt.
-3. **Execute** — Press E to send the prompt to Claude. Watch the ZMODEM animation, then the response streams in with a typewriter effect.
-4. **Listen** — The agent's TTS summary is read aloud. Press P to replay.
+| Key | Action |
+|:---:|--------|
+| `SPACE` | Toggle recording |
+| `R` | Refine fragments into a prompt |
+| `D` | Direct execute (skip refinement) |
+| `E` | Execute current prompt |
+| `F` | Assign prompt to favorites slot (1-10) |
+| `1`-`9`, `0` | Quick-load favorites 1-10 |
+| `N` | New prompt (clear buffer, keep session) |
+| `U` | Undo last dictation entry |
+| `C` | Clear dictation buffer |
+| `Enter` | Type text directly into dictation buffer |
+| `Tab` | Shortcuts browser (inject paths/strings; works mid-recording) |
+| `←` `→` | Browse prompt history |
+| `↑` `↓` | Cycle active/favorites views |
+| `Home` | Return to current prompt |
+| `PgUp` `PgDn` | Scroll agent terminal |
+| `O` | Settings / voice configuration |
+| `W` | New session (clear conversation context) |
+| `ESC` | Voice command mode |
+| `K` | Kill running agent |
+| `P` | Replay TTS summary |
+| `H` | Help overlay |
+| `A` | About / title screen |
+| `X` | Restart application |
+| `Q` | Quit |
 
-Or press **D** to skip refinement and send raw dictation directly.
+---
+
+## Features
 
 ### Voice Commands
 
 Press **ESC** to enter voice command mode — then speak any action:
 
-> *"record"* · *"refine"* · *"execute"* · *"save"* · *"next"* · *"previous"* · *"settings"* · *"quit"*
+> *"record"* · *"refine"* · *"execute"* · *"next"* · *"previous"* · *"settings"* · *"quit"*
 
 Every keyboard action has a voice equivalent. Go fully hands-free.
-
----
-
-## How It Works
 
 ### Audio Pipeline
 
@@ -128,112 +205,46 @@ Microphone (16kHz mono)
 
 - **Silero VAD** detects speech vs. silence in real-time
 - **faster-whisper** transcribes speech locally (no cloud API) with int8 quantization
-- **Piper TTS** provides local text-to-speech output with 10 voice options
+- **Piper TTS** provides local text-to-speech output with multiple voice options
 - Models are **lazy-loaded** on first use — startup takes ~1 second
 
-### Agent Streaming
+### Prompt History
 
-The agent terminal streams Claude's response in real-time by parsing `--output-format stream-json` events. You see tool calls, thinking blocks, and text arrive character-by-character with a typewriter effect.
-
-### Prompt Library
-
-Prompts are automatically organized into a dated hierarchy:
+Prompts are stored in a flat directory with sequential numbering:
 
 ```
-~/prompts/voicecode/
-  └── 2026/
-      └── 03/
-          └── 16/
-              ├── prompt_001.md
-              ├── prompt_002.md
-              └── prompt_003.md
+~/prompts/voicecode/history/
+  ├── 001_binary_search_function.md
+  ├── 002_refactor_auth_middleware.md
+  └── 003_add_unit_tests.md
 ```
 
-Browse saved prompts with **Left/Right** arrows. Use **Up/Down** to cycle between active, favorites, and history views. Run any saved prompt later with the `ask` helper.
+Browse history with **Left/Right** arrows. Use **Up/Down** to toggle between active and favorites views.
 
-### Favorites
+### 10-Slot Favorites
 
-Press **F** to bookmark prompts you want to keep handy. Favorites appear in their own view accessible via the **Up/Down** view cycler.
+Press **F** to assign a prompt to one of 10 numbered favorites slots (keys 1-9 and 0). Quick-load any favorite by pressing its number. Favorites indicators on the Prompt Browser border show which slots are filled.
 
 ### Session Continuity
 
 Each session gets an ID passed to Claude via `--resume`, so conversation context carries across multiple execute cycles. Press **W** to start a fresh session. The context meter on the agent terminal border shows how much of Claude's context window has been used.
 
-### Folder Slug Browser
+### Shortcuts Browser
 
-Press **Enter** to open the folder slug browser — a navigable overlay listing directories under your configured working directory (set via **O** settings). Select a path to inject it into the dictation buffer. This works **mid-recording**: the slug is timestamped and merged into the final transcript at the correct position using Whisper's word-level timestamps.
+Press **Tab** to open the shortcuts browser — a navigable overlay for injecting paths, strings, or project folders into the dictation buffer. This works **mid-recording**: the shortcut is timestamped and merged into the final transcript at the correct position using Whisper's word-level timestamps.
 
----
+### Configuration
 
-## Getting Started
+Settings are persisted to `~/.config/voicecode/settings.json` and can be changed in-app via the **O** key:
 
-### Prerequisites
-
-- Python 3.12+
-- A working microphone
-- [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli) installed and authenticated
-- Linux with ALSA (for `aplay` TTS playback)
-
-### Install
-
-```bash
-git clone <repo-url> && cd voicecode
-make init
-```
-
-Or manually:
-
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt
-```
-
-### Run
-
-```bash
-# Activate the virtualenv
-source venv/bin/activate
-
-# Launch the BBS prompt workshop
-python voicecode_bbs.py
-
-# Or with a larger Whisper model for better accuracy
-python voicecode_bbs.py --model small.en
-
-# Run a saved prompt through Claude
-./ask latest
-./ask ~/prompts/2026/03/16/prompt_001.md
-```
-
----
-
-## Keyboard Controls
-
-| Key | Action |
-|:---:|--------|
-| `SPACE` | Toggle recording |
-| `R` | Refine fragments into a prompt |
-| `D` | Direct execute (skip refinement) |
-| `E` | Execute current prompt |
-| `S` | Save prompt to library |
-| `F` | Add/remove prompt from favorites |
-| `N` | New prompt (clear buffer, keep session) |
-| `C` | Clear dictation buffer |
-| `Enter` | Folder slug browser (inject paths; works mid-recording) |
-| `←` `→` | Browse saved prompts |
-| `↑` `↓` | Cycle active/favorites/history views |
-| `PgUp` `PgDn` | Scroll agent terminal |
-| `O` | Settings / voice configuration |
-| `W` | New session (clear conversation context) |
-| `ESC` | Voice command mode |
-| `K` | Kill running agent |
-| `P` | Replay TTS summary |
-| `H` | Help overlay |
-| `A` | About / title screen |
-| `X` | Restart application |
-| `Q` | Quit |
+- Whisper model size (tiny.en, base.en, small.en, medium.en)
+- VAD sensitivity threshold
+- Silence timeout duration
+- Minimum speech duration
+- TTS voice selection
+- TTS volume gain
+- Prompt library path
+- Working directory for shortcuts browser
 
 ---
 
@@ -247,21 +258,15 @@ python voicecode_bbs.py --model small.en
 | Text-to-Speech | [Piper TTS](https://github.com/rhasspy/piper) |
 | Audio Capture | sounddevice + NumPy |
 | Terminal UI | Python curses |
-| AI Backend | Claude CLI |
+| AI Backend | Claude CLI (Gemini coming soon) |
 
 ---
 
-## Configuration
+## Agent Support
 
-Settings are persisted to `~/.config/voicecode/settings.json` and can be changed in-app via the **O** key:
+**Currently supported:** Claude CLI (`claude` command)
 
-- Whisper model size
-- VAD sensitivity threshold
-- Silence timeout duration
-- Minimum speech duration
-- TTS voice selection (10 voices)
-- Prompt library path
-- Working directory for folder slug browser
+**Coming soon:** Gemini CLI — multi-agent support is actively in development.
 
 ---
 
