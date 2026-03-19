@@ -4827,10 +4827,15 @@ class BBSApp:
         self.ui_queue.put(("agent_state", AgentState.RECEIVING))
         self.ui_queue.put(("status", "Agent receiving transmission...", self.CP_STATUS))
 
-        # Add the "incoming transmission" header via typewriter
-        self._emit_typewriter("\n═══ INCOMING TRANSMISSION ═══\n\n")
-
         provider = self.ai_provider
+
+        # BBS-style announcement block before the session header
+        model_tag = provider.name.upper()
+        self._emit_typewriter(f"\n>> REQUEST RECEIVED... ROUTING TO [{model_tag}] <<\n")
+        self._emit_typewriter(">> INCOMING TRANSMISSION <<\n\n")
+
+        # Add the "incoming transmission" header via typewriter
+        self._emit_typewriter("═══ INCOMING TRANSMISSION ═══\n\n")
 
         try:
             prompt_with_tts = self.xfer_prompt_text + TTS_PROMPT_SUFFIX
