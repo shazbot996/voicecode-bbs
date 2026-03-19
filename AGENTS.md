@@ -5,7 +5,6 @@ Voice-driven CLI interface for interacting with AI agents (Claude, Gemini). Dict
 ## Architecture
 
 - **`voicecode_bbs.py`** — Retro BBS-style voice-driven prompt engineering workshop with three-pane curses UI (Prompt Browser, Dictation Buffer, Agent Terminal), ZMODEM animations, typewriter streaming, TTS output, favorites, session continuity, shortcuts injection, and context metering.
-- **`ask`** — Bash helper to run saved prompts through Claude CLI or Gemini CLI.
 
 ### Audio Pipeline
 
@@ -38,11 +37,6 @@ source venv/bin/activate
 
 # Launch the BBS prompt workshop
 python voicecode_bbs.py
-
-# Run a saved prompt
-./ask latest
-./ask ~/prompts/voicecode/001_some_useful_name.md
-```
 
 ## Conventions
 

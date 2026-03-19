@@ -3,7 +3,7 @@
 VoiceCode BBS - A retro BBS-style voice-driven prompt workshop & agent terminal.
 
           ╔═══════════════════════════════════════╗
-          ║  V O I C E C O D E   B B S   v2.2     ║
+          ║  V O I C E C O D E   B B S   v3.0     ║
           ║  "Your voice, your prompt, your way"  ║
           ╚═══════════════════════════════════════╝
 
@@ -22,6 +22,7 @@ Workflow:
   4. Watch the ZMODEM transfer animation + typewriter response
 """
 
+import shlex
 import curses
 import sys
 import os
@@ -178,15 +179,24 @@ class CLIProvider:
 
     name: str = "unknown"
     binary: str = "unknown"
+    command_override: str | None = None
+
+    def _get_base_cmd(self) -> list[str]:
+        if self.command_override:
+            return shlex.split(self.command_override)
+        return [self.binary]
 
     def is_installed(self) -> bool:
-        return shutil.which(self.binary) is not None
+        cmd = self._get_base_cmd()
+        # If full path provided, shutil.which might still return it if it's executable
+        return shutil.which(cmd[0]) is not None
 
     def get_version(self) -> str | None:
         try:
+            cmd = self._get_base_cmd() + ["--version"]
             result = subprocess.run(
-                [self.binary, "--version"],
-                capture_output=True, text=True, timeout=10)
+                cmd,
+                capture_output=True, text=True, timeout=10, env=os.environ)
             return result.stdout.strip() or result.stderr.strip()
         except Exception:
             return None
@@ -228,10 +238,10 @@ class ClaudeProvider(CLIProvider):
     binary = "claude"
 
     def build_refine_cmd(self, prompt: str) -> list[str]:
-        return [self.binary, "--print", "-p", prompt]
+        return self._get_base_cmd() + ["--print", "-p", prompt]
 
     def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
-        cmd = [self.binary, "--print", "--verbose", "--output-format",
+        cmd = self._get_base_cmd() + ["--print", "--verbose", "--output-format",
                "stream-json", "--dangerously-skip-permissions"]
         if session_id:
             cmd += ["--resume", session_id]
@@ -314,12 +324,12 @@ class GeminiProvider(CLIProvider):
     binary = "gemini"
 
     def build_refine_cmd(self, prompt: str) -> list[str]:
-        return [self.binary, "-p", prompt]
+        return self._get_base_cmd() + ["-p", prompt]
 
     def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
-        cmd = [self.binary, "--yolo", "-o", "stream-json"]
+        cmd = self._get_base_cmd() + ["-o", "stream-json"]
         if session_id:
-            cmd += ["--resume", "latest"]
+            cmd += ["--resume", session_id]
         cmd += ["-p", prompt]
         return cmd
 
@@ -361,24 +371,17 @@ class GeminiProvider(CLIProvider):
         if event.get("type") != "result":
             return None
         stats = event.get("stats", {})
-        models = stats.get("models", {})
         total_tokens = 0
-        ctx_window = 0
-        for _model, model_data in models.items():
+        ctx_window = 1_000_000
+        for _model, model_data in stats.get("models", {}).items():
             tokens = model_data.get("tokens", {})
             total_tokens += tokens.get("total", 0)
-            # Gemini doesn't report context window in the same way;
-            # use a reasonable default for the model
-            if not ctx_window:
-                ctx_window = tokens.get("contextWindow", 1_000_000)
-        # Fallback: check flat stats fields (stream-json format)
-        if not total_tokens:
-            total_tokens = stats.get("total_tokens", 0)
+            ctx_window = tokens.get("contextWindow", ctx_window)
         return (total_tokens, ctx_window) if total_tokens else None
 
     def is_result_event(self, event: dict) -> str | None:
         if event.get("type") == "result":
-            return event.get("response", event.get("result", ""))
+            return event.get("result", "")
         return None
 
 
@@ -911,7 +914,7 @@ def refine_with_llm(fragments: list[str], current_prompt: str | None,
     try:
         cmd = provider.build_refine_cmd(meta_prompt)
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120)
+            cmd, capture_output=True, text=True, timeout=120, env=os.environ)
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
         else:
@@ -1169,8 +1172,18 @@ class BBSApp:
         self.whisper_model = saved.get("whisper_model", "base.en")
 
         # AI provider — detect installed CLIs and restore saved choice
-        self.available_providers = _detect_providers()
         saved_provider = saved.get("ai_provider", "Claude")
+        
+        # Apply command overrides from settings
+        gemini_cmd = saved.get("gemini_command")
+        if gemini_cmd:
+            g_prov = _get_provider_by_name("Gemini")
+            if g_prov:
+                g_prov.command_override = gemini_cmd
+
+        # Detect available providers after overrides are applied
+        self.available_providers = _detect_providers()
+
         self.ai_provider = _get_provider_by_name(saved_provider)
         if not self.ai_provider or not self.ai_provider.is_installed():
             # Fallback to first available, or Claude as default
@@ -1446,11 +1459,28 @@ class BBSApp:
                 "get": lambda: self.ai_provider.name,
                 "set": self._set_ai_provider,
             })
+        
+        # Custom command for Gemini
+        gemini_provider = _get_provider_by_name("Gemini")
+        if gemini_provider:
+            items.append({
+                "key": "gemini_command",
+                "label": "Gemini CLI Command",
+                "desc": "Custom command/path for Gemini CLI",
+                "options": None,
+                "get": lambda: gemini_provider.command_override or gemini_provider.binary,
+                "set": None,
+                "editable": True,
+                "action": self._start_editing_gemini_command,
+            })
+
         # Show provider info for all known providers
         for p in ALL_PROVIDERS:
             if p.is_installed():
                 ver = p.get_version() or "unknown"
-                path = shutil.which(p.binary) or "not found"
+                # Use override if set, else binary
+                base_cmd = p._get_base_cmd()[0]
+                path = shutil.which(base_cmd) or base_cmd
                 items.append({
                     "key": f"_info_{p.name.lower()}",
                     "label": f"{p.name} CLI",
@@ -1705,6 +1735,8 @@ class BBSApp:
             self._commit_working_dir()
         elif item["key"] == "documents_dir":
             self._commit_documents_dir()
+        elif item["key"] == "gemini_command":
+            self._commit_gemini_command()
 
     def _start_editing_working_dir(self):
         """Enter inline text editing mode for the working directory path."""
@@ -1742,6 +1774,29 @@ class BBSApp:
         else:
             self._set_status("Documents directory cleared.")
 
+    def _start_editing_gemini_command(self):
+        """Enter inline text editing mode for the gemini command string."""
+        self.settings_editing_text = True
+        g_prov = _get_provider_by_name("Gemini")
+        self.settings_edit_buffer = g_prov.command_override or g_prov.binary
+        self.settings_edit_cursor = len(self.settings_edit_buffer)
+        self.show_settings_overlay = True
+
+    def _commit_gemini_command(self):
+        """Apply the edited gemini command string."""
+        new_cmd = self.settings_edit_buffer.strip()
+        g_prov = _get_provider_by_name("Gemini")
+        if g_prov:
+            if new_cmd == g_prov.binary or not new_cmd:
+                g_prov.command_override = None
+                self._persist_setting("gemini_command", None)
+                self._set_status("Gemini command reset to default.")
+            else:
+                g_prov.command_override = new_cmd
+                self._persist_setting("gemini_command", new_cmd)
+                self._set_status(f"Gemini command → {new_cmd}")
+        self.settings_editing_text = False
+
     def _persist_setting(self, key, val):
         settings = _load_settings()
         settings[key] = val
@@ -1753,9 +1808,25 @@ class BBSApp:
 
     def _settings_selectable_item(self):
         """Return the currently selected settings item (skipping sections)."""
-        selectable = self._settings_selectable_items()
-        if 0 <= self.settings_cursor < len(selectable):
-            return selectable[self.settings_cursor]
+        if self.voice_submenu_open:
+            items = self.voice_submenu_items
+            cursor = self.voice_submenu_cursor
+        elif self.tts_submenu_open:
+            items = self.tts_submenu_items
+            cursor = self.tts_submenu_cursor
+        elif self.test_tools_submenu_open:
+            items = self.test_tools_submenu_items
+            cursor = self.test_tools_submenu_cursor
+        elif self.ai_models_submenu_open:
+            items = self.ai_models_submenu_items
+            cursor = self.ai_models_submenu_cursor
+        else:
+            items = self.settings_items
+            cursor = self.settings_cursor
+
+        selectable = [it for it in items if it.get("type") != "section"]
+        if 0 <= cursor < len(selectable):
+            return selectable[cursor]
         return None
 
     def _settings_cursor_move(self, direction):
@@ -2100,7 +2171,8 @@ class BBSApp:
         now = datetime.datetime.now().strftime("%H:%M:%S")
         sysop = f"SysOp: {os.getenv('USER', '?')}"
         voice_tag = f"Voice: {get_tts_voice_name()}"
-        right = f"{voice_tag}  {sysop}  {now} "
+        model_tag = f"Model: {self.ai_provider.name}"
+        right = f"{model_tag}  {voice_tag}  {sysop}  {now} "
         header_line = header + " " * max(0, w - len(header) - len(right)) + right
         try:
             self.stdscr.addnstr(0, 0, header_line, w,
@@ -2377,7 +2449,7 @@ class BBSApp:
             self._draw_bar(help_y, help_text, self.CP_STATUS)
         else:
             voice_label = "[V]oice" if TTS_AVAILABLE else ""
-            keys = " [Q]uit [X]Restart | [N]ew [U]ndo [C]lear [K]ill [W]NewSess [Tab]Shortcuts"
+            keys = " [Q]uit [X]Restart | [N]ew [U]ndo [C]lear [K]ill [W]NewSess [M]odel [Tab]Shortcuts"
             self._draw_bar(help_y, keys, self.CP_HELP)
             # Draw [V]oice in red, right-justified
             w = self.stdscr.getmaxyx()[1]
@@ -2468,6 +2540,7 @@ class BBSApp:
             "  PgUp/Dn  Scroll agent pane",
             "  [/]    Cycle TTS voice",
             "  P      Replay last TTS summary",
+            "  M      Toggle Gemini / Claude",
             "  O      Options / Settings",
             "  H      This help screen",
             "  X      Restart application",
@@ -3656,23 +3729,33 @@ class BBSApp:
                 elif ch in (ord("q"), ord("Q")):
                     self.ai_models_submenu_open = False
                 elif ch == curses.KEY_UP:
-                    selectable = [i for i, it in enumerate(self.ai_models_submenu_items) if it.get("options") is not None]
+                    selectable = [i for i, it in enumerate(self.ai_models_submenu_items) 
+                                 if it.get("options") is not None or it.get("action") is not None]
                     if selectable:
                         cur_pos = selectable.index(self.ai_models_submenu_cursor) if self.ai_models_submenu_cursor in selectable else 0
                         self.ai_models_submenu_cursor = selectable[(cur_pos - 1) % len(selectable)]
-                    elif self.ai_models_submenu_items:
+                    else:
                         self.ai_models_submenu_cursor = (self.ai_models_submenu_cursor - 1) % len(self.ai_models_submenu_items)
                 elif ch == curses.KEY_DOWN:
-                    selectable = [i for i, it in enumerate(self.ai_models_submenu_items) if it.get("options") is not None]
+                    selectable = [i for i, it in enumerate(self.ai_models_submenu_items) 
+                                 if it.get("options") is not None or it.get("action") is not None]
                     if selectable:
                         cur_pos = selectable.index(self.ai_models_submenu_cursor) if self.ai_models_submenu_cursor in selectable else 0
                         self.ai_models_submenu_cursor = selectable[(cur_pos + 1) % len(selectable)]
-                    elif self.ai_models_submenu_items:
+                    else:
                         self.ai_models_submenu_cursor = (self.ai_models_submenu_cursor + 1) % len(self.ai_models_submenu_items)
                 elif ch == curses.KEY_LEFT:
                     self._ai_models_submenu_cycle(-1)
                 elif ch == curses.KEY_RIGHT:
                     self._ai_models_submenu_cycle(1)
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    item = self.ai_models_submenu_items[self.ai_models_submenu_cursor]
+                    if item.get("action"):
+                        if item.get("editable"):
+                            item["action"]()  # will set settings_editing_text = True
+                        else:
+                            self.show_settings_overlay = False
+                            item["action"]()
                 return
 
             # Test Tools sub-menu navigation
@@ -3722,8 +3805,14 @@ class BBSApp:
                     elif item.get("submenu"):
                         item["action"]()  # submenu openers keep modal open
                     else:
-                        self.show_settings_overlay = False
-                        item["action"]()
+                        # Non-submenu, non-editable action: close modal then run
+                        # but check if we're in a submenu first
+                        if any([self.voice_submenu_open, self.tts_submenu_open,
+                                self.test_tools_submenu_open, self.ai_models_submenu_open]):
+                            item["action"]() # just run it, don't close main modal
+                        else:
+                            self.show_settings_overlay = False
+                            item["action"]()
             return
 
         # Handle confirmation dialog for [N]ew prompt
@@ -4086,6 +4175,19 @@ class BBSApp:
             self.test_tools_submenu_open = False
             self.voice_submenu_open = False
             self.ai_models_submenu_open = False
+
+        elif ch == ord("m") or ch == ord("M"):
+            # Toggle AI provider between Gemini and Claude
+            gemini = _get_provider_by_name("Gemini")
+            claude = _get_provider_by_name("Claude")
+            if (gemini and gemini.is_installed()
+                    and claude and claude.is_installed()):
+                if self.ai_provider.name == "Claude":
+                    self._set_ai_provider("Gemini")
+                else:
+                    self._set_ai_provider("Claude")
+            else:
+                self._set_status("Both Gemini and Claude must be installed to toggle.")
 
         elif ch == 27:
             # ESC key — could be menu, arrow key, or bracketed paste start
@@ -4852,6 +4954,7 @@ class BBSApp:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                env=os.environ,
             )
 
             result_text = ""

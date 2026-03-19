@@ -58,13 +58,6 @@ python voicecode_bbs.py
 
 Whisper model size and prompt library path are configurable via the in-app settings menu (**O** key).
 
-### Run a Saved Prompt
-
-```bash
-./ask latest                                    # Execute the most recent prompt
-./ask ~/prompts/voicecode/history/001_my_prompt_prompt.md  # Execute a specific prompt
-```
-
 ---
 
 ## What Is This?
