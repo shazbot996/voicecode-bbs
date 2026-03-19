@@ -4916,6 +4916,7 @@ class BBSApp:
             # End marker — reset color to default for the transmission footer
             self.ui_queue.put(("typewriter_color", None))
             self._emit_typewriter("\n\n═══ END TRANSMISSION ═══\n")
+            self._flush_tts_detect_buf()
 
             self.ui_queue.put(("agent_state", AgentState.DONE))
             self.ui_queue.put(("status", "Agent complete. Ready for next prompt.", self.CP_STATUS))
@@ -5123,9 +5124,9 @@ def main():
             ║    R        Refine fragments into prompt              ║
             ║    N        New prompt (prompts save if unsaved)      ║
             ║    E        Execute prompt (send to agent)            ║
-            ║    U        Undo last dictation entry                  ║
+            ║    U        Undo last dictation entry                 ║
             ║    C        Clear dictation buffer                    ║
-            ║    ←→       Browse prompt history                      ║
+            ║    ←→       Browse prompt history                     ║
             ║    ↑↓       Scroll prompt pane                        ║
             ║    PgUp/Dn  Scroll agent pane                         ║
             ║    K        Kill running agent                        ║
