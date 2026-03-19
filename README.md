@@ -14,7 +14,6 @@
 > A retro BBS-style voice-driven prompt workshop for AI agents (Claude, Gemini).
 > Dictate prompts, refine them with AI, and execute them in a novel dictation and refinement workflow that builds its own prompt history.
 
-
 **Supports Claude CLI and Gemini CLI.**
 
 ![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
@@ -57,11 +56,7 @@ source venv/bin/activate
 python voicecode_bbs.py
 ```
 
-Options:
-```bash
-python voicecode_bbs.py --model small.en    # Use a larger Whisper model for better accuracy
-python voicecode_bbs.py --save-dir ~/prompts # Custom prompt library location
-```
+Whisper model size and prompt library path are configurable via the in-app settings menu (**O** key).
 
 ### Run a Saved Prompt
 
@@ -74,11 +69,15 @@ python voicecode_bbs.py --save-dir ~/prompts # Custom prompt library location
 
 ## What Is This?
 
-VoiceCode is a voice-first CLI for working with AI agents. Speak your ideas, let AI shape them into well-crafted prompts, then fire them off — no keyboard required.
+VoiceCode is a voice-first CLI for working with AI agents. I built it after many iterations with code assist cli tools, vs code, and various prompt editors. Once an AI developer starts getting more structural with code generating, there is still an extremely distilled need to write as much of your own context as possible to focus the builds and control as much as possible. In other words, typing boatloads of long form prompts by hand, and it takes a lot of time. If you are short-cutting this, then you aren't really controlling what you are making.
 
-This is not a general-purpose dictation tool. It is purpose-built for the prompt engineering workflow: you dictate fragments of what you want, refine them into a structured prompt with AI assistance, then execute that prompt against an agent. Prompt histories are preserved so you can browse and re-execute previous work.
+So I built an voice dictation system that I vibe coded with and refined until I really feel like it has a workflow that speeds me up, and improves my capture of historical context. It's a great context generator for a prompt library!
 
-The interface is a full curses TUI styled after 1990s bulletin board systems, with ZMODEM animations, typewriter streaming, and all the retro charm you remember (or wish you did).
+This is not a general-purpose dictation tool. It is purpose-built for the prompt engineering workflow: you dictate fragments of what you want, refine them into a structured prompt with AI assistance, then execute that prompt against an agent. Prompt histories are preserved so you can browse and re-execute previous work. The trick is the fluidity with how you can build a prompt by combining your voice dictation, hand direct editing, copy/paste integration, and an interactive "string injector" that can paste critcial syntax strings from your project into your prompt with a single keystroke. 
+
+The interface is a full curses TUI styled after 1990s bulletin board systems with all the retro charm you remember (or wish you did). Yeah I'm an old head and I feel all warm and cozy in a curses UI.  But it's all keyboard shortcuts and fairly fast workflow. 
+
+This application is intended to be deployed into a given deployment or monorepo in a folder alongside your build.  It has a Makefile that will help you figure out how to launch it. Ideally, launch it from the root of your repo by just running
 
 ---
 

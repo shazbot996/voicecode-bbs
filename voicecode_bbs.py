@@ -988,9 +988,7 @@ class BBSApp:
     CP_FAV_EMPTY = 22
     CP_FAV_FILLED = 23
 
-    def __init__(self, args):
-        self.args = args
-
+    def __init__(self):
         # Left panes
         self.prompt_pane = TextPane("PROMPT BROWSER", self.CP_PROMPT)
         self.dictation_pane = TextPane("DICTATION BUFFER", self.CP_DICTATION)
@@ -1069,15 +1067,10 @@ class BBSApp:
         # Event queue for cross-thread UI updates
         self.ui_queue: queue.Queue = queue.Queue()
 
-        # Prompt library & save dir
-        # Priority: CLI --save-dir (explicit) > persisted setting > default ~/prompts
+        # Prompt library & save dir — from persisted settings or default
         saved = _load_settings()
-        cli_save_dir_explicit = any(a in sys.argv for a in ("--save-dir",))
-        if cli_save_dir_explicit:
-            self.prompt_library = str(Path(args.save_dir).expanduser())
-        else:
-            self.prompt_library = saved.get(
-                "prompt_library", str(Path(args.save_dir).expanduser()))
+        self.prompt_library = saved.get(
+            "prompt_library", str(Path("~/prompts").expanduser()))
         self.tts_volume_gain = float(saved.get("tts_volume_gain", 1.0))
 
         # Voicecode writes into a dedicated subfolder within the library
@@ -1173,10 +1166,7 @@ class BBSApp:
         self.vad_threshold = saved.get("vad_threshold", VAD_THRESHOLD)
         self.silence_timeout = saved.get("silence_timeout", SILENCE_AFTER_SPEECH_SEC)
         self.min_speech_duration = saved.get("min_speech_duration", MIN_SPEECH_DURATION_SEC)
-        self.whisper_model = args.model  # from CLI, overrideable in settings
-        if "whisper_model" in saved and not any(
-                a in sys.argv for a in ("--model",)):
-            self.whisper_model = saved["whisper_model"]
+        self.whisper_model = saved.get("whisper_model", "base.en")
 
         # AI provider — detect installed CLIs and restore saved choice
         self.available_providers = _detect_providers()
@@ -1194,6 +1184,7 @@ class BBSApp:
         self.agent_process = None
         self._agent_cancel = threading.Event()
         self.last_tts_summary = ""
+        self._last_history_prompt_path: Path | None = None
 
         # Session continuity — reuse session_id across prompts
         self.session_id: str | None = None
@@ -1797,7 +1788,7 @@ class BBSApp:
     # ─── Prompt browser ────────────────────────────────────────────
 
     def _scan_history_prompts(self):
-        self.history_prompts = sorted(self.history_base.glob("[0-9]*_*.md"))
+        self.history_prompts = sorted(self.history_base.glob("[0-9]*_*_prompt.md"))
 
     def _load_favorites_slots(self):
         """Load 10-slot favorites from settings."""
@@ -1932,7 +1923,22 @@ class BBSApp:
         except Exception as e:
             content = f"[Error: {e}]"
 
-        self.prompt_pane.set_text(content, width)
+        # For history entries, combine prompt and response with ASCII headers
+        if self.browser_view != "favorites":
+            response_path = Path(str(path).replace("_prompt.md", "_response.md"))
+            divider_w = max(1, width - 4)
+            combined = f"{'=' * divider_w}\n  PROMPT\n{'=' * divider_w}\n\n{content}"
+            if response_path.exists():
+                try:
+                    response_content = response_path.read_text()
+                except Exception as e:
+                    response_content = f"[Error: {e}]"
+                combined += f"\n\n{'-' * divider_w}\n  RESPONSE\n{'-' * divider_w}\n\n{response_content}"
+            else:
+                combined += f"\n\n{'-' * divider_w}\n  RESPONSE\n{'-' * divider_w}\n\n(no response recorded)"
+            self.prompt_pane.set_text(combined, width)
+        else:
+            self.prompt_pane.set_text(content, width)
         self.prompt_pane.scroll_offset = 0
 
     def _set_dictation_info(self, width: int):
@@ -3984,12 +3990,19 @@ class BBSApp:
             self._set_status("Returned to current prompt.")
 
         elif ch == curses.KEY_PPAGE:
-            self.agent_pane.scroll_up(5)
+            if self.browser_index >= 0:
+                self.prompt_pane.scroll_up(5)
+            else:
+                self.agent_pane.scroll_up(5)
 
         elif ch == curses.KEY_NPAGE:
             h = self.stdscr.getmaxyx()[0]
             content_height = h - 4
-            self.agent_pane.scroll_down(content_height - 2, 5)
+            visible = content_height // 2 - 2
+            if self.browser_index >= 0:
+                self.prompt_pane.scroll_down(visible, 5)
+            else:
+                self.agent_pane.scroll_down(content_height - 2, 5)
 
         elif ch == ord("["):
             name = cycle_tts_voice(-1)
@@ -4353,7 +4366,7 @@ class BBSApp:
 
         seq = _next_seq(self.history_base)
         slug = _slug_from_text(self.current_prompt)
-        filename = self.history_base / f"{seq:03d}_{slug}.md"
+        filename = self.history_base / f"{seq:03d}_{slug}_prompt.md"
 
         with open(filename, "w") as f:
             f.write(f"# Prompt v{self.prompt_version}\n")
@@ -4367,20 +4380,42 @@ class BBSApp:
         self.prompt_saved = True
         self._set_status(f"Saved: {filename}")
 
-    def _save_to_history(self, prompt_text):
-        """Auto-save every executed prompt to the history subfolder."""
+    def _save_to_history(self, prompt_text) -> Path | None:
+        """Auto-save every executed prompt to the history subfolder.
+
+        Returns the prompt file path so the response can be written later.
+        """
         if not prompt_text:
-            return
+            return None
         now = datetime.datetime.now()
         self.history_base.mkdir(parents=True, exist_ok=True)
         seq = _next_seq(self.history_base)
         slug = _slug_from_text(prompt_text)
-        filename = self.history_base / f"{seq:03d}_{slug}.md"
+        filename = self.history_base / f"{seq:03d}_{slug}_prompt.md"
         with open(filename, "w") as f:
             f.write(f"# Executed: {now.isoformat()}\n\n")
             f.write(prompt_text)
             f.write("\n")
         self._scan_history_prompts()
+        return filename
+
+    def _save_response_to_history(self, response_text: str, is_error: bool = False):
+        """Write a response file paired with the last saved prompt file."""
+        prompt_path = self._last_history_prompt_path
+        if not prompt_path:
+            return
+        response_path = Path(str(prompt_path).replace("_prompt.md", "_response.md"))
+        try:
+            now = datetime.datetime.now()
+            with open(response_path, "w") as f:
+                if is_error:
+                    f.write(f"# Error: {now.isoformat()}\n\n")
+                else:
+                    f.write(f"# Response: {now.isoformat()}\n\n")
+                f.write(response_text)
+                f.write("\n")
+        except OSError:
+            pass
 
     def _key_to_fav_slot(self, ch: int) -> int:
         """Convert a key code to a favorites slot index (0-9), or -1 if invalid."""
@@ -4442,7 +4477,7 @@ class BBSApp:
             self.history_base.mkdir(parents=True, exist_ok=True)
             seq = _next_seq(self.history_base)
             slug = _slug_from_text(prompt_text)
-            dest = self.history_base / f"{seq:03d}_{slug}.md"
+            dest = self.history_base / f"{seq:03d}_{slug}_prompt.md"
             with open(dest, "w") as f:
                 f.write(f"# Favorited: {now.isoformat()}\n\n")
                 f.write(prompt_text)
@@ -4607,7 +4642,7 @@ class BBSApp:
         prompt_text = " ".join(self.fragments)
         self.fragments.clear()
         self._clear_buffer_file()
-        self._save_to_history(prompt_text)
+        self._last_history_prompt_path = self._save_to_history(prompt_text)
         # Show executed prompt in yellow in the prompt browser (persists until new prompt)
         self.executed_prompt_text = prompt_text
         if self._prompt_pane_original_color is None:
@@ -4664,7 +4699,7 @@ class BBSApp:
         self.dictation_pane.lines.clear()
         self.dictation_pane.scroll_offset = 0
 
-        self._save_to_history(prompt_text)
+        self._last_history_prompt_path = self._save_to_history(prompt_text)
 
         self.xfer_prompt_text = prompt_text
         self.xfer_bytes = len(prompt_text.encode())
@@ -4883,17 +4918,24 @@ class BBSApp:
             summary = extract_tts_summary(full_response)
             if summary:
                 self.last_tts_summary = summary
+                self._save_response_to_history(summary)
                 stop_speaking()
                 speak_text(summary, on_done=lambda: self.ui_queue.put(
                     ("status", "Ready for next prompt.", self.CP_STATUS)))
                 self.ui_queue.put(("status", "Speaking summary...", self.CP_STATUS))
+            else:
+                self._save_response_to_history("(no TTS summary returned)", is_error=True)
 
         except FileNotFoundError:
             if not self._agent_cancel.is_set():
+                self._save_response_to_history(
+                    f"ERROR: '{provider.binary}' CLI not found", is_error=True)
                 self.ui_queue.put(("agent_state", AgentState.DONE))
                 self.ui_queue.put(("status", f"Error: '{provider.binary}' CLI not found!", self.CP_STATUS))
         except Exception as e:
             if not self._agent_cancel.is_set():
+                self._save_response_to_history(
+                    f"ERROR: {e}", is_error=True)
                 self.ui_queue.put(("agent_state", AgentState.DONE))
                 self.ui_queue.put(("status", f"Agent error: {e}", self.CP_STATUS))
 
@@ -5086,16 +5128,9 @@ def main():
             ╚═══════════════════════════════════════════════════════╝
         """),
     )
-    parser.add_argument(
-        "--model", default="base.en",
-        help="Whisper model (default: base.en)")
-    parser.add_argument(
-        "--save-dir", default="~/prompts",
-        help="Prompt library path (saves to <path>/voicecode/). "
-             "Overrides persisted setting. Default: ~/prompts")
-    args = parser.parse_args()
+    parser.parse_args()  # exits on --help, otherwise no args expected
 
-    app = BBSApp(args)
+    app = BBSApp()
     try:
         curses.wrapper(lambda stdscr: app.run(stdscr))
     finally:
