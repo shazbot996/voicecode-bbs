@@ -11,10 +11,11 @@
 
 > *"GREETINGS PROFESSOR FALKEN."*
 >
-> A retro BBS-style voice-driven prompt workshop for AI agents.
-> Dictate prompts, refine them with AI, and execute them — all by voice.
+> A retro BBS-style voice-driven prompt workshop for AI agents (Claude, Gemini).
+> Dictate prompts, refine them with AI, and execute them in a novel dictation and refinement workflow that builds its own prompt history.
 
-**Currently supports Claude CLI.** Gemini support is coming very soon.
+
+**Supports Claude CLI and Gemini CLI.**
 
 ![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
 
@@ -27,7 +28,7 @@
 - **Python 3.12+**
 - **Linux** with ALSA (for TTS playback via `aplay`)
 - A working **microphone**
-- [**Claude CLI**](https://docs.anthropic.com/en/docs/claude-cli) installed and authenticated
+- [**Claude CLI**](https://docs.anthropic.com/en/docs/claude-cli) and/or [**Gemini CLI**](https://github.com/google-gemini/gemini-cli) installed and authenticated
 
 ### Install
 
@@ -229,15 +230,15 @@ Settings are persisted to `~/.config/voicecode/settings.json` and can be changed
 | Text-to-Speech | [Piper TTS](https://github.com/rhasspy/piper) |
 | Audio Capture | sounddevice + NumPy |
 | Terminal UI | Python curses |
-| AI Backend | Claude CLI (Gemini coming soon) |
+| AI Backend | Claude CLI, Gemini CLI |
 
 ---
 
 ## Agent Support
 
-**Currently supported:** Claude CLI (`claude` command)
-
-**Coming soon:** Gemini CLI — multi-agent support is actively in development.
+**Supported agents:**
+- **Claude CLI** (`claude` command)
+- **Gemini CLI** (`gemini` command)
 
 ---
 

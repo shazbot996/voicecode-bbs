@@ -171,6 +171,234 @@ def _next_seq(directory: Path) -> int:
     return max_seq + 1
 
 
+# ─── CLI Provider abstraction ─────────────────────────────────────────
+
+class CLIProvider:
+    """Base class for AI CLI providers (Claude, Gemini, etc.)."""
+
+    name: str = "unknown"
+    binary: str = "unknown"
+
+    def is_installed(self) -> bool:
+        return shutil.which(self.binary) is not None
+
+    def get_version(self) -> str | None:
+        try:
+            result = subprocess.run(
+                [self.binary, "--version"],
+                capture_output=True, text=True, timeout=10)
+            return result.stdout.strip() or result.stderr.strip()
+        except Exception:
+            return None
+
+    def build_refine_cmd(self, prompt: str) -> list[str]:
+        raise NotImplementedError
+
+    def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
+        raise NotImplementedError
+
+    def parse_init_event(self, event: dict) -> str | None:
+        """Extract session_id from an init/system event. Return None if not an init event."""
+        raise NotImplementedError
+
+    def parse_text_event(self, event: dict) -> tuple[str, list] | None:
+        """Parse a streaming event, returning (text, tool_uses) or None if not a text event.
+        tool_uses is a list of (name, detail_str) tuples."""
+        raise NotImplementedError
+
+    def parse_thinking_event(self, event: dict) -> str | None:
+        """Extract thinking text from an event, or None."""
+        raise NotImplementedError
+
+    def parse_tool_result_event(self, event: dict) -> str | None:
+        """Extract tool result preview from a user/tool_result event, or None."""
+        raise NotImplementedError
+
+    def parse_context_usage(self, event: dict) -> tuple[int, int] | None:
+        """Extract (tokens_used, context_window_size) from a result event, or None."""
+        raise NotImplementedError
+
+    def is_result_event(self, event: dict) -> str | None:
+        """If this is a result event, return the result text. Otherwise None."""
+        raise NotImplementedError
+
+
+class ClaudeProvider(CLIProvider):
+    name = "Claude"
+    binary = "claude"
+
+    def build_refine_cmd(self, prompt: str) -> list[str]:
+        return [self.binary, "--print", "-p", prompt]
+
+    def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
+        cmd = [self.binary, "--print", "--verbose", "--output-format",
+               "stream-json", "--dangerously-skip-permissions"]
+        if session_id:
+            cmd += ["--resume", session_id]
+        cmd += ["-p", prompt]
+        return cmd
+
+    def parse_init_event(self, event: dict) -> str | None:
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            return event.get("session_id") or None
+        return None
+
+    def parse_text_event(self, event: dict) -> tuple[str, list] | None:
+        if event.get("type") != "assistant":
+            return None
+        text_parts = []
+        tool_uses = []
+        msg = event.get("message", {})
+        for block in msg.get("content", []):
+            bt = block.get("type", "")
+            if bt == "text":
+                text_parts.append(block.get("text", ""))
+            elif bt == "tool_use":
+                tool_uses.append((block.get("name", "?"), block.get("input", {})))
+        return ("".join(text_parts), tool_uses) if text_parts or tool_uses else None
+
+    def parse_thinking_event(self, event: dict) -> str | None:
+        if event.get("type") != "assistant":
+            return None
+        msg = event.get("message", {})
+        thinking_parts = []
+        for block in msg.get("content", []):
+            if block.get("type") == "thinking":
+                t = block.get("thinking", "")
+                if t:
+                    thinking_parts.append(t)
+        return "\n".join(thinking_parts) if thinking_parts else None
+
+    def parse_tool_result_event(self, event: dict) -> str | None:
+        if event.get("type") != "user":
+            return None
+        content = event.get("content", [])
+        if not isinstance(content, list):
+            return None
+        previews = []
+        for item in content:
+            if item.get("type") == "tool_result":
+                tool_text = item.get("content", "")
+                if isinstance(tool_text, list):
+                    tool_text = " ".join(
+                        c.get("text", "") for c in tool_text if c.get("type") == "text")
+                if tool_text:
+                    preview = tool_text[:200].replace("\n", " ")
+                    if len(tool_text) > 200:
+                        preview += f"... ({len(tool_text)} chars)"
+                    previews.append(preview)
+        return "\n".join(previews) if previews else None
+
+    def parse_context_usage(self, event: dict) -> tuple[int, int] | None:
+        if event.get("type") != "result":
+            return None
+        model_usage = event.get("modelUsage", {})
+        for _model, usage_data in model_usage.items():
+            ctx_window = usage_data.get("contextWindow", 0)
+            input_t = usage_data.get("inputTokens", 0)
+            output_t = usage_data.get("outputTokens", 0)
+            cache_read = usage_data.get("cacheReadInputTokens", 0)
+            cache_create = usage_data.get("cacheCreationInputTokens", 0)
+            total = input_t + output_t + cache_read + cache_create
+            return (total, ctx_window)
+        return None
+
+    def is_result_event(self, event: dict) -> str | None:
+        if event.get("type") == "result":
+            return event.get("result", "")
+        return None
+
+
+class GeminiProvider(CLIProvider):
+    name = "Gemini"
+    binary = "gemini"
+
+    def build_refine_cmd(self, prompt: str) -> list[str]:
+        return [self.binary, "-p", prompt]
+
+    def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
+        cmd = [self.binary, "--yolo", "-o", "stream-json"]
+        if session_id:
+            cmd += ["--resume", "latest"]
+        cmd += ["-p", prompt]
+        return cmd
+
+    def parse_init_event(self, event: dict) -> str | None:
+        if event.get("type") == "init":
+            return event.get("session_id") or None
+        return None
+
+    def parse_text_event(self, event: dict) -> tuple[str, list] | None:
+        if event.get("type") != "message":
+            return None
+        if event.get("role") != "assistant":
+            return None
+        text = event.get("content", "")
+        tool_uses = []
+        # Gemini may include tool_calls in the event
+        for tc in event.get("tool_calls", []):
+            tool_uses.append((tc.get("name", "?"), tc.get("args", {})))
+        return (text, tool_uses) if text or tool_uses else None
+
+    def parse_thinking_event(self, event: dict) -> str | None:
+        if event.get("type") != "message" or event.get("role") != "assistant":
+            return None
+        thinking = event.get("thinking", "")
+        return thinking if thinking else None
+
+    def parse_tool_result_event(self, event: dict) -> str | None:
+        if event.get("type") != "message" or event.get("role") != "tool":
+            return None
+        content = event.get("content", "")
+        if content:
+            preview = str(content)[:200].replace("\n", " ")
+            if len(str(content)) > 200:
+                preview += f"... ({len(str(content))} chars)"
+            return preview
+        return None
+
+    def parse_context_usage(self, event: dict) -> tuple[int, int] | None:
+        if event.get("type") != "result":
+            return None
+        stats = event.get("stats", {})
+        models = stats.get("models", {})
+        total_tokens = 0
+        ctx_window = 0
+        for _model, model_data in models.items():
+            tokens = model_data.get("tokens", {})
+            total_tokens += tokens.get("total", 0)
+            # Gemini doesn't report context window in the same way;
+            # use a reasonable default for the model
+            if not ctx_window:
+                ctx_window = tokens.get("contextWindow", 1_000_000)
+        # Fallback: check flat stats fields (stream-json format)
+        if not total_tokens:
+            total_tokens = stats.get("total_tokens", 0)
+        return (total_tokens, ctx_window) if total_tokens else None
+
+    def is_result_event(self, event: dict) -> str | None:
+        if event.get("type") == "result":
+            return event.get("response", event.get("result", ""))
+        return None
+
+
+# Registry of all known providers
+ALL_PROVIDERS = [ClaudeProvider(), GeminiProvider()]
+
+
+def _detect_providers() -> list[CLIProvider]:
+    """Return list of providers whose CLI binary is installed."""
+    return [p for p in ALL_PROVIDERS if p.is_installed()]
+
+
+def _get_provider_by_name(name: str) -> CLIProvider | None:
+    """Look up a provider by name (case-insensitive)."""
+    for p in ALL_PROVIDERS:
+        if p.name.lower() == name.lower():
+            return p
+    return None
+
+
 # ─── TTS globals ──────────────────────────────────────────────────────
 
 TTS_AVAILABLE = False
@@ -666,9 +894,11 @@ Updated prompt:"""
 
 
 def refine_with_llm(fragments: list[str], current_prompt: str | None,
-                    status_callback=None) -> str:
+                    status_callback=None, provider: CLIProvider | None = None) -> str:
+    if provider is None:
+        provider = ClaudeProvider()
     if status_callback:
-        status_callback("Refining with Claude...")
+        status_callback(f"Refining with {provider.name}...")
 
     fragment_text = "\n".join(f"- {f}" for f in fragments)
 
@@ -679,15 +909,15 @@ def refine_with_llm(fragments: list[str], current_prompt: str | None,
         meta_prompt = INITIAL_REFINE_PROMPT.format(fragments=fragment_text)
 
     try:
+        cmd = provider.build_refine_cmd(meta_prompt)
         result = subprocess.run(
-            ["claude", "--print", "-p", meta_prompt],
-            capture_output=True, text=True, timeout=120)
+            cmd, capture_output=True, text=True, timeout=120)
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
         else:
             return f"[Error: {result.stderr.strip() or 'empty response'}]"
     except FileNotFoundError:
-        return "[Error: 'claude' CLI not found]"
+        return f"[Error: '{provider.binary}' CLI not found]"
     except subprocess.TimeoutExpired:
         return "[Error: timed out after 120s]"
     except Exception as e:
@@ -932,6 +1162,9 @@ class BBSApp:
         self.voice_submenu_open = False
         self.voice_submenu_cursor = 0
         self.test_tools_submenu_items = []
+        self.ai_models_submenu_open = False
+        self.ai_models_submenu_cursor = 0
+        self.ai_models_submenu_items = []
         self.tts_enabled = saved.get("tts_enabled", True)
         global _tts_enabled
         _tts_enabled = self.tts_enabled
@@ -944,6 +1177,14 @@ class BBSApp:
         if "whisper_model" in saved and not any(
                 a in sys.argv for a in ("--model",)):
             self.whisper_model = saved["whisper_model"]
+
+        # AI provider — detect installed CLIs and restore saved choice
+        self.available_providers = _detect_providers()
+        saved_provider = saved.get("ai_provider", "Claude")
+        self.ai_provider = _get_provider_by_name(saved_provider)
+        if not self.ai_provider or not self.ai_provider.is_installed():
+            # Fallback to first available, or Claude as default
+            self.ai_provider = self.available_providers[0] if self.available_providers else ClaudeProvider()
 
         # Settings definitions: (key, label, description, options, get_current, set_fn)
         self._build_settings_items()
@@ -1026,6 +1267,16 @@ class BBSApp:
                 "get": lambda: self.whisper_model,
                 "set": None,
                 "action": self._open_voice_submenu,
+                "submenu": True,
+            },
+            {
+                "key": "_action_ai_models_submenu",
+                "label": "AI Models",
+                "desc": "Select AI provider (Claude, Gemini, etc.)",
+                "options": None,
+                "get": lambda: self.ai_provider.name,
+                "set": None,
+                "action": self._open_ai_models_submenu,
                 "submenu": True,
             },
         ]
@@ -1179,6 +1430,72 @@ class BBSApp:
     def _voice_submenu_cycle(self, direction):
         """Cycle the current Voice sub-menu setting's value."""
         item = self.voice_submenu_items[self.voice_submenu_cursor]
+        if item.get("options") is None:
+            return
+        options = item["options"]
+        current = item["get"]()
+        try:
+            idx = options.index(current)
+        except ValueError:
+            idx = 0
+        new_idx = (idx + direction) % len(options)
+        item["set"](options[new_idx])
+
+    def _build_ai_models_submenu_items(self):
+        """Build the AI Models sub-menu items list."""
+        provider_names = [p.name for p in self.available_providers]
+        items = []
+        if len(provider_names) >= 1:
+            items.append({
+                "key": "ai_provider",
+                "label": "Active Provider",
+                "desc": "AI CLI to use for refinement and agent execution",
+                "options": provider_names,
+                "get": lambda: self.ai_provider.name,
+                "set": self._set_ai_provider,
+            })
+        # Show installed provider info (read-only)
+        for p in self.available_providers:
+            ver = p.get_version() or "unknown"
+            path = shutil.which(p.binary) or "not found"
+            items.append({
+                "key": f"_info_{p.name.lower()}",
+                "label": f"{p.name} CLI",
+                "desc": f"{path}",
+                "options": None,
+                "get": lambda v=ver: v,
+                "set": None,
+            })
+        if not self.available_providers:
+            items.append({
+                "key": "_no_providers",
+                "label": "No AI CLIs Found",
+                "desc": "Install claude or gemini CLI to use agent features",
+                "options": None,
+                "get": lambda: "UNAVAILABLE",
+                "set": None,
+            })
+        return items
+
+    def _set_ai_provider(self, name):
+        """Switch the active AI provider."""
+        provider = _get_provider_by_name(name)
+        if provider and provider.is_installed():
+            self.ai_provider = provider
+            self._persist_setting("ai_provider", name)
+            self._clear_session()
+            self._set_status(f"AI provider switched to {name}.")
+
+    def _open_ai_models_submenu(self):
+        """Open the AI Models sub-menu."""
+        self.ai_models_submenu_open = True
+        self.ai_models_submenu_cursor = 0
+        self.ai_models_submenu_items = self._build_ai_models_submenu_items()
+        self.show_settings_overlay = True
+
+    def _ai_models_submenu_cycle(self, direction):
+        """Cycle the current AI Models sub-menu setting's value."""
+        item = self.ai_models_submenu_items[self.ai_models_submenu_cursor]
         if item.get("options") is None:
             return
         options = item["options"]
@@ -1934,11 +2251,12 @@ class BBSApp:
             ctx_cp = self.CP_CTX_GREEN
             ctx_label = ""
 
-        # Session info tag
+        # Session info tag (includes active provider name)
+        provider_tag = self.ai_provider.name
         if self.session_id:
-            sess_label = f" Session: {self.session_turns} turn{'s' if self.session_turns != 1 else ''} "
+            sess_label = f" {provider_tag}: {self.session_turns} turn{'s' if self.session_turns != 1 else ''} "
         else:
-            sess_label = " No session "
+            sess_label = f" {provider_tag} (no session) "
         hint_label = " [W]New session "
 
         # Draw colored bottom border for agent pane
@@ -2115,7 +2433,7 @@ class BBSApp:
             "  ── How It Works ──────────────────",
             "  Dictate speech fragments, refine",
             "  them into polished prompts with AI,",
-            "  then execute via Claude agent.",
+            "  then execute via AI agent.",
             "",
             "  ── Keyboard Controls ─────────────",
             "  SPACE  Toggle recording on/off",
@@ -2342,6 +2660,11 @@ class BBSApp:
             render_cursor = self.test_tools_submenu_cursor
             render_title = " TEST TOOLS "
             render_footer = " ↑↓ Navigate  ←→ Change  Enter Action  Esc Close "
+        elif self.ai_models_submenu_open:
+            render_items = self.ai_models_submenu_items
+            render_cursor = self.ai_models_submenu_cursor
+            render_title = " AI MODELS "
+            render_footer = " ↑↓ Navigate  ←→ Change  Esc Close "
         else:
             render_items = self.settings_items
             render_cursor = self.settings_cursor
@@ -3046,6 +3369,7 @@ class BBSApp:
                     self.tts_submenu_open = False
                     self.test_tools_submenu_open = False
                     self.voice_submenu_open = False
+                    self.ai_models_submenu_open = False
                 elif action == "help":
                     self.show_help_overlay = True
                 elif action == "about":
@@ -3310,6 +3634,34 @@ class BBSApp:
                         item["action"]()
                 return
 
+            # AI Models sub-menu navigation
+            if self.ai_models_submenu_open:
+                if ch in (27,):
+                    self.ai_models_submenu_open = False
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+                elif ch in (ord("q"), ord("Q")):
+                    self.ai_models_submenu_open = False
+                elif ch == curses.KEY_UP:
+                    selectable = [i for i, it in enumerate(self.ai_models_submenu_items) if it.get("options") is not None]
+                    if selectable:
+                        cur_pos = selectable.index(self.ai_models_submenu_cursor) if self.ai_models_submenu_cursor in selectable else 0
+                        self.ai_models_submenu_cursor = selectable[(cur_pos - 1) % len(selectable)]
+                    elif self.ai_models_submenu_items:
+                        self.ai_models_submenu_cursor = (self.ai_models_submenu_cursor - 1) % len(self.ai_models_submenu_items)
+                elif ch == curses.KEY_DOWN:
+                    selectable = [i for i, it in enumerate(self.ai_models_submenu_items) if it.get("options") is not None]
+                    if selectable:
+                        cur_pos = selectable.index(self.ai_models_submenu_cursor) if self.ai_models_submenu_cursor in selectable else 0
+                        self.ai_models_submenu_cursor = selectable[(cur_pos + 1) % len(selectable)]
+                    elif self.ai_models_submenu_items:
+                        self.ai_models_submenu_cursor = (self.ai_models_submenu_cursor + 1) % len(self.ai_models_submenu_items)
+                elif ch == curses.KEY_LEFT:
+                    self._ai_models_submenu_cycle(-1)
+                elif ch == curses.KEY_RIGHT:
+                    self._ai_models_submenu_cycle(1)
+                return
+
             # Test Tools sub-menu navigation
             if self.test_tools_submenu_open:
                 if ch in (27,):
@@ -3337,6 +3689,7 @@ class BBSApp:
                 self.tts_submenu_open = False
                 self.test_tools_submenu_open = False
                 self.voice_submenu_open = False
+                self.ai_models_submenu_open = False
                 if ch == 27:
                     self.stdscr.nodelay(True)
                     self.stdscr.getch()
@@ -3706,6 +4059,7 @@ class BBSApp:
             self.tts_submenu_open = False
             self.test_tools_submenu_open = False
             self.voice_submenu_open = False
+            self.ai_models_submenu_open = False
 
         elif ch == 27:
             # ESC key — could be menu, arrow key, or bracketed paste start
@@ -3974,7 +4328,7 @@ class BBSApp:
             self._set_status("No fragments to refine. Dictate something first!")
             return
         self.refining = True
-        self._set_status("Sending to Claude for refinement...", self.CP_STATUS)
+        self._set_status(f"Sending to {self.ai_provider.name} for refinement...", self.CP_STATUS)
         threading.Thread(target=self._do_refine, daemon=True).start()
 
     def _do_refine(self):
@@ -3982,7 +4336,8 @@ class BBSApp:
         current = self.current_prompt
         result = refine_with_llm(
             fragments_copy, current,
-            status_callback=lambda msg: self.ui_queue.put(("status", msg, self.CP_STATUS)))
+            status_callback=lambda msg: self.ui_queue.put(("status", msg, self.CP_STATUS)),
+            provider=self.ai_provider)
         self.ui_queue.put(("refined", result))
         self.ui_queue.put(("status", f"Prompt refined! (v{self.prompt_version + 1})", self.CP_STATUS))
 
@@ -4422,7 +4777,7 @@ class BBSApp:
             return s[:80] + ("..." if len(s) > 80 else "")
 
     def _run_agent(self):
-        """Run claude agent in background, streaming verbose output."""
+        """Run AI agent in background, streaming verbose output."""
         # Let the download animation play for ~3 seconds (cancellable)
         if self._agent_cancel.wait(3.0):
             return  # cancelled during animation
@@ -4433,13 +4788,11 @@ class BBSApp:
         # Add the "incoming transmission" header via typewriter
         self._emit_typewriter("\n═══ INCOMING TRANSMISSION ═══\n\n")
 
+        provider = self.ai_provider
+
         try:
             prompt_with_tts = self.xfer_prompt_text + TTS_PROMPT_SUFFIX
-            cmd = ["claude", "--print", "--verbose", "--output-format",
-                   "stream-json", "--dangerously-skip-permissions"]
-            if self.session_id:
-                cmd += ["--resume", self.session_id]
-            cmd += ["-p", prompt_with_tts]
+            cmd = provider.build_execute_cmd(prompt_with_tts, self.session_id)
             self.agent_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -4472,74 +4825,41 @@ class BBSApp:
                     self._emit_typewriter(line + "\n")
                     continue
 
-                ev_type = event.get("type", "")
-
                 # Capture session_id from init event
-                if ev_type == "system" and event.get("subtype") == "init":
-                    sid = event.get("session_id", "")
-                    if sid:
-                        self.ui_queue.put(("session_id", sid))
+                sid = provider.parse_init_event(event)
+                if sid:
+                    self.ui_queue.put(("session_id", sid))
 
-                if ev_type == "assistant":
-                    msg = event.get("message", {})
-                    for block in msg.get("content", []):
-                        bt = block.get("type", "")
-                        if bt == "text":
-                            text = block.get("text", "")
-                            response_text_parts.append(text)
-                            self._emit_typewriter(text)
-                        elif bt == "tool_use":
-                            name = block.get("name", "?")
-                            inp = block.get("input", {})
-                            detail = self._format_tool_input(name, inp)
-                            self._emit_typewriter(
-                                f"\n▶ {name}: {detail}\n"
-                            )
-                        elif bt == "thinking":
-                            thinking = block.get("thinking", "")
-                            if thinking:
-                                # Show thinking with prefix
-                                lines = thinking.split("\n")
-                                for tl in lines:
-                                    self._emit_typewriter(f"  .. {tl}\n")
+                # Assistant text + tool use
+                text_result = provider.parse_text_event(event)
+                if text_result:
+                    text, tool_uses = text_result
+                    if text:
+                        response_text_parts.append(text)
+                        self._emit_typewriter(text)
+                    for name, inp in tool_uses:
+                        detail = self._format_tool_input(name, inp)
+                        self._emit_typewriter(f"\n▶ {name}: {detail}\n")
 
-                elif ev_type == "user":
-                    # Tool results - show abbreviated
-                    content = event.get("content", [])
-                    if isinstance(content, list):
-                        for item in content:
-                            if item.get("type") == "tool_result":
-                                tool_text = item.get("content", "")
-                                if isinstance(tool_text, list):
-                                    # Extract text from content blocks
-                                    tool_text = " ".join(
-                                        c.get("text", "")
-                                        for c in tool_text
-                                        if c.get("type") == "text"
-                                    )
-                                if tool_text:
-                                    preview = tool_text[:200].replace("\n", " ")
-                                    if len(tool_text) > 200:
-                                        preview += f"... ({len(tool_text)} chars)"
-                                    self._emit_typewriter(
-                                        f"  ◀ {preview}\n"
-                                    )
+                # Thinking
+                thinking = provider.parse_thinking_event(event)
+                if thinking:
+                    for tl in thinking.split("\n"):
+                        self._emit_typewriter(f"  .. {tl}\n")
 
-                elif ev_type == "result":
-                    result_text = event.get("result", "")
-                    # Extract context usage from modelUsage
-                    model_usage = event.get("modelUsage", {})
-                    for _model, usage_data in model_usage.items():
-                        ctx_window = usage_data.get("contextWindow", 0)
-                        input_t = usage_data.get("inputTokens", 0)
-                        output_t = usage_data.get("outputTokens", 0)
-                        cache_read = usage_data.get("cacheReadInputTokens", 0)
-                        cache_create = usage_data.get("cacheCreationInputTokens", 0)
-                        # Total tokens in context = all input + output tokens
-                        total = input_t + output_t + cache_read + cache_create
-                        self.ui_queue.put(("context_usage", total, ctx_window))
+                # Tool results
+                tool_preview = provider.parse_tool_result_event(event)
+                if tool_preview:
+                    self._emit_typewriter(f"  ◀ {tool_preview}\n")
 
-                # Skip system, rate_limit_event, etc.
+                # Result event (final)
+                result_check = provider.is_result_event(event)
+                if result_check is not None:
+                    result_text = result_check
+                    # Extract context usage
+                    ctx = provider.parse_context_usage(event)
+                    if ctx:
+                        self.ui_queue.put(("context_usage", ctx[0], ctx[1]))
 
             # If the agent was killed, don't post completion messages
             if self._agent_cancel.is_set():
@@ -4571,7 +4891,7 @@ class BBSApp:
         except FileNotFoundError:
             if not self._agent_cancel.is_set():
                 self.ui_queue.put(("agent_state", AgentState.DONE))
-                self.ui_queue.put(("status", "Error: 'claude' CLI not found!", self.CP_STATUS))
+                self.ui_queue.put(("status", f"Error: '{provider.binary}' CLI not found!", self.CP_STATUS))
         except Exception as e:
             if not self._agent_cancel.is_set():
                 self.ui_queue.put(("agent_state", AgentState.DONE))
@@ -4605,7 +4925,7 @@ class BBSApp:
         self._set_status("Agent terminated.")
 
     def _clear_session(self):
-        """Clear the current Claude session, starting fresh next execution."""
+        """Clear the current session, starting fresh next execution."""
         self.session_id = None
         self.session_turns = 0
         self.context_tokens_used = 0
