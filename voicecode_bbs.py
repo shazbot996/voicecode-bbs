@@ -3790,11 +3790,8 @@ class BBSApp:
                 self.typing_buffer = ""
                 self.typing_cursor = 0
             elif ch == 27:
-                # ESC cancels typing mode
-                self.typing_mode = False
-                self.typing_buffer = ""
-                self.typing_cursor = 0
-                self._set_status("Text entry cancelled.")
+                # ESC — could be cancel or start of a CSI sequence (e.g. paste)
+                # Check for CSI before cancelling so paste doesn't lose the buffer
                 self.stdscr.nodelay(True)
                 next_ch = self.stdscr.getch()
                 if next_ch == 91:  # '[' — CSI sequence (could be paste)
@@ -3808,10 +3805,19 @@ class BBSApp:
                             break
                     if csi == [50, 48, 48, 126]:  # bracketed paste
                         pasted = self._read_paste_content()
-                        # Re-enter typing mode with pasted content
-                        self.typing_mode = True
-                        self.typing_buffer = " ".join(pasted.strip().splitlines())
-                        self.typing_cursor = len(self.typing_buffer)
+                        flat = " ".join(pasted.strip().splitlines())
+                        b = self.typing_buffer
+                        c = self.typing_cursor
+                        self.typing_buffer = b[:c] + flat + b[c:]
+                        self.typing_cursor += len(flat)
+                        self._set_status("Pasted into text entry")
+                    # else: unknown CSI sequence in typing mode — ignore
+                else:
+                    # Plain ESC — cancel typing mode
+                    self.typing_mode = False
+                    self.typing_buffer = ""
+                    self.typing_cursor = 0
+                    self._set_status("Text entry cancelled.")
             elif ch == curses.KEY_LEFT:
                 if self.typing_cursor > 0:
                     self.typing_cursor -= 1
