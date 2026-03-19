@@ -105,39 +105,6 @@ Or press **D** to skip refinement and send raw dictation directly.
 
 ## Three-Pane Layout
 
-```
- VOICECODE BBS v2.4                     Voice: hfc_female  SysOp: falken  21:37:42
-──Session v3 │ Favs: 3/10 │ History: 12 │ Frags: 3 │ Agent: IDLE────────────────────
-┌── PROMPT BROWSER ────────────────┐┌── AGENT TERMINAL ──────────────────────────┐
-│                                  ││                                            │
-│  Write a Python function that    ││  ═══ INCOMING TRANSMISSION ═══             │
-│  implements a binary search      ││                                            │
-│  algorithm with the following    ││  Here's a binary search implementation     │
-│  requirements:                   ││  that handles all the edge cases you       │
-│                                  ││  mentioned:                                │
-│  1. Accept a sorted list and    E>│                                            │
-│     a target value               ││  ```python                                │
-│  2. Return the index if found    ││  def binary_search(arr, target,            │
-│  3. Return -1 if not found       ││      return_nearest=False):                │
-│                                  ││      if not arr:                           │
-│  Include type hints and handle   ││          return -1                         │
-│  edge cases (empty list, single  ││      lo, hi = 0, len(arr) - 1             │
-│  element).                       ││      while lo <= hi:                       │
-├──────────=^R^=───────────────────┤│          mid = (lo + hi) // 2             │
-┌── DICTATION BUFFER ──────────────┐│          if arr[mid] == target:            │
-│                                  ││              return mid                    │
-│  ◌ write a binary search         ││          elif arr[mid] < target:           │
-│  ◌ in python                     ││              lo = mid + 1                  │
-│  ◌ handle edge cases            D>│          else:                             │
-│  ◌ type hints please             ││              hi = mid - 1                  │
-│                                  ││      return -1                             │
-│                                  ││  ```                                       │
-│                                  ││                                            │
-└──────────────────────────────────┘└────────────────────────────────────────────┘
- [Q]uit [X]Restart | [N]ew [U]ndo [C]lear [K]ill [W]NewSess [Tab]Shortcuts
- Ready                                                      Protocol: ZMODEM/1.0
-```
-
 ![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
 
 - **Prompt Browser** (top-left) — View and browse your refined prompts. Favorites indicators on the left border.
