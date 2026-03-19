@@ -48,7 +48,8 @@ python voicecode_bbs.py
 
 - Models (VAD, Whisper) are lazy-loaded on first use for fast startup
 - Background threads use `daemon=True`
-- Prompts saved to `~/prompts/voicecode/history/NNN_slug.md` (flat directory, sequentially indexed)
+- Prompt/response pairs saved to `~/prompts/voicecode/history/` as `NNN_slug_prompt.md` + `NNN_slug_response.md` (flat directory, sequentially indexed)
+- Response files contain the TTS summary (or error) from the agent run
 - Comment lines (`#`) in prompt files are stripped before execution
 - TTS summaries extracted from `[TTS_SUMMARY]...[/TTS_SUMMARY]` blocks in agent responses
 - Thread-safe UI updates via `queue.Queue`
@@ -69,7 +70,7 @@ python voicecode_bbs.py
 └────────────────────────┘└────────────────────────────────┘
 ```
 
-- **Prompt Browser** (top-left) — View and browse refined prompts
+- **Prompt Browser** (top-left) — View and browse refined prompts; history entries show combined prompt + response
 - **Dictation Buffer** (bottom-left) — Voice fragments accumulate in real-time
 - **Agent Terminal** (right, full height) — ZMODEM animation, then typewriter-streamed responses
 - Data-flow hints: `=^R^=` (refine up), `E>` (execute right), `D>` (direct right)
@@ -92,7 +93,7 @@ python voicecode_bbs.py
 | ←/→ | Browse prompt history |
 | ↑/↓ | Cycle active/favorites views |
 | Home | Return to current prompt |
-| PgUp/PgDn | Scroll agent terminal |
+| PgUp/PgDn | Scroll prompt browser (when browsing history) or agent terminal |
 | O | Settings / voice config |
 | K | Kill running agent |
 | W | New session (clear conversation context) |

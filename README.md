@@ -62,7 +62,7 @@ Whisper model size and prompt library path are configurable via the in-app setti
 
 ```bash
 ./ask latest                                    # Execute the most recent prompt
-./ask ~/prompts/voicecode/history/001_my_prompt.md  # Execute a specific prompt
+./ask ~/prompts/voicecode/history/001_my_prompt_prompt.md  # Execute a specific prompt
 ```
 
 ---
@@ -94,7 +94,7 @@ This application is intended to be deployed into a given deployment or monorepo 
     [SPACE]           [R]                [E]                [P]
 ```
 
-1. **Dictate** — Press SPACE to record. Speak naturally; fragments accumulate in the buffer.
+1. **Dictate** — Press SPACE to record. Speak naturally; fragments accumulate in the buffer. Start and stop repeatedly. Undo mistakes. 
 2. **Refine** — Press R to have AI synthesize your fragments into a polished prompt.
 3. **Execute** — Press E to send the prompt to Claude. Watch the ZMODEM animation, then the response streams in with a typewriter effect.
 4. **Listen** — The agent's TTS summary is read aloud. Press P to replay.
@@ -107,7 +107,7 @@ Or press **D** to skip refinement and send raw dictation directly.
 
 ![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
 
-- **Prompt Browser** (top-left) — View and browse your refined prompts. Favorites indicators on the left border.
+- **Prompt Browser** (top-left) — View and browse your refined prompts. History entries show both the prompt and agent response in a combined scrollable view. Favorites indicators on the left border.
 - **Dictation Buffer** (bottom-left) — Watch voice fragments accumulate in real-time.
 - **Agent Terminal** (right) — ZMODEM transfer animation, then typewriter-streamed responses with context meter.
 
@@ -131,7 +131,7 @@ Or press **D** to skip refinement and send raw dictation directly.
 | `←` `→` | Browse prompt history |
 | `↑` `↓` | Cycle active/favorites views |
 | `Home` | Return to current prompt |
-| `PgUp` `PgDn` | Scroll agent terminal |
+| `PgUp` `PgDn` | Scroll prompt browser (history) or agent terminal |
 | `O` | Settings / voice configuration |
 | `W` | New session (clear conversation context) |
 | `ESC` | Voice command mode |
@@ -179,18 +179,20 @@ Microphone (16kHz mono)
 - **Piper TTS** provides local text-to-speech output with multiple voice options
 - Models are **lazy-loaded** on first use — startup takes ~1 second
 
-### Prompt History
+### Prompt History & Response Archive
 
-Prompts are stored in a flat directory with sequential numbering:
+Every executed prompt is saved as a paired set of files — the prompt and its agent response:
 
 ```
 ~/prompts/voicecode/history/
-  ├── 001_binary_search_function.md
-  ├── 002_refactor_auth_middleware.md
-  └── 003_add_unit_tests.md
+  ├── 001_binary_search_function_prompt.md
+  ├── 001_binary_search_function_response.md
+  ├── 002_refactor_auth_middleware_prompt.md
+  ├── 002_refactor_auth_middleware_response.md
+  └── 003_add_unit_tests_prompt.md
 ```
 
-Browse history with **Left/Right** arrows. Use **Up/Down** to toggle between active and favorites views.
+When browsing history with **Left/Right** arrows, the Prompt Browser shows both the original prompt and the agent's response in a combined view with ASCII section headers. Use **PgUp/PgDn** to scroll through long entries. Use **Up/Down** to toggle between active and favorites views.
 
 ### 10-Slot Favorites
 
