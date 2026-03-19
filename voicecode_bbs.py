@@ -29,6 +29,7 @@ import os
 import threading
 import queue
 import signal
+import select
 import subprocess
 import time
 import datetime
@@ -324,18 +325,24 @@ class GeminiProvider(CLIProvider):
     binary = "gemini"
 
     def build_refine_cmd(self, prompt: str) -> list[str]:
-        return self._get_base_cmd() + ["-p", prompt]
+        return self._get_base_cmd() + ["--yolo", "-p", prompt]
 
     def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
-        cmd = self._get_base_cmd() + ["-o", "stream-json"]
+        cmd = self._get_base_cmd() + ["--yolo", "-o", "stream-json"]
         if session_id:
             cmd += ["--resume", session_id]
         cmd += ["-p", prompt]
         return cmd
 
     def parse_init_event(self, event: dict) -> str | None:
-        if event.get("type") == "init":
-            return event.get("session_id") or None
+        # Only capture session_id from init/system events to avoid
+        # misinterpreting session fields on regular message events.
+        etype = event.get("type", "")
+        if etype not in ("init", "system", "session"):
+            return None
+        sid = event.get("session_id") or event.get("sessionId") or event.get("session")
+        if sid and isinstance(sid, str):
+            return sid
         return None
 
     def parse_text_event(self, event: dict) -> tuple[str, list] | None:
@@ -1217,6 +1224,7 @@ class BBSApp:
         self.typewriter_last_time = 0.0  # unused, kept for compat
         self._typewriter_line_color = None  # per-line color override (None = default)
         self.agent_first_output = False      # tracks if agent has produced any output
+        self.agent_last_activity = 0.0       # time.time() of last output from agent
         self.agent_welcome_shown = False     # True after initial welcome art displayed
 
         # Pending source pane tracking (yellow border while agent processes)
@@ -2300,25 +2308,43 @@ class BBSApp:
                         curses.color_pair(self.CP_XFER) | curses.A_BOLD)
                 except curses.error:
                     pass
-            # Show thinking indicator while waiting for agent output
+            # Show activity indicator while agent is receiving and typewriter is idle
             if (self.agent_state == AgentState.RECEIVING
-                    and not self.typewriter_queue
-                    and not self.agent_first_output):
-                elapsed = time.time() - self.xfer_start_time - 3.0  # subtract ZMODEM time
+                    and not self.typewriter_queue):
+                now = time.time()
+                last_act = self.agent_last_activity
                 spinners = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-                spin = spinners[int(elapsed * 6) % len(spinners)]
-                dots = "." * (int(elapsed * 2) % 4)
-                thinking_text = f" {spin} Agent processing{dots}"
-                # Draw over last content line of agent pane
-                think_y = content_y + 1 + len(self.agent_pane.lines)
-                if think_y < content_y + content_height - 1:
-                    try:
-                        self.stdscr.addnstr(
-                            think_y, left_width + 1, thinking_text,
-                            right_width - 2,
-                            curses.color_pair(self.CP_XFER) | curses.A_BOLD)
-                    except curses.error:
-                        pass
+
+                if not self.agent_first_output:
+                    # Still waiting for first output
+                    elapsed = now - self.xfer_start_time - 3.0
+                    spin = spinners[int(max(0, elapsed) * 6) % len(spinners)]
+                    dots = "." * (int(max(0, elapsed) * 2) % 4)
+                    thinking_text = f" {spin} Agent processing{dots}"
+                elif last_act > 0:
+                    # Had output before, now idle — show time since last activity
+                    idle_secs = now - last_act
+                    if idle_secs >= 1.0:
+                        spin = spinners[int(idle_secs * 4) % len(spinners)]
+                        idle_int = int(idle_secs)
+                        thinking_text = f" {spin} Working... {idle_int}s since last output"
+                        if idle_secs >= 60:
+                            thinking_text += "  [K to kill]"
+                    else:
+                        thinking_text = None
+                else:
+                    thinking_text = None
+
+                if thinking_text:
+                    think_y = content_y + 1 + len(self.agent_pane.lines)
+                    if think_y < content_y + content_height - 1:
+                        try:
+                            self.stdscr.addnstr(
+                                think_y, left_width + 1, thinking_text,
+                                right_width - 2,
+                                curses.color_pair(self.CP_XFER) | curses.A_BOLD)
+                        except curses.error:
+                            pass
 
         # ── Agent terminal bottom border: context meter + session info ──
         agent_bottom_y = content_y + content_height - 1
@@ -4780,6 +4806,7 @@ class BBSApp:
         self.agent_state = AgentState.DOWNLOADING
         self.typewriter_queue.clear()
         self.agent_first_output = False
+        self.agent_last_activity = 0.0
         self._typewriter_line_color = None
         self._tts_detect_buf = ''
         self._tts_in_summary = False
@@ -4824,6 +4851,7 @@ class BBSApp:
         self.agent_state = AgentState.DOWNLOADING
         self.typewriter_queue.clear()
         self.agent_first_output = False
+        self.agent_last_activity = 0.0
         self._typewriter_line_color = None
         self._tts_detect_buf = ''
         self._tts_in_summary = False
@@ -4959,14 +4987,34 @@ class BBSApp:
 
             result_text = ""
             response_text_parts = []
+            stdout_fd = self.agent_process.stdout.fileno()
+            self.agent_last_activity = time.time()
+            stall_warned = False
 
             while True:
+                # Non-blocking poll: check for data every 0.5s so we can
+                # update the UI activity indicator and detect stalls.
+                ready, _, _ = select.select([stdout_fd], [], [], 0.5)
+                if not ready:
+                    # No data available — check for stall
+                    if self._agent_cancel.is_set() or self.agent_state == AgentState.IDLE:
+                        break
+                    idle_secs = time.time() - self.agent_last_activity
+                    if idle_secs >= 60 and not stall_warned:
+                        stall_warned = True
+                        self.ui_queue.put(("status",
+                            f"No output for {int(idle_secs)}s — agent may be stalled. Press K to kill.",
+                            self.CP_XFER))
+                    continue
+
                 line = self.agent_process.stdout.readline()
                 if not line:
                     break
                 if self.agent_state == AgentState.IDLE:
                     break
 
+                self.agent_last_activity = time.time()
+                stall_warned = False
                 if not self.agent_first_output:
                     self.agent_first_output = True
 
