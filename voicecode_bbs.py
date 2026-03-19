@@ -1434,44 +1434,51 @@ class BBSApp:
 
     def _build_ai_models_submenu_items(self):
         """Build the AI Models sub-menu items list."""
-        provider_names = [p.name for p in self.available_providers]
+        # Always list all known providers, not just installed ones
+        all_provider_names = [p.name for p in ALL_PROVIDERS]
         items = []
-        if len(provider_names) >= 1:
+        if all_provider_names:
             items.append({
                 "key": "ai_provider",
                 "label": "Active Provider",
                 "desc": "AI CLI to use for refinement and agent execution",
-                "options": provider_names,
+                "options": all_provider_names,
                 "get": lambda: self.ai_provider.name,
                 "set": self._set_ai_provider,
             })
-        # Show installed provider info (read-only)
-        for p in self.available_providers:
-            ver = p.get_version() or "unknown"
-            path = shutil.which(p.binary) or "not found"
-            items.append({
-                "key": f"_info_{p.name.lower()}",
-                "label": f"{p.name} CLI",
-                "desc": f"{path}",
-                "options": None,
-                "get": lambda v=ver: v,
-                "set": None,
-            })
-        if not self.available_providers:
-            items.append({
-                "key": "_no_providers",
-                "label": "No AI CLIs Found",
-                "desc": "Install claude or gemini CLI to use agent features",
-                "options": None,
-                "get": lambda: "UNAVAILABLE",
-                "set": None,
-            })
+        # Show provider info for all known providers
+        for p in ALL_PROVIDERS:
+            if p.is_installed():
+                ver = p.get_version() or "unknown"
+                path = shutil.which(p.binary) or "not found"
+                items.append({
+                    "key": f"_info_{p.name.lower()}",
+                    "label": f"{p.name} CLI",
+                    "desc": f"{path}",
+                    "options": None,
+                    "get": lambda v=ver: v,
+                    "set": None,
+                })
+            else:
+                items.append({
+                    "key": f"_info_{p.name.lower()}",
+                    "label": f"{p.name} CLI",
+                    "desc": "not installed",
+                    "options": None,
+                    "get": lambda: "UNAVAILABLE",
+                    "set": None,
+                })
         return items
 
     def _set_ai_provider(self, name):
         """Switch the active AI provider."""
         provider = _get_provider_by_name(name)
-        if provider and provider.is_installed():
+        if provider and not provider.is_installed():
+            self._set_status(
+                f"{name} was not found. Available providers are checked on startup."
+            )
+            return
+        if provider:
             self.ai_provider = provider
             self._persist_setting("ai_provider", name)
             self._clear_session()
