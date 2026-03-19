@@ -51,10 +51,20 @@ System dependencies (installed via your package manager):
 
 ### Run
 
+# invoke via make, or do it yourself
+make voicecode
+
 ```bash
 source venv/bin/activate
 python voicecode_bbs.py
 ```
+
+# I added an extra:
+make init-sub 
+
+This app is intended to live as a subfolder in an existing deployment. To make sure your code assist apps always invoke from the root of your repo, I added 'make init-sub' that just creates a makefile in the root of your repo that will invoke this app from the root of your repo - or adds this command to it if one already exists. Then just run 'make voicecode' from the root, and you can use voicecode to build prompts for your other code assist apps. 
+
+
 
 Whisper model size and prompt library path are configurable via the in-app settings menu (**O** key).
 
