@@ -104,10 +104,17 @@ def _check_audio_input_device() -> str | None:
         return f"Cannot query audio devices: {e}"
 
 def _safe_sd_play(audio, samplerate):
-    """Play audio via sounddevice, swallowing PortAudio errors."""
+    """Play audio via sounddevice, swallowing PortAudio errors.
+
+    Uses a dedicated OutputStream per call so concurrent playback from
+    multiple threads works without interference (polyphonic previews).
+    """
     try:
-        sd.play(audio, samplerate=samplerate)
-        sd.wait()
+        stream = sd.OutputStream(samplerate=samplerate, channels=1, dtype='int16')
+        stream.start()
+        stream.write(audio.reshape(-1, 1))
+        stream.stop()
+        stream.close()
     except (sd.PortAudioError, OSError):
         pass  # output device disappeared — nothing we can do
 
@@ -419,6 +426,15 @@ try:
 except ImportError:
     pass
 
+# ─── Google Cast globals ─────────────────────────────────────────────
+
+CAST_AVAILABLE = False
+try:
+    import pychromecast
+    CAST_AVAILABLE = True
+except ImportError:
+    pass
+
 if TTS_AVAILABLE:
     PIPER_VOICES_DIR = Path.home() / ".local/share/piper-voices"
     PIPER_VOICES = [
@@ -666,6 +682,145 @@ def stop_speaking():
         except Exception:
             pass
         _tts_process = None
+
+
+def _discover_cast_devices(ui_queue=None):
+    """Discover Chromecast / Google Cast devices on the local network.
+
+    Runs synchronously — call from a background thread.  Returns a list
+    of friendly-name strings.  Optionally posts status updates to *ui_queue*.
+    """
+    if not CAST_AVAILABLE:
+        return []
+    try:
+        if ui_queue:
+            ui_queue.put(("status", "Scanning for Cast devices...", 4))
+        chromecasts, browser = pychromecast.get_chromecasts()
+        names = sorted({cc.cast_info.friendly_name for cc in chromecasts})
+        browser.stop_discovery()
+        if ui_queue:
+            n = len(names)
+            ui_queue.put(("status", f"Found {n} Cast device{'s' if n != 1 else ''}.", 4))
+            ui_queue.put(("cast_scan_result", names))
+        return names
+    except Exception as e:
+        if ui_queue:
+            ui_queue.put(("status", f"Cast scan error: {e}", 4))
+        return []
+
+
+def _cast_tts_to_devices(text, device_names, ui_queue=None, volume=None):
+    """Generate TTS audio via Piper and cast it to selected Cast devices.
+
+    Runs in a background daemon thread.  Requires both CAST_AVAILABLE and
+    TTS_AVAILABLE.  If *volume* is given (0.0–1.0), the device volume is
+    forced to that level before playback.
+    """
+    if not CAST_AVAILABLE or not TTS_AVAILABLE or not device_names:
+        return
+
+    def _run():
+        import tempfile
+        import socket
+        import http.server
+
+        tmp_path = None
+        server = None
+        browser = None
+        try:
+            voice_model = get_tts_voice_model()
+            if not voice_model.exists():
+                return
+
+            # Generate WAV via piper
+            fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="vc_cast_")
+            os.close(fd)
+            extra_args = get_tts_piper_extra_args()
+            piper_cmd = ["piper", "--model", str(voice_model),
+                         "--output_file", tmp_path] + extra_args
+            proc = subprocess.Popen(piper_cmd, stdin=subprocess.PIPE,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            single_line = " ".join(text.split())
+            proc.stdin.write((single_line + "\n").encode("utf-8"))
+            proc.stdin.close()
+            proc.wait()
+
+            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) == 0:
+                return
+
+            # Resolve local IP visible to the LAN
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+            finally:
+                s.close()
+
+            # Minimal HTTP server to serve the WAV file
+            tmp_dir = os.path.dirname(tmp_path)
+
+            class _Handler(http.server.SimpleHTTPRequestHandler):
+                def __init__(self, *a, **kw):
+                    super().__init__(*a, directory=tmp_dir, **kw)
+                def log_message(self, *_a):
+                    pass
+
+            server = http.server.HTTPServer(("0.0.0.0", 0), _Handler)
+            port = server.server_address[1]
+            srv_thread = threading.Thread(target=server.serve_forever,
+                                          daemon=True)
+            srv_thread.start()
+
+            url = f"http://{local_ip}:{port}/{os.path.basename(tmp_path)}"
+
+            if ui_queue:
+                ui_queue.put(("status",
+                              f"Casting to {len(device_names)} device(s)...", 4))
+
+            chromecasts, browser = pychromecast.get_listed_chromecasts(
+                friendly_names=list(device_names))
+
+            # Save original volumes, set target, and start playback
+            original_volumes = {}
+            for cast in chromecasts:
+                cast.wait()
+                if volume is not None:
+                    original_volumes[cast] = cast.status.volume_level
+                    cast.set_volume(volume)
+                    time.sleep(0.3)
+                mc = cast.media_controller
+                mc.play_media(url, "audio/wav")
+                mc.block_until_active()
+
+            # Keep server alive long enough for devices to finish playback
+            time.sleep(30)
+
+            # Restore original volumes
+            for cast, orig_vol in original_volumes.items():
+                try:
+                    cast.set_volume(orig_vol)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            if ui_queue:
+                ui_queue.put(("status", f"Cast error: {e}", 4))
+        finally:
+            if server:
+                server.shutdown()
+            if browser:
+                try:
+                    browser.stop_discovery()
+                except Exception:
+                    pass
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 # ─── Audio / STT globals ───────────────────────────────────────────────
@@ -1168,6 +1323,16 @@ class BBSApp:
         self.ai_models_submenu_open = False
         self.ai_models_submenu_cursor = 0
         self.ai_models_submenu_items = []
+        self.cast_submenu_open = False
+        self.cast_submenu_cursor = 0
+        self.cast_submenu_items = []
+        self._settings_scroll_top = 0  # vertical scroll offset for settings
+        self.cast_enabled = saved.get("cast_enabled", False)
+        self.cast_volume = float(saved.get("cast_volume", 0.8))
+        self.cast_discovered_devices: list[str] = []
+        self.cast_selected_devices: list[str] = list(
+            saved.get("cast_selected_devices", []))
+        self.cast_scanning = False
         self.tts_enabled = saved.get("tts_enabled", True)
         global _tts_enabled
         _tts_enabled = self.tts_enabled
@@ -1326,6 +1491,29 @@ class BBSApp:
             "submenu": True,
         })
 
+        if CAST_AVAILABLE:
+            self.settings_items.append({
+                "key": "_action_cast_submenu",
+                "label": "Google Cast Notifications",
+                "desc": "Send TTS announcements to Nest / Chromecast speakers",
+                "options": None,
+                "get": lambda: "ON" if self.cast_enabled else "OFF",
+                "set": None,
+                "action": self._open_cast_submenu,
+                "submenu": True,
+            })
+        else:
+            self.settings_items.append({
+                "key": "_action_cast_submenu",
+                "label": "Google Cast Notifications",
+                "desc": "pychromecast not installed (pip install pychromecast)",
+                "options": None,
+                "get": lambda: "UNAVAILABLE",
+                "set": None,
+                "action": None,
+                "submenu": True,
+            })
+
 
     def _build_tts_submenu_items(self):
         """Build the TTS sub-menu items list."""
@@ -1436,6 +1624,7 @@ class BBSApp:
         """Open the Voice Settings sub-menu."""
         self.voice_submenu_open = True
         self.voice_submenu_cursor = 0
+        self._settings_scroll_top = 0
         self.voice_submenu_items = self._build_voice_submenu_items()
         self.show_settings_overlay = True  # keep modal open
 
@@ -1526,6 +1715,7 @@ class BBSApp:
         """Open the AI Models sub-menu."""
         self.ai_models_submenu_open = True
         self.ai_models_submenu_cursor = 0
+        self._settings_scroll_top = 0
         self.ai_models_submenu_items = self._build_ai_models_submenu_items()
         self.show_settings_overlay = True
 
@@ -1547,6 +1737,7 @@ class BBSApp:
         """Open the TTS settings sub-menu."""
         self.tts_submenu_open = True
         self.tts_submenu_cursor = 0
+        self._settings_scroll_top = 0
         self.tts_submenu_items = self._build_tts_submenu_items()
         self.show_settings_overlay = True  # keep modal open
 
@@ -1583,14 +1774,169 @@ class BBSApp:
                     "set": self._set_tts_volume_gain,
                 },
             ])
+        if CAST_AVAILABLE and TTS_AVAILABLE:
+            items.append({
+                "key": "_action_cast_broadcast_test",
+                "label": "[Enter] Chromecast Broadcast Test",
+                "desc": "Type a message and broadcast it via TTS to Cast devices",
+                "options": None,
+                "get": lambda: "",
+                "set": None,
+                "action": self._start_cast_broadcast_test,
+                "editable": True,
+            })
         return items
 
     def _open_test_tools_submenu(self):
         """Open the Test Tools sub-menu."""
         self.test_tools_submenu_open = True
         self.test_tools_submenu_cursor = 0
+        self._settings_scroll_top = 0
         self.test_tools_submenu_items = self._build_test_tools_items()
         self.show_settings_overlay = True  # keep modal open
+
+    # ─── Google Cast submenu ──────────────────────────────────────
+
+    def _build_cast_submenu_items(self):
+        """Build the Google Cast sub-menu items list."""
+        items = [
+            {
+                "key": "cast_enabled",
+                "label": "Enable Cast Notifications",
+                "desc": "Send TTS summary to Cast speakers on agent completion",
+                "options": ["ON", "OFF"],
+                "get": lambda: "ON" if self.cast_enabled else "OFF",
+                "set": self._set_cast_enabled,
+            },
+            {
+                "key": "cast_volume",
+                "label": "Cast Volume",
+                "desc": "Force device volume before playback (0-100%)",
+                "options": ["20%", "40%", "60%", "80%", "100%"],
+                "get": lambda: f"{int(self.cast_volume * 100)}%",
+                "set": self._set_cast_volume,
+            },
+            {
+                "key": "_action_cast_scan",
+                "label": "[Enter] Scan for Devices",
+                "desc": "Discover Cast devices and speaker groups on your network",
+                "options": None,
+                "get": lambda: "scanning..." if self.cast_scanning else "",
+                "set": None,
+                "action": self._action_cast_scan,
+            },
+        ]
+
+        # Add a section header and device list if we have discovered devices
+        if self.cast_discovered_devices:
+            items.append({
+                "type": "section",
+                "label": f"DEVICES ({len(self.cast_discovered_devices)})",
+                "style": "yellow",
+            })
+            for dev_name in self.cast_discovered_devices:
+                items.append({
+                    "key": f"_cast_dev_{dev_name}",
+                    "label": dev_name,
+                    "desc": "Cast-enabled speaker or group",
+                    "options": ["ON", "OFF"],
+                    "get": self._make_cast_dev_getter(dev_name),
+                    "set": self._make_cast_dev_setter(dev_name),
+                })
+
+        # Show previously-selected devices that weren't found in latest scan
+        missing = [d for d in self.cast_selected_devices
+                   if d not in self.cast_discovered_devices]
+        if missing:
+            items.append({
+                "type": "section",
+                "label": "SAVED (not found on network)",
+                "style": "red",
+            })
+            for dev_name in missing:
+                items.append({
+                    "key": f"_cast_dev_{dev_name}",
+                    "label": dev_name,
+                    "desc": "Previously selected — not found in latest scan",
+                    "options": ["ON", "OFF"],
+                    "get": self._make_cast_dev_getter(dev_name),
+                    "set": self._make_cast_dev_setter(dev_name),
+                })
+
+        return items
+
+    def _make_cast_dev_getter(self, dev_name):
+        """Return a lambda that checks whether dev_name is selected."""
+        return lambda: "ON" if dev_name in self.cast_selected_devices else "OFF"
+
+    def _make_cast_dev_setter(self, dev_name):
+        """Return a function that toggles dev_name in the selected set."""
+        def _toggle(val):
+            if val == "ON" and dev_name not in self.cast_selected_devices:
+                self.cast_selected_devices.append(dev_name)
+            elif val == "OFF" and dev_name in self.cast_selected_devices:
+                self.cast_selected_devices.remove(dev_name)
+            self._persist_setting("cast_selected_devices",
+                                  self.cast_selected_devices)
+            n = len(self.cast_selected_devices)
+            self._set_status(
+                f"{dev_name} {'selected' if val == 'ON' else 'deselected'} "
+                f"({n} device{'s' if n != 1 else ''} total)")
+        return _toggle
+
+    def _open_cast_submenu(self):
+        """Open the Google Cast sub-menu."""
+        self.cast_submenu_open = True
+        self.cast_submenu_cursor = 0
+        self._settings_scroll_top = 0
+        self.cast_submenu_items = self._build_cast_submenu_items()
+        self.show_settings_overlay = True
+
+    def _cast_submenu_cycle(self, direction):
+        """Cycle the current Cast sub-menu setting's value."""
+        selectable = [it for it in self.cast_submenu_items
+                      if it.get("type") != "section"]
+        if not selectable or self.cast_submenu_cursor >= len(selectable):
+            return
+        item = selectable[self.cast_submenu_cursor]
+        if item.get("options") is None:
+            return
+        options = item["options"]
+        current = item["get"]()
+        try:
+            idx = options.index(current)
+        except ValueError:
+            idx = 0
+        new_idx = (idx + direction) % len(options)
+        item["set"](options[new_idx])
+
+    def _set_cast_enabled(self, val):
+        self.cast_enabled = (val == "ON")
+        self._persist_setting("cast_enabled", self.cast_enabled)
+        state = "enabled" if self.cast_enabled else "disabled"
+        self._set_status(f"Google Cast notifications {state}")
+
+    def _set_cast_volume(self, val):
+        try:
+            self.cast_volume = int(val.rstrip("%")) / 100.0
+        except (ValueError, AttributeError):
+            self.cast_volume = 0.8
+        self._persist_setting("cast_volume", self.cast_volume)
+        self._set_status(f"Cast volume set to {int(self.cast_volume * 100)}%")
+
+    def _action_cast_scan(self):
+        """Scan for Cast devices in a background thread."""
+        if self.cast_scanning:
+            return
+        self.cast_scanning = True
+        # Rebuild to show "scanning..." hint
+        self.cast_submenu_items = self._build_cast_submenu_items()
+
+        def _scan():
+            _discover_cast_devices(ui_queue=self.ui_queue)
+            self.cast_scanning = False
+
+        threading.Thread(target=_scan, daemon=True).start()
 
     def _set_tts_enabled(self, val):
         global _tts_enabled
@@ -1681,6 +2027,34 @@ class BBSApp:
              return
         speak_text("Standard system read-back test active. Hello from the Voice Code BBS.")
 
+    def _start_cast_broadcast_test(self):
+        """Enter text editing mode for Chromecast broadcast test."""
+        if not self.cast_selected_devices:
+            self._set_status("No Cast devices selected. Configure in Google Cast settings.")
+            return
+        self.settings_editing_text = True
+        self.settings_edit_buffer = ""
+        self.settings_edit_cursor = 0
+        self.show_settings_overlay = True
+
+    def _commit_cast_broadcast_test(self):
+        """Broadcast the typed text to configured Cast devices via TTS."""
+        text = self.settings_edit_buffer.strip()
+        self.settings_editing_text = False
+        if not text:
+            self._set_status("No text entered, broadcast cancelled.")
+            return
+        if not self.cast_selected_devices:
+            self._set_status("No Cast devices selected.")
+            return
+        self._set_status(f"Broadcasting to {len(self.cast_selected_devices)} device(s)...")
+        _cast_tts_to_devices(
+            text,
+            self.cast_selected_devices,
+            ui_queue=self.ui_queue,
+            volume=self.cast_volume,
+        )
+
     def _action_download_current_voice(self):
 
         curr_voice = get_tts_voice_name()
@@ -1745,6 +2119,8 @@ class BBSApp:
             self._commit_documents_dir()
         elif item["key"] == "gemini_command":
             self._commit_gemini_command()
+        elif item["key"] == "_action_cast_broadcast_test":
+            self._commit_cast_broadcast_test()
 
     def _start_editing_working_dir(self):
         """Enter inline text editing mode for the working directory path."""
@@ -1828,6 +2204,9 @@ class BBSApp:
         elif self.ai_models_submenu_open:
             items = self.ai_models_submenu_items
             cursor = self.ai_models_submenu_cursor
+        elif self.cast_submenu_open:
+            items = self.cast_submenu_items
+            cursor = self.cast_submenu_cursor
         else:
             items = self.settings_items
             cursor = self.settings_cursor
@@ -2777,6 +3156,11 @@ class BBSApp:
             render_cursor = self.ai_models_submenu_cursor
             render_title = " AI MODELS "
             render_footer = " ↑↓ Navigate  ←→ Change  Esc Close "
+        elif self.cast_submenu_open:
+            render_items = self.cast_submenu_items
+            render_cursor = self.cast_submenu_cursor
+            render_title = " GOOGLE CAST NOTIFICATIONS "
+            render_footer = " ↑↓ Navigate  ←→ Change  Enter Scan  Esc Close "
         else:
             render_items = self.settings_items
             render_cursor = self.settings_cursor
@@ -2789,6 +3173,38 @@ class BBSApp:
         overlay_h = min(4 + item_rows + 3, h - 4)
         if overlay_w < 44 or overlay_h < 12:
             return
+
+        # Available rows for content (between title separator and footer)
+        content_h = overlay_h - 5  # 3 top (border+title+sep) + 2 bottom (footer+border)
+
+        # Pre-compute virtual row positions for each item and find selected
+        item_vrows = []   # (virtual_row_start, height, item_index)
+        vrow = 0
+        selectable_idx = -1
+        selected_vrow_start = 0
+        selected_vrow_end = 0
+        for i, item in enumerate(render_items):
+            if item.get("type") == "section":
+                item_vrows.append((vrow, 1, i))
+                vrow += 1
+            else:
+                selectable_idx += 1
+                h_item = 3
+                item_vrows.append((vrow, h_item, i))
+                if selectable_idx == render_cursor:
+                    selected_vrow_start = vrow
+                    selected_vrow_end = vrow + h_item
+                vrow += h_item
+        total_vrows = vrow
+
+        # Adjust scroll offset to keep selected item visible
+        scroll = self._settings_scroll_top
+        if selected_vrow_start < scroll:
+            scroll = selected_vrow_start
+        if selected_vrow_end > scroll + content_h:
+            scroll = selected_vrow_end - content_h
+        scroll = max(0, min(scroll, max(0, total_vrows - content_h)))
+        self._settings_scroll_top = scroll
 
         start_y = max(1, (h - overlay_h) // 2)
         start_x = max(2, (w - overlay_w) // 2)
@@ -2820,25 +3236,41 @@ class BBSApp:
             sect_yellow_attr = curses.color_pair(self.CP_HEADER) | curses.A_BOLD
             submenu_attr = curses.color_pair(self.CP_SUBMENU) | curses.A_BOLD
 
-            row = start_y + 3
+            content_top_y = start_y + 3
+            content_bot_y = start_y + overlay_h - 2  # exclusive (footer row)
+            row = content_top_y
             selectable_idx = -1  # track index among selectable items
-            for i, item in enumerate(render_items):
-                if row + 1 >= start_y + overlay_h - 1:
+            for vrow_start, vrow_h, item_idx in item_vrows:
+                item = render_items[item_idx]
+                vrow_end = vrow_start + vrow_h
+
+                # Skip items entirely above the scroll viewport
+                if vrow_end <= scroll:
+                    if item.get("type") != "section":
+                        selectable_idx += 1
+                    continue
+
+                # Stop if we've gone past the visible area
+                if vrow_start - scroll >= content_h:
+                    break
+
+                # Compute the screen row for this item
+                row = content_top_y + (vrow_start - scroll)
+
+                if row >= content_bot_y:
                     break
 
                 # Section header — not selectable
                 if item.get("type") == "section":
-                    s_attr = sect_red_attr if item.get("style") == "red" else sect_yellow_attr
-                    sect_label = f" ── {item['label']} "
-                    sect_padded = sect_label + "─" * max(0, inner_w - len(sect_label))
-                    sect_line = "║" + sect_padded[:inner_w] + "║"
-                    self.stdscr.addnstr(row, start_x, sect_line, overlay_w, s_attr)
-                    row += 1
+                    if row < content_bot_y:
+                        s_attr = sect_red_attr if item.get("style") == "red" else sect_yellow_attr
+                        sect_label = f" ── {item['label']} "
+                        sect_padded = sect_label + "─" * max(0, inner_w - len(sect_label))
+                        sect_line = "║" + sect_padded[:inner_w] + "║"
+                        self.stdscr.addnstr(row, start_x, sect_line, overlay_w, s_attr)
                     continue
 
                 selectable_idx += 1
-                if row + 2 >= start_y + overlay_h - 1:
-                    break
 
                 is_selected = (selectable_idx == render_cursor)
                 is_action = item.get("options") is None
@@ -2846,61 +3278,65 @@ class BBSApp:
                 line_attr = sel_attr if is_selected else (submenu_attr if is_submenu else body_attr)
 
                 # Setting label line
-                cursor = ">" if is_selected else " "
+                cursor_ch = ">" if is_selected else " "
                 if is_submenu:
-                    label = f" {cursor} {item['label']}  ▶"
+                    label = f" {cursor_ch} {item['label']}  ▶"
                 else:
-                    label = f" {cursor} {item['label']}"
+                    label = f" {cursor_ch} {item['label']}"
 
+                # Row positions for the 3 sub-rows of this item
+                r0 = content_top_y + (vrow_start - scroll)      # label
+                r1 = r0 + 1                                      # value/desc
+                r2 = r0 + 2                                      # blank sep
 
                 is_editable = item.get("editable", False)
 
                 if is_editable:
                     # Editable text field — show path on the desc line
                     if is_selected and self.settings_editing_text:
-                        label = f" {cursor} {item['label']}  [editing]"
+                        label = f" {cursor_ch} {item['label']}  [editing]"
                     else:
-                        label = f" {cursor} {item['label']}  [Enter to edit]"
-                    padded = label + " " * max(0, inner_w - len(label))
-                    body_line = "║" + padded[:inner_w] + "║"
-                    self.stdscr.addnstr(row, start_x, body_line, overlay_w, line_attr)
-                    row += 1
+                        label = f" {cursor_ch} {item['label']}  [Enter to edit]"
+                    if r0 < content_bot_y:
+                        padded = label + " " * max(0, inner_w - len(label))
+                        body_line = "║" + padded[:inner_w] + "║"
+                        self.stdscr.addnstr(r0, start_x, body_line, overlay_w, line_attr)
 
                     # Show the editable path value
-                    if is_selected and self.settings_editing_text:
-                        buf = self.settings_edit_buffer
-                        cur = self.settings_edit_cursor
-                        # Scroll the visible window if path is too long
-                        max_vis = inner_w - 7
-                        if cur > max_vis:
-                            vis_start = cur - max_vis + 1
+                    if r1 < content_bot_y:
+                        if is_selected and self.settings_editing_text:
+                            buf = self.settings_edit_buffer
+                            cur = self.settings_edit_cursor
+                            # Scroll the visible window if path is too long
+                            max_vis = inner_w - 7
+                            if cur > max_vis:
+                                vis_start = cur - max_vis + 1
+                            else:
+                                vis_start = 0
+                            vis_text = buf[vis_start:vis_start + max_vis]
+                            vis_cursor = cur - vis_start
+                            path_line = f"  >> {vis_text}"
+                            path_padded = path_line + " " * max(0, inner_w - len(path_line))
+                            body_line = "║" + path_padded[:inner_w] + "║"
+                            self.stdscr.addnstr(r1, start_x, body_line, overlay_w, val_attr)
+                            # Draw cursor character with reverse video
+                            cursor_x = start_x + 1 + 5 + vis_cursor  # "║  >> " = 5 chars
+                            if cursor_x < start_x + overlay_w - 1:
+                                ch_under = buf[cur] if cur < len(buf) else " "
+                                self.stdscr.addnstr(
+                                    r1, cursor_x, ch_under, 1,
+                                    curses.color_pair(self.CP_AGENT) | curses.A_REVERSE)
                         else:
-                            vis_start = 0
-                        vis_text = buf[vis_start:vis_start + max_vis]
-                        vis_cursor = cur - vis_start
-                        path_line = f"  >> {vis_text}"
-                        path_padded = path_line + " " * max(0, inner_w - len(path_line))
-                        body_line = "║" + path_padded[:inner_w] + "║"
-                        self.stdscr.addnstr(row, start_x, body_line, overlay_w, val_attr)
-                        # Draw cursor character with reverse video
-                        cursor_x = start_x + 1 + 5 + vis_cursor  # "║  >> " = 5 chars
-                        if cursor_x < start_x + overlay_w - 1:
-                            ch_under = buf[cur] if cur < len(buf) else " "
-                            self.stdscr.addnstr(
-                                row, cursor_x, ch_under, 1,
-                                curses.color_pair(self.CP_AGENT) | curses.A_REVERSE)
-                    else:
-                        val_text = f"  >> {item['get']()}"
-                        val_padded = val_text + " " * max(0, inner_w - len(val_text))
-                        body_line = "║" + val_padded[:inner_w] + "║"
-                        attr = val_attr if is_selected else body_attr
-                        self.stdscr.addnstr(row, start_x, body_line, overlay_w, attr)
-                    row += 1
+                            val_text = f"  >> {item['get']()}"
+                            val_padded = val_text + " " * max(0, inner_w - len(val_text))
+                            body_line = "║" + val_padded[:inner_w] + "║"
+                            attr = val_attr if is_selected else body_attr
+                            self.stdscr.addnstr(r1, start_x, body_line, overlay_w, attr)
 
                     # Blank separator
-                    blank = "║" + " " * inner_w + "║"
-                    self.stdscr.addnstr(row, start_x, blank, overlay_w, body_attr)
-                    row += 1
+                    if r2 < content_bot_y:
+                        blank = "║" + " " * inner_w + "║"
+                        self.stdscr.addnstr(r2, start_x, blank, overlay_w, body_attr)
                     continue
 
                 elif is_action:
@@ -2912,8 +3348,9 @@ class BBSApp:
                         padded = full + " " * max(0, inner_w - len(full))
                     else:
                         padded = label + " " * max(0, inner_w - len(label))
-                    body_line = "║" + padded[:inner_w] + "║"
-                    self.stdscr.addnstr(row, start_x, body_line, overlay_w, line_attr)
+                    if r0 < content_bot_y:
+                        body_line = "║" + padded[:inner_w] + "║"
+                        self.stdscr.addnstr(r0, start_x, body_line, overlay_w, line_attr)
                 else:
                     current_val = str(item["get"]())
                     # Build value display with < > arrows when selected
@@ -2928,30 +3365,31 @@ class BBSApp:
 
                     padded = full_line[:inner_w]
                     padded += " " * max(0, inner_w - len(padded))
-                    body_line = "║" + padded + "║"
-                    self.stdscr.addnstr(row, start_x, body_line, overlay_w, line_attr)
+                    if r0 < content_bot_y:
+                        body_line = "║" + padded + "║"
+                        self.stdscr.addnstr(r0, start_x, body_line, overlay_w, line_attr)
 
-                    # Overwrite just the value portion in green if selected
-                    if is_selected:
-                        val_x = start_x + 1 + max(1, inner_w - len(val_display) - 1)
-                        self.stdscr.addnstr(row, val_x, val_display, len(val_display), val_attr)
-
-                row += 1
+                        # Overwrite just the value portion in green if selected
+                        if is_selected:
+                            val_x = start_x + 1 + max(1, inner_w - len(val_display) - 1)
+                            self.stdscr.addnstr(r0, val_x, val_display, len(val_display), val_attr)
 
                 # Description line (dimmer)
-                desc = f"     {item['desc']}"
-                desc_padded = desc + " " * max(0, inner_w - len(desc))
-                desc_line = "║" + desc_padded[:inner_w] + "║"
-                self.stdscr.addnstr(row, start_x, desc_line, overlay_w, body_attr)
-                row += 1
+                if r1 < content_bot_y:
+                    desc = f"     {item['desc']}"
+                    desc_padded = desc + " " * max(0, inner_w - len(desc))
+                    desc_line = "║" + desc_padded[:inner_w] + "║"
+                    self.stdscr.addnstr(r1, start_x, desc_line, overlay_w, body_attr)
 
                 # Blank separator line
-                blank = "║" + " " * inner_w + "║"
-                self.stdscr.addnstr(row, start_x, blank, overlay_w, body_attr)
-                row += 1
+                if r2 < content_bot_y:
+                    blank = "║" + " " * inner_w + "║"
+                    self.stdscr.addnstr(r2, start_x, blank, overlay_w, body_attr)
 
-            # Fill remaining rows
-            for r in range(row, start_y + overlay_h - 2):
+            # Fill remaining rows with blank lines
+            last_vrow = item_vrows[-1][0] + item_vrows[-1][1] if item_vrows else 0
+            fill_start = content_top_y + max(0, last_vrow - scroll)
+            for r in range(max(fill_start, content_top_y), content_bot_y):
                 blank = "║" + " " * inner_w + "║"
                 self.stdscr.addnstr(r, start_x, blank, overlay_w, body_attr)
 
@@ -3478,6 +3916,7 @@ class BBSApp:
                 if action == "settings":
                     self.show_settings_overlay = True
                     self.settings_cursor = 0
+                    self._settings_scroll_top = 0
                     self.tts_submenu_open = False
                     self.test_tools_submenu_open = False
                     self.voice_submenu_open = False
@@ -3806,12 +4245,45 @@ class BBSApp:
                         item["action"]()
                 return
 
+            # Google Cast sub-menu navigation
+            if self.cast_submenu_open:
+                selectable_count = sum(
+                    1 for it in self.cast_submenu_items
+                    if it.get("type") != "section")
+                if ch in (27,):
+                    self.cast_submenu_open = False
+                    self.stdscr.nodelay(True)
+                    self.stdscr.getch()
+                elif ch in (ord("q"), ord("Q")):
+                    self.cast_submenu_open = False
+                elif ch == curses.KEY_UP:
+                    if selectable_count:
+                        self.cast_submenu_cursor = (
+                            self.cast_submenu_cursor - 1) % selectable_count
+                elif ch == curses.KEY_DOWN:
+                    if selectable_count:
+                        self.cast_submenu_cursor = (
+                            self.cast_submenu_cursor + 1) % selectable_count
+                elif ch == curses.KEY_LEFT:
+                    self._cast_submenu_cycle(-1)
+                elif ch == curses.KEY_RIGHT:
+                    self._cast_submenu_cycle(1)
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    sel = [it for it in self.cast_submenu_items
+                           if it.get("type") != "section"]
+                    if 0 <= self.cast_submenu_cursor < len(sel):
+                        item = sel[self.cast_submenu_cursor]
+                        if item.get("action"):
+                            item["action"]()
+                return
+
             if ch in (ord("o"), ord("O"), ord("q"), ord("Q"), 27):
                 self.show_settings_overlay = False
                 self.tts_submenu_open = False
                 self.test_tools_submenu_open = False
                 self.voice_submenu_open = False
                 self.ai_models_submenu_open = False
+                self.cast_submenu_open = False
                 if ch == 27:
                     self.stdscr.nodelay(True)
                     self.stdscr.getch()
@@ -5093,6 +5565,13 @@ class BBSApp:
                 speak_text(summary, on_done=lambda: self.ui_queue.put(
                     ("status", "Ready for next prompt.", self.CP_STATUS)))
                 self.ui_queue.put(("status", "Speaking summary...", self.CP_STATUS))
+
+                # Cast to Google Cast / Nest speakers if enabled
+                if self.cast_enabled and self.cast_selected_devices:
+                    _cast_tts_to_devices(summary,
+                                         self.cast_selected_devices,
+                                         ui_queue=self.ui_queue,
+                                         volume=self.cast_volume)
             else:
                 self._save_response_to_history("(no TTS summary returned)", is_error=True)
 
@@ -5259,6 +5738,12 @@ class BBSApp:
 
             elif msg[0] == "typewriter_color":
                 self.typewriter_queue.append(("color", msg[1]))
+
+            elif msg[0] == "cast_scan_result":
+                self.cast_discovered_devices = msg[1]
+                # Rebuild submenu items to show discovered devices
+                if self.cast_submenu_open:
+                    self.cast_submenu_items = self._build_cast_submenu_items()
 
     def _set_status(self, msg: str, color: int = None):
         color = color if color is not None else self.CP_STATUS
