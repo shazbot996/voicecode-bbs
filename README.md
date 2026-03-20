@@ -101,7 +101,7 @@ The interface is a full curses TUI styled after 1990s bulletin board systems wit
  │  Speak   │   │ AI turns │    │ Add more │    │  Prompt  │    │ Response │
  │  your    │──►│ fragments│───►│ fragments│───►│  sent to │───►│ streamed │
  │  ideas   │   │ into a   │    │ re-refine│    │  Claude/ │    │ back w/  │
- │          │   │ prompt   │    │ repeat ↺ │    │  Gemini  │    │ TTS      │
+ │          │   │ prompt   │    │ repeat   │    │  Gemini  │    │ TTS      │
  └──────────┘   └──────────┘    └──────────┘    └──────────┘    └──────────┘
     [SPACE]         [R]          [SPACE] [R]        [E]              [P]
 ```
