@@ -120,7 +120,7 @@ The interface is a full curses TUI styled after 1990s bulletin board systems wit
 
 **Direct, Refine, Execute** — a prompt execution strategy that should be standard practice for anyone working with AI agents.
 
-We spend far more time managing prompts than we do managing agents. The bottleneck in AI-assisted development isn't the agent — it's getting the right prompt to the agent in the first place. DRE gives you two paths to execution: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**.
+We spend far more time managing prompts than we do managing agents. The bottleneck in AI-assisted development isn't the agent — it's getting the right prompt to the agent in the first place. DRE gives you two paths to execution: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**. In future, I can imagine having different kinds of refinement models to enhance this greatly. The refinement models as they are are just best-effort. I haven't tuned them greatly. 
 
 This is the philosophy behind VoiceCode's three-pane layout:
 
@@ -155,7 +155,6 @@ The DRE model is also why VoiceCode is a retro CLI and not a web app. Everything
 | `PgUp` `PgDn` | Scroll prompt browser (history) or agent terminal |
 | `O` | Settings / voice configuration |
 | `W` | New session (clear conversation context) |
-| `ESC` | Voice command mode |
 | `K` | Kill running agent |
 | `P` | Replay TTS summary |
 | `H` | Help overlay |
@@ -166,14 +165,6 @@ The DRE model is also why VoiceCode is a retro CLI and not a web app. Everything
 ---
 
 ## Features
-
-### Voice Commands
-
-Press **ESC** to enter voice command mode — then speak any action:
-
-> *"record"* · *"refine"* · *"execute"* · *"next"* · *"previous"* · *"settings"* · *"quit"*
-
-Every keyboard action has a voice equivalent. Go fully hands-free.
 
 ### Audio Pipeline
 
@@ -282,8 +273,8 @@ Settings are persisted to `~/.config/voicecode/settings.json` and can be changed
 ## Agent Support
 
 **Supported agents:**
-- **Claude CLI** (`claude` command) — session continuity via `--resume`
-- **Gemini CLI** (`gemini` command) — runs with `--yolo` flag for unattended execution
+- **Claude CLI** (`claude` command) — runs with --dangerously-skip-permissions since we don't run in interactive mode - session continuity via `--resume`
+- **Gemini CLI** (`gemini` command) — runs with `--yolo` flag since we don't run in interactive mode
 
 ---
 
