@@ -4,7 +4,7 @@
 
 ## Claude-Specific Notes
 
-- This is a single-file Python application (`voicecode_bbs.py`) — no build system, no modules, no tests
-- All code lives in one file; keep it that way unless there's a strong reason to split
-- The `ClaudeProvider` class (in `voicecode_bbs.py`) handles Claude CLI integration — session continuity uses `--resume` with session IDs
-- When editing `voicecode_bbs.py`, be aware it's a large curses application with background threads — changes to shared state must be thread-safe (use `queue.Queue` for UI updates)
+- The app is structured as the `voicecode/` Python package — `voicecode_bbs.py` is a thin entry-point wrapper
+- No build system or tests; dependencies in `requirements.txt`, virtualenv in `venv/`
+- The `ClaudeProvider` class (in `voicecode/providers/claude.py`) handles Claude CLI integration — session continuity uses `--resume` with session IDs
+- This is a curses application with background threads — changes to shared state must be thread-safe (use `queue.Queue` for UI updates)

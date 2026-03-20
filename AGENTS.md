@@ -4,7 +4,17 @@ Voice-driven CLI interface for interacting with AI agents (Claude, Gemini). Dict
 
 ## Architecture
 
-- **`voicecode_bbs.py`** — Retro BBS-style voice-driven prompt engineering workshop with three-pane curses UI (Prompt Browser, Dictation Buffer, Agent Terminal), ZMODEM animations, typewriter streaming, TTS output, Google Cast broadcasting, favorites, session continuity, shortcuts injection, agent stall detection, and context metering.
+- **`voicecode_bbs.py`** — Thin entry-point wrapper that delegates to the `voicecode` package
+- **`voicecode/`** — Main package: retro BBS-style voice-driven prompt engineering workshop
+  - `app.py` — Application orchestrator and main curses loop
+  - `constants.py`, `settings.py` — Configuration and runtime settings
+  - `agent/` — Agent execution, prompt refinement, runner logic
+  - `audio/` — Mic capture, VAD, audio utilities
+  - `history/` — Prompt/response history browser and favorites
+  - `providers/` — AI provider adapters (Claude, Gemini) with base class
+  - `stt/` — Speech-to-text (faster-whisper)
+  - `tts/` — Text-to-speech engine, voice config, Google Cast
+  - `ui/` — Curses UI: panes, overlays, drawing, colors, animation, input handling
 
 ### Audio Pipeline
 
@@ -20,7 +30,7 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 
 ## Tech Stack
 
-- **Python 3.12** — no build system, pure Python
+- **Python 3.12** — no build system, modular package structure under `voicecode/`
 - **faster-whisper** — speech-to-text (models: tiny.en, base.en, small.en, medium.en)
 - **silero-vad** / **torch** (CPU-only) — voice activity detection
 - **sounddevice** / **numpy** — audio capture
@@ -36,8 +46,9 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 # Activate venv
 source venv/bin/activate
 
-# Launch the BBS prompt workshop
+# Launch the BBS prompt workshop (either works)
 python voicecode_bbs.py
+python -m voicecode
 ```
 
 ## Conventions
