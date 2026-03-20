@@ -1,0 +1,18 @@
+Don't like something? You can change it! I built the back half of this app by running VoiceCode from inside its own directory. It's all open source — cd into the voicecode-bbs folder and ask it reprogram itself. Change some colors. Try a different layout. See where you can take it! (Warning: it is extremely addictive!)
+You can press D to dictate and execute in one shot — no need to refine first. Great for quick commands or simple questions. A requirement when sending very precise instructions that you don't trust a refinement model to respect (intent v semantics - when semantics matter more!)
+Press W to start a fresh session when the conversation gets long. A clean context often gets better results than a cluttered one.
+VoiceCode works with multiple AI providers. Press O to open Settings and switch between Claude, Gemini, and others. Once you have both working, Press M to instantly toggle between models. 
+Speak naturally — the transcription handles filler words and pauses. 
+Press R after recording to refine your transcription into a polished prompt before sending it to the agent. 
+When "merging" a second dictation buffer into an existing prompt - make sure to provide instructions for the merge to the model! "append this to the working prompt", "change the working prompt with below" - big difference in what the model will do!
+Your conversation history is saved automatically. Use the arrow keys to browse previous sessions from the history pane.
+The "string injector" [TAB] browser is nothing more than a helpful tool to paste in commonly used strings into your working environment. Press "enter" on an entry and it pastes it into your dictation buffer.
+Paste from clipboard for most text fields now. I didn't think you could do that in a terminal so it made my whole string injection concept a bit dumb. Still there, though, as a parlor trick. Show the kids!
+Using the folder browserin the [TAB] browser, you can direct the construction of a more complex document to build in your docs/ folder, like publications, READMEs, SPECs, and AGENT markdown.
+Using the folder browserin the [TAB] browser, you can, most importantly, direct your agent to the specific application environment you need it to be reviewing or building within - this can limit how much your agents have to scan your repo if it is very wide. Focus your work!
+Only bite off as much as the agent can chew. Figuring out the working limits of operational context is squishy. 
+This app is meant to be run LOCALLY. Running it in the cloud won't do much good - we're using ALSA to do direct voice interaction, and the system is all thumbs without it. 
+This app should be fairly portable, but has only been tested on a few kinds of systems: Ubuntu 24.04, WSL on Windows 11, gLinux (Google) VM on Chromebook (Bruschetta --proxy=false setting in options for gemini)
+"make init-sub" adds a 'make voicecode' command into it's parent directory so you can launch this easily from the parent project you build /voicecode-bbs into.  It is meant to run as a subfolder within a deployment. Agents will run from the folder in which it is invoked. 
+Yes I wrote these tips with my wee fingers. 
+If you have a chromecast on the same network as this app, you can configure voicecode-bbs to send agent response summaries to google cast devices it can find. (the testing tool is also fun to play with)

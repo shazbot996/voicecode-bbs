@@ -954,6 +954,10 @@ class InputHandler:
             app.voice_submenu_open = False
             app.ai_models_submenu_open = False
 
+        elif ch == ord("t") or ch == ord("T"):
+            app.cycle_tip()
+            app.set_status("Tip cycled.")
+
         elif ch == ord("m") or ch == ord("M"):
             # Toggle AI provider between Gemini and Claude
             gemini = get_provider_by_name("Gemini")

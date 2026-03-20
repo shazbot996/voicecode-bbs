@@ -9,6 +9,7 @@ import threading
 import collections
 import datetime
 import textwrap
+import random
 import numpy as np
 from pathlib import Path
 
@@ -86,6 +87,10 @@ class BBSApp:
             "",
             "                         [P] Replay TTS ♪",
         ]
+        # Load all tips for cycling
+        self._all_tips = self._load_all_tips()
+        self._tip_index = random.randrange(len(self._all_tips)) if self._all_tips else 0
+
         self.agent_pane.welcome_art = [
             "╔═══════════════════════════════════════╗",
             "║   GREETINGS PROFESSOR FALKEN.         ║",
@@ -107,7 +112,10 @@ class BBSApp:
             "  O     ··· Options / Settings",
             "  H     ··· Full help screen",
             "  ESC   ··· Main menu",
-        ]
+            "",
+            "  ── [T] Tip ─────────────────────",
+            "",
+        ] + self._get_current_tip()
 
         self.fragments: list[str] = []
         self.current_prompt: str | None = None
@@ -304,6 +312,47 @@ class BBSApp:
 
         # Build settings items (delegated to settings_overlay)
         self.settings_overlay.build_settings_items()
+
+    # ─── Tips ──────────────────────────────────────────────────────
+
+    def _load_all_tips(self) -> list[str]:
+        """Load all tips from tips.txt."""
+        tips_path = Path(__file__).resolve().parent.parent / "tips.txt"
+        try:
+            text = tips_path.read_text().strip()
+            return [t.strip() for t in text.splitlines() if t.strip()]
+        except FileNotFoundError:
+            return []
+
+    def _get_current_tip(self) -> list[str]:
+        """Wrap the current tip for the welcome screen."""
+        if not self._all_tips:
+            return []
+        tip = self._all_tips[self._tip_index % len(self._all_tips)]
+        wrapped = textwrap.wrap(tip, width=37)
+        return ["  " + line for line in wrapped]
+
+    def _load_random_tip(self) -> list[str]:
+        """Load a random tip from tips.txt and wrap it for the welcome screen."""
+        if not self._all_tips:
+            return []
+        tip = random.choice(self._all_tips)
+        wrapped = textwrap.wrap(tip, width=37)
+        return ["  " + line for line in wrapped]
+
+    def cycle_tip(self):
+        """Cycle to the next tip and update the agent welcome art."""
+        if not self._all_tips:
+            return
+        self._tip_index = (self._tip_index + 1) % len(self._all_tips)
+        # Find the tip section marker and replace everything after it
+        marker = "  ── [T] Tip ─────────────────────"
+        art = self.agent_pane.welcome_art
+        for i, line in enumerate(art):
+            if line == marker:
+                # Keep everything up to and including the marker + blank line
+                self.agent_pane.welcome_art = art[:i + 2] + self._get_current_tip()
+                break
 
     # ─── Working directory helpers ─────────────────────────────────
 
