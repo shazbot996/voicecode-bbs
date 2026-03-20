@@ -12,7 +12,8 @@ SILENCE_AFTER_SPEECH_SEC = 1.5
 MIN_SPEECH_DURATION_SEC = 0.3
 
 # ─── Settings persistence ────────────────────────────────────────
-SETTINGS_DIR = Path.home() / ".config" / "voicecode"
+APP_DIR = Path(__file__).resolve().parent.parent
+SETTINGS_DIR = APP_DIR / "settings"
 SETTINGS_FILE = SETTINGS_DIR / "settings.json"
 SHORTCUTS_FILE = SETTINGS_DIR / "shortcuts.txt"
 

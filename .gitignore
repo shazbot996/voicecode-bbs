@@ -25,5 +25,8 @@ Thumbs.db
 # Environment variables
 .env
 
+# Local settings (per-installation config)
+settings/
+
 # Prompt history (local session data)
 prompts/

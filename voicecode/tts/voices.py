@@ -13,7 +13,7 @@ except ImportError:
     pass
 
 if TTS_AVAILABLE:
-    PIPER_VOICES_DIR = Path.home() / ".local/share/piper-voices"
+    PIPER_VOICES_DIR = Path(__file__).resolve().parent.parent.parent / "settings" / "piper-voices"
     PIPER_VOICES = [
         "en_US-amy-medium",
         "en_US-lessac-medium",
