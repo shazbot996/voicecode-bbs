@@ -8,12 +8,19 @@ from voicecode.providers.base import CLIProvider
 class GeminiProvider(CLIProvider):
     name = "Gemini"
     binary = "gemini"
+    disable_proxy: bool = False
+
+    def _common_flags(self) -> list[str]:
+        flags = ["--yolo"]
+        if self.disable_proxy:
+            flags.append("--proxy=false")
+        return flags
 
     def build_refine_cmd(self, prompt: str) -> list[str]:
-        return self._get_base_cmd() + ["--yolo", "--proxy=false", "-p", prompt]
+        return self._get_base_cmd() + self._common_flags() + ["-p", prompt]
 
     def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
-        cmd = self._get_base_cmd() + ["--yolo", "--proxy=false", "-o", "stream-json"]
+        cmd = self._get_base_cmd() + self._common_flags() + ["-o", "stream-json"]
         if session_id:
             cmd += ["--resume", session_id]
         cmd += ["-p", prompt]

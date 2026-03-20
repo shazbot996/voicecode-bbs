@@ -238,10 +238,11 @@ class BBSApp:
 
         # Apply command overrides from settings
         gemini_cmd = saved.get("gemini_command")
-        if gemini_cmd:
-            g_prov = get_provider_by_name("Gemini")
-            if g_prov:
-                g_prov.command_override = gemini_cmd
+        g_prov = get_provider_by_name("Gemini")
+        if gemini_cmd and g_prov:
+            g_prov.command_override = gemini_cmd
+        if g_prov and saved.get("gemini_disable_proxy", False):
+            g_prov.disable_proxy = True
 
         # Detect available providers after overrides are applied
         self.available_providers = detect_providers()

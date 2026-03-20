@@ -300,15 +300,15 @@ class SettingsOverlay:
                 "action": self.start_editing_gemini_command,
             })
 
-        # Gemini help note
+        # Gemini --proxy=false toggle
         if gemini_provider:
             items.append({
-                "key": "_info_gemini_flags",
-                "label": "Gemini Flags",
-                "desc": "Always passes --yolo and --proxy=false",
-                "options": None,
-                "get": lambda: "auto",
-                "set": None,
+                "key": "gemini_disable_proxy",
+                "label": "Gemini Disable Proxy",
+                "desc": "Pass --proxy=false to Gemini CLI",
+                "options": ["On", "Off"],
+                "get": lambda: "On" if gemini_provider.disable_proxy else "Off",
+                "set": self._set_gemini_disable_proxy,
             })
 
         # Show provider info for all known providers
@@ -352,6 +352,18 @@ class SettingsOverlay:
             persist_setting("ai_provider", name)
             app.runner.clear_session()
             self._set_status(f"AI provider switched to {name}.")
+
+    def _set_gemini_disable_proxy(self, value):
+        """Toggle Gemini --proxy=false flag."""
+        from voicecode.providers import get_provider_by_name
+
+        gemini_provider = get_provider_by_name("Gemini")
+        if gemini_provider:
+            enabled = value == "On"
+            gemini_provider.disable_proxy = enabled
+            persist_setting("gemini_disable_proxy", enabled)
+            state = "enabled" if enabled else "disabled"
+            self._set_status(f"Gemini --proxy=false {state}.")
 
     def open_ai_models_submenu(self):
         """Open the AI Models sub-menu."""
