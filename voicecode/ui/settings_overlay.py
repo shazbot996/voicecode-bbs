@@ -300,6 +300,17 @@ class SettingsOverlay:
                 "action": self.start_editing_gemini_command,
             })
 
+        # Gemini help note
+        if gemini_provider:
+            items.append({
+                "key": "_info_gemini_flags",
+                "label": "Gemini Flags",
+                "desc": "Always passes --yolo and --proxy=false",
+                "options": None,
+                "get": lambda: "auto",
+                "set": None,
+            })
+
         # Show provider info for all known providers
         for p in detect_providers():
             if p.is_installed():

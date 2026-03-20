@@ -10,10 +10,10 @@ class GeminiProvider(CLIProvider):
     binary = "gemini"
 
     def build_refine_cmd(self, prompt: str) -> list[str]:
-        return self._get_base_cmd() + ["--yolo", "-p", prompt]
+        return self._get_base_cmd() + ["--yolo", "--proxy=false", "-p", prompt]
 
     def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
-        cmd = self._get_base_cmd() + ["--yolo", "-o", "stream-json"]
+        cmd = self._get_base_cmd() + ["--yolo", "--proxy=false", "-o", "stream-json"]
         if session_id:
             cmd += ["--resume", session_id]
         cmd += ["-p", prompt]
