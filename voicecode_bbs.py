@@ -3195,7 +3195,7 @@ class BBSApp:
         # Count rows: sections take 1 row, regular items take 3 rows
         item_rows = sum(1 if it.get("type") == "section" else 3 for it in render_items)
         overlay_h = min(4 + item_rows + 3, h - 4)
-        if overlay_w < 44 or overlay_h < 12:
+        if overlay_w < 44 or overlay_h < 8:
             return
 
         # Available rows for content (between title separator and footer)
