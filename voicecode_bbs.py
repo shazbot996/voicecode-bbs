@@ -2085,7 +2085,7 @@ class BBSApp:
         else:
             self._set_status(f"No unused voice files to delete.")
 
-def _cancel_text_edit(self):
+    def _cancel_text_edit(self):
         """Cancel inline text editing."""
         self.settings_editing_text = False
 
