@@ -1,10 +1,10 @@
 # VoiceCode — Shared Project Context
 
-Voice-driven CLI interface for interacting with AI agents (Claude, Gemini). Dictate prompts, refine them with AI, and execute them — all by voice.
+Voice-driven CLI interface for interacting with AI agents (Claude, Gemini). Dictate prompts, refine them with AI, and execute them — all by voice. Optional Google Cast output to Nest/Chromecast speakers.
 
 ## Architecture
 
-- **`voicecode_bbs.py`** — Retro BBS-style voice-driven prompt engineering workshop with three-pane curses UI (Prompt Browser, Dictation Buffer, Agent Terminal), ZMODEM animations, typewriter streaming, TTS output, favorites, session continuity, shortcuts injection, and context metering.
+- **`voicecode_bbs.py`** — Retro BBS-style voice-driven prompt engineering workshop with three-pane curses UI (Prompt Browser, Dictation Buffer, Agent Terminal), ZMODEM animations, typewriter streaming, TTS output, Google Cast broadcasting, favorites, session continuity, shortcuts injection, agent stall detection, and context metering.
 
 ### Audio Pipeline
 
@@ -16,7 +16,7 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 
 - Sample rate: 16kHz, mono, 30ms blocks (480 samples)
 - VAD threshold: 0.5, silence timeout: 1.5s, min speech: 0.3s
-- Typewriter effect: 1.5ms/char (~667 CPS)
+- Typewriter effect: time-based budget at 600 chars/sec
 
 ## Tech Stack
 
@@ -25,6 +25,7 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 - **silero-vad** / **torch** (CPU-only) — voice activity detection
 - **sounddevice** / **numpy** — audio capture
 - **piper-tts** — text-to-speech via `piper` CLI + `aplay`
+- **pychromecast** — Google Cast device discovery and TTS broadcasting (optional)
 - **curses** — terminal UI (BBS app)
 - Dependencies in `requirements.txt`, virtualenv in `venv/`
 - PyTorch installed CPU-only via `--index-url https://download.pytorch.org/whl/cpu`
@@ -37,18 +38,20 @@ source venv/bin/activate
 
 # Launch the BBS prompt workshop
 python voicecode_bbs.py
+```
 
 ## Conventions
 
 - Models (VAD, Whisper) are lazy-loaded on first use for fast startup
 - Background threads use `daemon=True`
-- Prompt/response pairs saved to `~/prompts/voicecode/history/` as `NNN_slug_prompt.md` + `NNN_slug_response.md` (flat directory, sequentially indexed)
+- Prompt/response pairs saved to `{prompt_library}/voicecode/history/` as `NNN_slug_prompt.md` + `NNN_slug_response.md` (flat directory, sequentially indexed)
 - Response files contain the TTS summary (or error) from the agent run
 - Comment lines (`#`) in prompt files are stripped before execution
 - TTS summaries extracted from `[TTS_SUMMARY]...[/TTS_SUMMARY]` blocks in agent responses
 - Thread-safe UI updates via `queue.Queue`
-- Session continuity across prompts via `--resume` with session IDs
+- Session continuity across prompts via `--resume` with session IDs (Claude) or `--yolo` flag (Gemini)
 - Mid-recording shortcuts injection merges paths into transcripts using word-level timestamps
+- App expects a working folder (typically repo root) with `prompts/` and `docs/` subfolders
 - No tests or CI currently
 
 ## BBS App Three-Pane Layout
@@ -66,7 +69,7 @@ python voicecode_bbs.py
 
 - **Prompt Browser** (top-left) — View and browse refined prompts; history entries show combined prompt + response
 - **Dictation Buffer** (bottom-left) — Voice fragments accumulate in real-time
-- **Agent Terminal** (right, full height) — ZMODEM animation, then typewriter-streamed responses
+- **Agent Terminal** (right, full height) — ZMODEM animation, then typewriter-streamed responses with activity spinner and stall detection
 - Data-flow hints: `=^R^=` (refine up), `E>` (execute right), `D>` (direct right)
 
 ## BBS App Keyboard Controls
