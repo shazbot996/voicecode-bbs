@@ -93,35 +93,44 @@ The interface is a full curses TUI styled after 1990s bulletin board systems wit
 
 ---
 
-## The Workflow
+## The Prompt Refinery Workflow
 
 ```
-  1. DICTATE         2. REFINE           3. EXECUTE          4. LISTEN
- ┌──────────┐     ┌──────────┐       ┌──────────┐       ┌──────────┐
- │  Speak   │     │ AI turns │       │  Prompt  │       │ Response │
- │  your    │ ──► │ fragments│  ──►  │  sent to │  ──►  │ streamed │
- │  ideas   │     │ into a   │       │  Claude/ │       │ back w/  │
- │          │     │ prompt   │       │  Gemini  │       │ TTS      │
- └──────────┘     └──────────┘       └──────────┘       └──────────┘
-    [SPACE]           [R]                [E]                [P]
+  1. DICTATE       2. REFINE        3. ITERATE       4. EXECUTE       5. LISTEN
+ ┌──────────┐   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+ │  Speak   │   │ AI turns │    │ Add more │    │  Prompt  │    │ Response │
+ │  your    │──►│ fragments│───►│ fragments│───►│  sent to │───►│ streamed │
+ │  ideas   │   │ into a   │    │ re-refine│    │  Claude/ │    │ back w/  │
+ │          │   │ prompt   │    │ repeat ↺ │    │  Gemini  │    │ TTS      │
+ └──────────┘   └──────────┘    └──────────┘    └──────────┘    └──────────┘
+    [SPACE]         [R]          [SPACE] [R]        [E]              [P]
 ```
 
 1. **Dictate** — Press SPACE to record. Speak naturally; fragments accumulate in the buffer. Start and stop repeatedly. Undo mistakes.
 2. **Refine** — Press R to have AI synthesize your fragments into a polished prompt.
-3. **Execute** — Press E to send the prompt to your agent. Watch the ZMODEM animation, then the response streams in with a typewriter effect.
-4. **Listen** — The agent's TTS summary is read aloud locally (and on Cast speakers if configured). Press P to replay.
+3. **Iterate** — Continue dictating additional fragments and refine again. The AI merges new dictations into the ongoing refined prompt, building on what's already there. This loop is the core of the Prompt Refinery — you can circle back through dictate and refine as many times as needed until the prompt captures exactly what you mean.
+4. **Execute** — Press E to send the prompt to your agent. Watch the ZMODEM animation, then the response streams in with a typewriter effect.
+5. **Listen** — The agent's TTS summary is read aloud locally (and on Cast speakers if configured). Press P to replay.
 
-Or press **D** to skip refinement and send raw dictation directly.
+**Direct Query** — Not every prompt needs refinement. In fact, many are damaged by it. Press **D** to skip the refinery entirely and send your dictation straight to the agent. The value here is still the multimodal dictation buffer — combining voice, keyboard edits, and shortcut injection gives you a better first draft than voice dictating into a text field. When your dictation comes out clean, just fire it. Mess up? Just press "U" and try the last section again. The dictation system is meant to append repeated "chunks" of vocal capture. The user will quickly learn a balance between a long monologue of text, and smaller fragment captures to assemble a layered dictation transcript. 
 
 ---
 
-## Three-Pane Layout
+## DRE Prompt Execution
+
+**Direct, Refine, Execute** — a prompt execution strategy that should be standard practice for anyone working with AI agents.
+
+We spend far more time managing prompts than we do managing agents. The bottleneck in AI-assisted development isn't the agent — it's getting the right prompt to the agent in the first place. DRE gives you two paths to execution: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**.
+
+This is the philosophy behind VoiceCode's three-pane layout:
 
 ![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
 
 - **Prompt Browser** (top-left) — View and browse your refined prompts. History entries show both the prompt and agent response in a combined scrollable view. Favorites indicators on the left border.
-- **Dictation Buffer** (bottom-left) — Watch voice fragments accumulate in real-time.
+- **Dictation Buffer** (bottom-left) — Watch voice fragments accumulate in real-time. This is where the refinement loop lives — dictate, refine, dictate more, refine again.
 - **Agent Terminal** (right) — ZMODEM transfer animation, then typewriter-streamed responses with context meter. Activity spinner shows agent status and stall warnings.
+
+The DRE model is also why VoiceCode is a retro CLI and not a web app. Everything in this application is keyboard shortcuts — the thing you lose in a modern web UI is often found in the simplicity of a command line interface. When your workflow is about fast iteration between voice and text, every millisecond of friction matters. Curses gives you that speed and simplicity. 
 
 ---
 
@@ -230,9 +239,9 @@ This works **mid-recording**: the shortcut is timestamped and merged into the fi
 
 ### Google Cast / Chromecast
 
-VoiceCode can broadcast TTS summaries to Google Cast devices (Nest speakers, Chromecast, speaker groups) on your local network. Requires the `pychromecast` package.
+VoiceCode can broadcast TTS summaries to Google Cast devices (Nest speakers, Chromecast, speaker groups) on your local network. Requires the `pychromecast` package to be installed.
 
-Enable via **O** → **Google Cast Notifications**:
+Enable via **O** (options) → **Google Cast Notifications**:
 
 - **Scan for Devices** — discovers Cast devices and speaker groups on your network
 - **Select devices** — toggle individual devices on/off for broadcast
@@ -240,6 +249,7 @@ Enable via **O** → **Google Cast Notifications**:
 - **Mute Local TTS** — play speech only on Cast speakers, silencing local output
 
 When enabled, every TTS summary is generated as a WAV file and streamed to all selected Cast devices simultaneously.
+
 
 ### Configuration
 
