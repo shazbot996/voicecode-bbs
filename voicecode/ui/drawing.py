@@ -374,18 +374,8 @@ class DrawingHelper:
             help_text = " \u25cc Agent working... [K] to kill"
             self.draw_bar(help_y, help_text, CP_STATUS)
         else:
-            voice_label = "[V]oice" if TTS_AVAILABLE else ""
             keys = " [Q]uit [X]Restart | [N]ew [U]ndo [C]lear [K]ill [W]NewSess [M]odel [Tab]Shortcuts"
             self.draw_bar(help_y, keys, CP_HELP)
-            # Draw [V]oice in red, right-justified
-            w = app.stdscr.getmaxyx()[1]
-            vx = w - len(voice_label) - 1
-            if TTS_AVAILABLE and vx > len(keys):
-                try:
-                    app.stdscr.addnstr(help_y, vx, voice_label, w - vx - 1,
-                                       curses.color_pair(CP_CTX_RED) | curses.A_BOLD)
-                except curses.error:
-                    pass
 
         # -- Status bar --
         self.draw_bar(h - 1, f" {app.status_msg}", app.status_color)
