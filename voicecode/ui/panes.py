@@ -7,6 +7,8 @@ import textwrap
 class TextPane:
     """A scrollable text region within a curses window."""
 
+    MAX_LINES = 2000  # trim oldest lines when exceeded
+
     def __init__(self, title: str, color_pair: int):
         self.title = title
         self.lines: list[str] = []
@@ -27,7 +29,21 @@ class TextPane:
     def add_line(self, text: str, width: int):
         wrapped = textwrap.wrap(text, width=max(1, width - 2))
         self.lines.extend(wrapped if wrapped else [text])
+        self._trim_lines()
         self.scroll_to_bottom(self._last_height if hasattr(self, '_last_height') else 10)
+
+    def _trim_lines(self):
+        """Trim oldest lines when buffer exceeds MAX_LINES."""
+        overflow = len(self.lines) - self.MAX_LINES
+        if overflow > 0:
+            self.lines = self.lines[overflow:]
+            self.scroll_offset = max(0, self.scroll_offset - overflow)
+            # Shift line_colors indices
+            if self.line_colors:
+                self.line_colors = {
+                    k - overflow: v for k, v in self.line_colors.items()
+                    if k >= overflow
+                }
 
     def add_char_to_last_line(self, ch: str, width: int):
         """Append a character, wrapping if needed. For typewriter effect."""
@@ -41,7 +57,14 @@ class TextPane:
                 self.lines.append(ch)
             else:
                 self.lines[-1] = last + ch
+        self._trim_lines()
         self.scroll_to_bottom(self._last_height if hasattr(self, '_last_height') else 10)
+
+    @property
+    def is_scrollable(self) -> bool:
+        """True if content exceeds visible area."""
+        vh = self._last_height if hasattr(self, '_last_height') else 10
+        return len(self.lines) > vh
 
     def scroll_to_bottom(self, visible_height: int):
         max_offset = max(0, len(self.lines) - visible_height)

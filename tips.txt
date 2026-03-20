@@ -16,3 +16,4 @@ This app should be fairly portable, but has only been tested on a few kinds of s
 "make init-sub" adds a 'make voicecode' command into it's parent directory so you can launch this easily from the parent project you build /voicecode-bbs into.  It is meant to run as a subfolder within a deployment. Agents will run from the folder in which it is invoked. 
 Yes I wrote these tips with my wee fingers. 
 If you have a chromecast on the same network as this app, you can configure voicecode-bbs to send agent response summaries to google cast devices it can find. (the testing tool is also fun to play with)
+I noticed that every client renders colors a bit differently, with "themes" being popular - so I threw my hands up - use voicecode on itself to tweak the colors any way you want anyway :) ¯\_(ツ)_/¯ 

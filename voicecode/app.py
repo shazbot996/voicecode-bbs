@@ -53,6 +53,7 @@ class BBSApp:
         # Left panes
         self.prompt_pane = TextPane("PROMPT BROWSER", CP_PROMPT)
         self.dictation_pane = TextPane("DICTATION BUFFER", CP_DICTATION)
+        self.dictation_pane.MAX_LINES = 500  # smaller cap for dictation fragments
 
         # Right pane
         self.agent_pane = TextPane("AGENT TERMINAL", CP_AGENT)

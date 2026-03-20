@@ -134,11 +134,13 @@ class RunnerHelper:
             cmd = provider.build_execute_cmd(prompt_with_tts, app.session_id)
             app.agent_process = subprocess.Popen(
                 cmd,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
                 env=os.environ,
+                start_new_session=True,
             )
 
             result_text = ""
@@ -275,7 +277,7 @@ class RunnerHelper:
                 app.ui_queue.put(("agent_state", AgentState.DONE))
                 app.ui_queue.put(("status", f"Agent error: {e}", CP_STATUS))
 
-    def kill_agent(self):
+    def kill_agent(self, sync=False):
         app = self.app
         # Signal the cancel event so the animation sleep exits early
         app._agent_cancel.set()
@@ -287,7 +289,6 @@ class RunnerHelper:
         app._typewriter_budget = 0.0
         app._typewriter_last_ts = 0.0
         if proc:
-            # Terminate in background to avoid blocking the UI thread
             def _reap():
                 try:
                     proc.terminate()  # SIGTERM for graceful shutdown
@@ -297,7 +298,11 @@ class RunnerHelper:
                         proc.kill()  # SIGKILL as last resort
                 except Exception:
                     pass
-            threading.Thread(target=_reap, daemon=True).start()
+            if sync:
+                _reap()
+            else:
+                # Terminate in background to avoid blocking the UI thread
+                threading.Thread(target=_reap, daemon=True).start()
         # Restore source pane if still pending
         if app._agent_source_pane is not None:
             app._agent_source_pane.color_pair = app._agent_source_original_color

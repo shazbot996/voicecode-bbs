@@ -147,12 +147,17 @@ class DrawingHelper:
         hint_attr = curses.color_pair(app.prompt_pane.color_pair) | curses.A_BOLD
         home_hint = " [Home]Current "
         browse_hint = " [\u2190\u2192]Browse [\u2191\u2193]View "
+        scroll_hint = " [PgUp/Dn]Scroll " if app.prompt_pane.is_scrollable else ""
         bh_x = left_width - len(browse_hint) - 1
         try:
             if bh_x > 1:
                 app.stdscr.addstr(prompt_bottom_y, bh_x, browse_hint, hint_attr)
+            left_edge = 1
             if len(home_hint) + 1 < bh_x:
-                app.stdscr.addstr(prompt_bottom_y, 1, home_hint, hint_attr)
+                app.stdscr.addstr(prompt_bottom_y, left_edge, home_hint, hint_attr)
+                left_edge += len(home_hint)
+            if scroll_hint and left_edge + len(scroll_hint) < bh_x:
+                app.stdscr.addstr(prompt_bottom_y, left_edge, scroll_hint, hint_attr)
         except curses.error:
             pass
 

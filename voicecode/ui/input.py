@@ -209,11 +209,11 @@ class InputHandler:
                 elif action == "about":
                     app.show_about_overlay = True
                 elif action == "restart":
-                    app.runner.kill_agent()
+                    app.runner.kill_agent(sync=True)
                     app.restart = True
                     app.running = False
                 elif action == "quit":
-                    app.runner.kill_agent()
+                    app.runner.kill_agent(sync=True)
                     app.running = False
             elif ch == 27:
                 app.show_escape_menu = False
@@ -714,11 +714,11 @@ class InputHandler:
             return
 
         if ch == ord("q") or ch == ord("Q"):
-            app.runner.kill_agent()
+            app.runner.kill_agent(sync=True)
             app.running = False
 
         elif ch == ord("x") or ch == ord("X"):
-            app.runner.kill_agent()
+            app.runner.kill_agent(sync=True)
             app.restart = True
             app.running = False
 
@@ -873,7 +873,7 @@ class InputHandler:
             app.set_status("Returned to current prompt.")
 
         elif ch == curses.KEY_PPAGE:
-            if app.browser_index >= 0:
+            if app.prompt_pane.is_scrollable:
                 app.prompt_pane.scroll_up(5)
             else:
                 app.agent_pane.scroll_up(5)
@@ -882,7 +882,7 @@ class InputHandler:
             h = app.stdscr.getmaxyx()[0]
             content_height = h - 4
             visible = content_height // 2 - 2
-            if app.browser_index >= 0:
+            if app.prompt_pane.is_scrollable:
                 app.prompt_pane.scroll_down(visible, 5)
             else:
                 app.agent_pane.scroll_down(content_height - 2, 5)
