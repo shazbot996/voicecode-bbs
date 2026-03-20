@@ -1333,6 +1333,7 @@ class BBSApp:
         self.cast_selected_devices: list[str] = list(
             saved.get("cast_selected_devices", []))
         self.cast_scanning = False
+        self.cast_mute_local_tts = saved.get("cast_mute_local_tts", False)
         self.tts_enabled = saved.get("tts_enabled", True)
         global _tts_enabled
         _tts_enabled = self.tts_enabled
@@ -1386,8 +1387,10 @@ class BBSApp:
 
         # Typewriter state
         self.typewriter_queue: collections.deque = collections.deque()
-        self.typewriter_last_time = 0.0  # unused, kept for compat
-        self._typewriter_line_color = None  # per-line color override (None = default)
+        self._typewriter_budget = 0.0       # fractional char budget carried across frames
+        self._typewriter_last_ts = 0.0      # monotonic timestamp of last _process call
+        self._typewriter_line_color = None   # per-line color override (None = default)
+        self._typewriter_chars_per_sec = 600 # steady output rate
         self.agent_first_output = False      # tracks if agent has produced any output
         self.agent_last_activity = 0.0       # time.time() of last output from agent
         self.agent_welcome_shown = False     # True after initial welcome art displayed
@@ -1808,24 +1811,35 @@ class BBSApp:
                 "get": lambda: "ON" if self.cast_enabled else "OFF",
                 "set": self._set_cast_enabled,
             },
-            {
-                "key": "cast_volume",
-                "label": "Cast Volume",
-                "desc": "Force device volume before playback (0-100%)",
-                "options": ["20%", "40%", "60%", "80%", "100%"],
-                "get": lambda: f"{int(self.cast_volume * 100)}%",
-                "set": self._set_cast_volume,
-            },
-            {
-                "key": "_action_cast_scan",
-                "label": "[Enter] Scan for Devices",
-                "desc": "Discover Cast devices and speaker groups on your network",
-                "options": None,
-                "get": lambda: "scanning..." if self.cast_scanning else "",
-                "set": None,
-                "action": self._action_cast_scan,
-            },
         ]
+        if self.cast_enabled:
+            items += [
+                {
+                    "key": "cast_volume",
+                    "label": "Cast Volume",
+                    "desc": "Force device volume before playback (0-100%)",
+                    "options": ["20%", "40%", "60%", "80%", "100%"],
+                    "get": lambda: f"{int(self.cast_volume * 100)}%",
+                    "set": self._set_cast_volume,
+                },
+                {
+                    "key": "cast_mute_local_tts",
+                    "label": "Mute Local TTS",
+                    "desc": "Play TTS only on Cast speakers, not locally",
+                    "options": ["ON", "OFF"],
+                    "get": lambda: "ON" if self.cast_mute_local_tts else "OFF",
+                    "set": self._set_cast_mute_local_tts,
+                },
+                {
+                    "key": "_action_cast_scan",
+                    "label": "[Enter] Scan for Devices",
+                    "desc": "Discover Cast devices and speaker groups on your network",
+                    "options": None,
+                    "get": lambda: "scanning..." if self.cast_scanning else "",
+                    "set": None,
+                    "action": self._action_cast_scan,
+                },
+            ]
 
         # Add a section header and device list if we have discovered devices
         if self.cast_discovered_devices:
@@ -1913,6 +1927,10 @@ class BBSApp:
     def _set_cast_enabled(self, val):
         self.cast_enabled = (val == "ON")
         self._persist_setting("cast_enabled", self.cast_enabled)
+        if not self.cast_enabled and self.cast_mute_local_tts:
+            self.cast_mute_local_tts = False
+            self._persist_setting("cast_mute_local_tts", False)
+        self.cast_submenu_items = self._build_cast_submenu_items()
         state = "enabled" if self.cast_enabled else "disabled"
         self._set_status(f"Google Cast notifications {state}")
 
@@ -1923,6 +1941,12 @@ class BBSApp:
             self.cast_volume = 0.8
         self._persist_setting("cast_volume", self.cast_volume)
         self._set_status(f"Cast volume set to {int(self.cast_volume * 100)}%")
+
+    def _set_cast_mute_local_tts(self, val):
+        self.cast_mute_local_tts = (val == "ON")
+        self._persist_setting("cast_mute_local_tts", self.cast_mute_local_tts)
+        state = "muted" if self.cast_mute_local_tts else "unmuted"
+        self._set_status(f"Local TTS {state} (Cast only)")
 
     def _action_cast_scan(self):
         """Scan for Cast devices in a background thread."""
@@ -5277,6 +5301,8 @@ class BBSApp:
         self.xfer_start_time = time.time()
         self.agent_state = AgentState.DOWNLOADING
         self.typewriter_queue.clear()
+        self._typewriter_budget = 0.0
+        self._typewriter_last_ts = 0.0
         self.agent_first_output = False
         self.agent_last_activity = 0.0
         self._typewriter_line_color = None
@@ -5322,6 +5348,8 @@ class BBSApp:
         self.xfer_start_time = time.time()
         self.agent_state = AgentState.DOWNLOADING
         self.typewriter_queue.clear()
+        self._typewriter_budget = 0.0
+        self._typewriter_last_ts = 0.0
         self.agent_first_output = False
         self.agent_last_activity = 0.0
         self._typewriter_line_color = None
@@ -5562,9 +5590,12 @@ class BBSApp:
                 self.last_tts_summary = summary
                 self._save_response_to_history(summary)
                 stop_speaking()
-                speak_text(summary, on_done=lambda: self.ui_queue.put(
-                    ("status", "Ready for next prompt.", self.CP_STATUS)))
-                self.ui_queue.put(("status", "Speaking summary...", self.CP_STATUS))
+                mute_local = (self.cast_enabled and self.cast_mute_local_tts
+                              and self.cast_selected_devices)
+                if not mute_local:
+                    speak_text(summary, on_done=lambda: self.ui_queue.put(
+                        ("status", "Ready for next prompt.", self.CP_STATUS)))
+                    self.ui_queue.put(("status", "Speaking summary...", self.CP_STATUS))
 
                 # Cast to Google Cast / Nest speakers if enabled
                 if self.cast_enabled and self.cast_selected_devices:
@@ -5596,6 +5627,8 @@ class BBSApp:
         stop_speaking()
         self.agent_state = AgentState.IDLE
         self.typewriter_queue.clear()
+        self._typewriter_budget = 0.0
+        self._typewriter_last_ts = 0.0
         if proc:
             # Terminate in background to avoid blocking the UI thread
             def _reap():
@@ -5626,20 +5659,37 @@ class BBSApp:
     # ─── Typewriter effect ─────────────────────────────────────────
 
     def _process_typewriter(self):
-        """Process queued characters for the typewriter effect."""
+        """Process queued characters for the typewriter effect.
+
+        Uses a time-based budget so characters emit at a steady rate
+        (~_typewriter_chars_per_sec) regardless of how bursty the input
+        stream is.  This prevents the "long pause then dump" glitch.
+        """
         if not self.typewriter_queue:
+            self._typewriter_last_ts = 0.0
             return
 
+        now = time.monotonic()
+        if self._typewriter_last_ts == 0.0:
+            # First call with data — seed the timestamp, grant a small
+            # initial budget so the very first chars appear immediately.
+            self._typewriter_last_ts = now
+            self._typewriter_budget = 2.0
+        else:
+            elapsed = now - self._typewriter_last_ts
+            self._typewriter_last_ts = now
+            self._typewriter_budget += elapsed * self._typewriter_chars_per_sec
+            # Cap budget so a long idle period doesn't cause a huge dump
+            if self._typewriter_budget > 120:
+                self._typewriter_budget = 120
+
         right_width = self.stdscr.getmaxyx()[1] - self.stdscr.getmaxyx()[1] // 2
-
-        # Drain up to max_chars per frame for fast streaming
         chars_this_frame = 0
-        max_chars = 256
 
-        while self.typewriter_queue and chars_this_frame < max_chars:
+        while self.typewriter_queue and self._typewriter_budget >= 1.0:
             ch = self.typewriter_queue.popleft()
 
-            # Handle color-change sentinel tuples
+            # Handle color-change sentinel tuples (free — don't cost budget)
             if isinstance(ch, tuple) and ch[0] == "color":
                 self._typewriter_line_color = ch[1]  # None to reset
                 # Tag current last line with the new color
@@ -5654,6 +5704,7 @@ class BBSApp:
             if self._typewriter_line_color is not None:
                 for idx in range(prev_count, len(self.agent_pane.lines)):
                     self.agent_pane.line_colors[idx] = self._typewriter_line_color
+            self._typewriter_budget -= 1.0
             chars_this_frame += 1
 
     # ─── UI queue processing ───────────────────────────────────────
