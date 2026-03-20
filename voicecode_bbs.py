@@ -806,6 +806,9 @@ def _cast_tts_to_devices(text, device_names, ui_queue=None, volume=None):
         except Exception as e:
             if ui_queue:
                 ui_queue.put(("status", f"Cast error: {e}", 4))
+        else:
+            if ui_queue:
+                ui_queue.put(("status", "Cast complete.", 4))
         finally:
             if server:
                 server.shutdown()
@@ -1232,15 +1235,13 @@ class BBSApp:
         # Event queue for cross-thread UI updates
         self.ui_queue: queue.Queue = queue.Queue()
 
-        # Prompt library & save dir — from persisted settings or default
+        # Working directory & derived paths — from persisted settings
         saved = _load_settings()
-        self.prompt_library = saved.get(
-            "prompt_library", str(Path("~/prompts").expanduser()))
         self.tts_volume_gain = float(saved.get("tts_volume_gain", 1.0))
 
-        # Voicecode writes into a dedicated subfolder within the library
-        self.save_base = Path(self.prompt_library).expanduser() / "voicecode"
-        self.history_base = self.save_base / "history"
+        # Prompts and docs live under the working directory
+        self.working_dir = saved.get("working_dir", "")
+        self._update_working_dir_paths()
         self.history_prompts: list[Path] = []
         self.favorites_slots: list[str | None] = [None] * 10  # 10 numbered slots (keys 1-9, 0)
         self.browser_index: int = -1
@@ -1257,9 +1258,7 @@ class BBSApp:
         self._pending_fav_slot: int = -1  # slot index pending overwrite confirm
         self._pending_fav_path: str = ""  # path pending favorites assignment
 
-        # Working directory for folder slug mode
-        self.working_dir = saved.get("working_dir", "")
-        self.documents_dir = saved.get("documents_dir", "")
+        # (working_dir already set above via _update_working_dir_paths)
 
         # Help overlay state
         self.show_help_overlay = False
@@ -1338,7 +1337,7 @@ class BBSApp:
         global _tts_enabled
         _tts_enabled = self.tts_enabled
 
-        # Voice settings (mutable, persisted) — `saved` loaded above for prompt_library
+        # Voice settings (mutable, persisted)
         self.vad_threshold = saved.get("vad_threshold", VAD_THRESHOLD)
         self.silence_timeout = saved.get("silence_timeout", SILENCE_AFTER_SPEECH_SEC)
         self.min_speech_duration = saved.get("min_speech_duration", MIN_SPEECH_DURATION_SEC)
@@ -1410,34 +1409,14 @@ class BBSApp:
         self.settings_items = [
             {"type": "section", "label": "TOOLS & CONFIGURATION", "style": "yellow"},
             {
-                "key": "prompt_library",
-                "label": "Prompt Library",
-                "desc": "Path to prompt library (voicecode/ subfolder auto-created)",
-                "options": None,
-                "get": lambda: self.prompt_library,
-                "set": None,
-                "editable": True,
-                "action": self._start_editing_prompt_library,
-            },
-            {
                 "key": "working_dir",
                 "label": "Working Directory",
-                "desc": "Source repo root for folder shortcuts (Enter key)",
+                "desc": "Project root (prompts/ and docs/ subfolders auto-used)",
                 "options": None,
                 "get": lambda: self.working_dir or "(not set)",
                 "set": None,
                 "editable": True,
                 "action": self._start_editing_working_dir,
-            },
-            {
-                "key": "documents_dir",
-                "label": "Documents Directory",
-                "desc": "Root folder for markdown documents browser (Enter key)",
-                "options": None,
-                "get": lambda: self.documents_dir or "(not set)",
-                "set": None,
-                "editable": True,
-                "action": self._start_editing_documents_dir,
             },
             {
                 "key": "_action_voice_submenu",
@@ -2106,27 +2085,7 @@ class BBSApp:
         else:
             self._set_status(f"No unused voice files to delete.")
 
-    def _start_editing_prompt_library(self):
-        """Enter inline text editing mode for the prompt library path."""
-        self.settings_editing_text = True
-        self.settings_edit_buffer = self.prompt_library
-        self.settings_edit_cursor = len(self.settings_edit_buffer)
-        self.show_settings_overlay = True  # keep modal open
-
-    def _commit_prompt_library(self):
-        """Apply the edited prompt library path."""
-        new_path = self.settings_edit_buffer.strip()
-        if not new_path:
-            new_path = str(Path("~/prompts").expanduser())
-        self.prompt_library = new_path
-        self.save_base = Path(new_path).expanduser() / "voicecode"
-        self.history_base = self.save_base / "history"
-        self._persist_setting("prompt_library", new_path)
-        self._scan_history_prompts()
-        self.settings_editing_text = False
-        self._set_status(f"Prompt library → {new_path}/voicecode/")
-
-    def _cancel_text_edit(self):
+def _cancel_text_edit(self):
         """Cancel inline text editing."""
         self.settings_editing_text = False
 
@@ -2135,12 +2094,8 @@ class BBSApp:
         item = self._settings_selectable_item()
         if not item:
             return
-        if item["key"] == "prompt_library":
-            self._commit_prompt_library()
-        elif item["key"] == "working_dir":
+        if item["key"] == "working_dir":
             self._commit_working_dir()
-        elif item["key"] == "documents_dir":
-            self._commit_documents_dir()
         elif item["key"] == "gemini_command":
             self._commit_gemini_command()
         elif item["key"] == "_action_cast_broadcast_test":
@@ -2153,34 +2108,29 @@ class BBSApp:
         self.settings_edit_cursor = len(self.settings_edit_buffer)
         self.show_settings_overlay = True
 
+    def _update_working_dir_paths(self):
+        """Derive prompts/docs paths from working_dir."""
+        if self.working_dir:
+            wd = Path(self.working_dir).expanduser()
+            self.save_base = wd / "prompts"
+            self.history_base = self.save_base / "history"
+        else:
+            default = Path("~/prompts").expanduser()
+            self.save_base = default / "voicecode"
+            self.history_base = self.save_base / "history"
+
     def _commit_working_dir(self):
         """Apply the edited working directory path."""
         new_path = self.settings_edit_buffer.strip()
         self.working_dir = new_path
+        self._update_working_dir_paths()
         self._persist_setting("working_dir", new_path)
+        self._scan_history_prompts()
         self.settings_editing_text = False
         if new_path:
             self._set_status(f"Working directory → {new_path}")
         else:
             self._set_status("Working directory cleared.")
-
-    def _start_editing_documents_dir(self):
-        """Enter inline text editing mode for the documents directory path."""
-        self.settings_editing_text = True
-        self.settings_edit_buffer = self.documents_dir
-        self.settings_edit_cursor = len(self.settings_edit_buffer)
-        self.show_settings_overlay = True
-
-    def _commit_documents_dir(self):
-        """Apply the edited documents directory path."""
-        new_path = self.settings_edit_buffer.strip()
-        self.documents_dir = new_path
-        self._persist_setting("documents_dir", new_path)
-        self.settings_editing_text = False
-        if new_path:
-            self._set_status(f"Documents directory → {new_path}")
-        else:
-            self._set_status("Documents directory cleared.")
 
     def _start_editing_gemini_command(self):
         """Enter inline text editing mode for the gemini command string."""
@@ -3454,17 +3404,19 @@ class BBSApp:
                 pass
         self._browser_cat_lists[1] = dirs
 
-        # Category 2: Documents (.md files recursive)
+        # Category 2: Documents (.md files recursive from {working_dir}/docs/)
         docs: list[str] = []
-        doc_root = Path(self.documents_dir).expanduser() if self.documents_dir else None
-        if doc_root and doc_root.is_dir():
-            try:
-                md_files = [f for f in doc_root.rglob("*.md")
-                            if not any(p.startswith(".") for p in f.relative_to(doc_root).parts)]
-                for md_file in sorted(md_files, key=lambda f: f.stat().st_mtime, reverse=True):
-                    docs.append(str(md_file.relative_to(doc_root)))
-            except (PermissionError, OSError):
-                pass
+        if self.working_dir:
+            doc_root = Path(self.working_dir).expanduser() / "docs"
+            wd_root = Path(self.working_dir).expanduser()
+            if doc_root.is_dir():
+                try:
+                    md_files = [f for f in doc_root.rglob("*.md")
+                                if not any(p.startswith(".") for p in f.relative_to(doc_root).parts)]
+                    for md_file in sorted(md_files, key=lambda f: f.stat().st_mtime, reverse=True):
+                        docs.append(str(md_file.relative_to(wd_root)))
+                except (PermissionError, OSError):
+                    pass
         self._browser_cat_lists[2] = docs
 
         # Flat list is the active category's list (for cursor/scroll compat)
@@ -3539,15 +3491,16 @@ class BBSApp:
 
             # List rows
             # Show hint when Documents tab is active but not configured
-            show_not_configured = (cat == 2 and not self.documents_dir
+            show_not_configured = (cat == 2 and not self.working_dir
                                    and not self.folder_slug_list)
             if show_not_configured:
                 hint_lines = [
                     "",
-                    "Documents directory not configured.",
+                    "Working directory not configured.",
                     "",
                     "Press O to open Options and set",
-                    "the Documents Directory path.",
+                    "the Working Directory path.",
+                    "Docs are read from docs/ subfolder.",
                 ]
                 hint_attr = curses.color_pair(self.CP_XTREE_BORDER)
                 for i in range(inner_h):
@@ -4665,8 +4618,7 @@ class BBSApp:
             # Tab opens shortcuts browser (allowed during recording for injection)
             if (not self.refining
                     and self.agent_state in (AgentState.IDLE, AgentState.DONE)
-                    and (self.working_dir or self._shortcut_strings
-                         or self.documents_dir)):
+                    and (self.working_dir or self._shortcut_strings)):
                 self._scan_folder_slugs()
                 # Pick first non-empty category, or stay on current
                 has_any = any(self._browser_cat_lists)
@@ -4683,8 +4635,7 @@ class BBSApp:
                     self.folder_slug_scroll = 0
                 else:
                     self._set_status("No shortcuts, folders, or documents found.")
-            elif (not self.working_dir and not self._shortcut_strings
-                  and not self.documents_dir):
+            elif (not self.working_dir and not self._shortcut_strings):
                 self._set_status("Set working directory or add shortcuts in ESC → Options.")
 
         elif ch == ord("h") or ch == ord("H"):
