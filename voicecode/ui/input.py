@@ -4,6 +4,7 @@ import curses
 import datetime
 import json
 import textwrap
+from pathlib import Path
 
 from voicecode.constants import AgentState, SAMPLE_RATE
 from voicecode.ui.colors import CP_STATUS, CP_VOICE
@@ -63,6 +64,24 @@ class InputHandler:
             c = app.shortcut_edit_cursor_pos
             app.shortcut_edit_buffer = b[:c] + flat + b[c:]
             app.shortcut_edit_cursor_pos += len(flat)
+            app.set_status("Pasted into editor")
+            return
+        if app.doc_edit_mode:
+            row = app.doc_edit_cursor_row
+            col = app.doc_edit_cursor_col
+            line = app.doc_edit_lines[row]
+            paste_lines = text.splitlines() or [""]
+            if len(paste_lines) == 1:
+                app.doc_edit_lines[row] = line[:col] + paste_lines[0] + line[col:]
+                app.doc_edit_cursor_col = col + len(paste_lines[0])
+            else:
+                after = line[col:]
+                app.doc_edit_lines[row] = line[:col] + paste_lines[0]
+                for i, pl in enumerate(paste_lines[1:], 1):
+                    app.doc_edit_lines.insert(row + i, pl)
+                app.doc_edit_lines[row + len(paste_lines) - 1] += after
+                app.doc_edit_cursor_row = row + len(paste_lines) - 1
+                app.doc_edit_cursor_col = len(paste_lines[-1])
             app.set_status("Pasted into editor")
             return
         if app.typing_mode:
@@ -223,6 +242,203 @@ class InputHandler:
                 app.show_escape_menu = False
             return
 
+        # Handle document reader overlay
+        if app.show_doc_reader:
+            # ── Save confirmation dialog ──
+            if app.doc_edit_save_confirm:
+                if ch in (ord("y"), ord("Y")):
+                    # Save changes
+                    try:
+                        content = "\n".join(app.doc_edit_lines)
+                        Path(app.doc_reader_path).write_text(content, encoding="utf-8")
+                        app.set_status(f"Saved: {app.doc_reader_title}")
+                        # Update reader lines to match saved content
+                        app.doc_reader_lines = list(app.doc_edit_lines)
+                    except OSError as e:
+                        app.set_status(f"Save failed: {e}")
+                    app.doc_edit_save_confirm = False
+                    app.doc_edit_mode = False
+                elif ch in (ord("n"), ord("N")):
+                    # Discard changes, return to viewer
+                    app.doc_edit_save_confirm = False
+                    app.doc_edit_mode = False
+                    app.set_status("Changes discarded.")
+                elif ch == 27:
+                    # Cancel the dialog, stay in edit mode
+                    app.doc_edit_save_confirm = False
+                return
+
+            # ── Edit mode ──
+            if app.doc_edit_mode:
+                if ch == 27:
+                    # ESC — check for CSI sequence, then prompt save
+                    app.stdscr.nodelay(True)
+                    next_ch = app.stdscr.getch()
+                    if next_ch == 91:  # '[' — CSI sequence
+                        csi = []
+                        while True:
+                            c = app.stdscr.getch()
+                            if c == -1:
+                                break
+                            csi.append(c)
+                            if 64 <= c <= 126:
+                                break
+                        if csi == [50, 48, 48, 126]:  # bracketed paste
+                            pasted = self.read_paste_content()
+                            # Insert pasted text at cursor
+                            row = app.doc_edit_cursor_row
+                            col = app.doc_edit_cursor_col
+                            line = app.doc_edit_lines[row]
+                            paste_lines = pasted.splitlines() or [""]
+                            if len(paste_lines) == 1:
+                                app.doc_edit_lines[row] = line[:col] + paste_lines[0] + line[col:]
+                                app.doc_edit_cursor_col = col + len(paste_lines[0])
+                            else:
+                                after = line[col:]
+                                app.doc_edit_lines[row] = line[:col] + paste_lines[0]
+                                for i, pl in enumerate(paste_lines[1:], 1):
+                                    app.doc_edit_lines.insert(row + i, pl)
+                                app.doc_edit_lines[row + len(paste_lines) - 1] += after
+                                app.doc_edit_cursor_row = row + len(paste_lines) - 1
+                                app.doc_edit_cursor_col = len(paste_lines[-1])
+                            app.set_status("Pasted into editor")
+                    else:
+                        # Plain ESC — prompt to save
+                        app.doc_edit_save_confirm = True
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    # Enter — insert new line
+                    row = app.doc_edit_cursor_row
+                    col = app.doc_edit_cursor_col
+                    line = app.doc_edit_lines[row]
+                    app.doc_edit_lines[row] = line[:col]
+                    app.doc_edit_lines.insert(row + 1, line[col:])
+                    app.doc_edit_cursor_row += 1
+                    app.doc_edit_cursor_col = 0
+                elif ch == curses.KEY_UP:
+                    if app.doc_edit_cursor_row > 0:
+                        app.doc_edit_cursor_row -= 1
+                        app.doc_edit_cursor_col = min(app.doc_edit_cursor_col, len(app.doc_edit_lines[app.doc_edit_cursor_row]))
+                elif ch == curses.KEY_DOWN:
+                    if app.doc_edit_cursor_row < len(app.doc_edit_lines) - 1:
+                        app.doc_edit_cursor_row += 1
+                        app.doc_edit_cursor_col = min(app.doc_edit_cursor_col, len(app.doc_edit_lines[app.doc_edit_cursor_row]))
+                elif ch == curses.KEY_LEFT:
+                    if app.doc_edit_cursor_col > 0:
+                        app.doc_edit_cursor_col -= 1
+                    elif app.doc_edit_cursor_row > 0:
+                        app.doc_edit_cursor_row -= 1
+                        app.doc_edit_cursor_col = len(app.doc_edit_lines[app.doc_edit_cursor_row])
+                elif ch == curses.KEY_RIGHT:
+                    line = app.doc_edit_lines[app.doc_edit_cursor_row]
+                    if app.doc_edit_cursor_col < len(line):
+                        app.doc_edit_cursor_col += 1
+                    elif app.doc_edit_cursor_row < len(app.doc_edit_lines) - 1:
+                        app.doc_edit_cursor_row += 1
+                        app.doc_edit_cursor_col = 0
+                elif ch == curses.KEY_HOME:
+                    app.doc_edit_cursor_col = 0
+                elif ch == curses.KEY_END:
+                    app.doc_edit_cursor_col = len(app.doc_edit_lines[app.doc_edit_cursor_row])
+                elif ch == curses.KEY_PPAGE:  # Page Up
+                    page = max(1, app.stdscr.getmaxyx()[0] - 8)
+                    app.doc_edit_cursor_row = max(0, app.doc_edit_cursor_row - page)
+                    app.doc_edit_cursor_col = min(app.doc_edit_cursor_col, len(app.doc_edit_lines[app.doc_edit_cursor_row]))
+                elif ch == curses.KEY_NPAGE:  # Page Down
+                    page = max(1, app.stdscr.getmaxyx()[0] - 8)
+                    app.doc_edit_cursor_row = min(len(app.doc_edit_lines) - 1, app.doc_edit_cursor_row + page)
+                    app.doc_edit_cursor_col = min(app.doc_edit_cursor_col, len(app.doc_edit_lines[app.doc_edit_cursor_row]))
+                elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                    row = app.doc_edit_cursor_row
+                    col = app.doc_edit_cursor_col
+                    if col > 0:
+                        line = app.doc_edit_lines[row]
+                        app.doc_edit_lines[row] = line[:col - 1] + line[col:]
+                        app.doc_edit_cursor_col -= 1
+                    elif row > 0:
+                        # Merge with previous line
+                        prev_len = len(app.doc_edit_lines[row - 1])
+                        app.doc_edit_lines[row - 1] += app.doc_edit_lines[row]
+                        app.doc_edit_lines.pop(row)
+                        app.doc_edit_cursor_row -= 1
+                        app.doc_edit_cursor_col = prev_len
+                elif ch in (curses.KEY_DC, 330):  # Delete
+                    row = app.doc_edit_cursor_row
+                    col = app.doc_edit_cursor_col
+                    line = app.doc_edit_lines[row]
+                    if col < len(line):
+                        app.doc_edit_lines[row] = line[:col] + line[col + 1:]
+                    elif row < len(app.doc_edit_lines) - 1:
+                        # Merge next line into current
+                        app.doc_edit_lines[row] += app.doc_edit_lines[row + 1]
+                        app.doc_edit_lines.pop(row + 1)
+                elif ch == 9:  # Tab — insert spaces
+                    row = app.doc_edit_cursor_row
+                    col = app.doc_edit_cursor_col
+                    line = app.doc_edit_lines[row]
+                    app.doc_edit_lines[row] = line[:col] + "    " + line[col:]
+                    app.doc_edit_cursor_col += 4
+                elif 32 <= ch <= 126:
+                    row = app.doc_edit_cursor_row
+                    col = app.doc_edit_cursor_col
+                    line = app.doc_edit_lines[row]
+                    app.doc_edit_lines[row] = line[:col] + chr(ch) + line[col:]
+                    app.doc_edit_cursor_col += 1
+                return
+
+            # ── View mode (read-only) ──
+            if ch in (27,):
+                app.show_doc_reader = False
+                app.doc_edit_mode = False
+                app.stdscr.nodelay(True)
+                app.stdscr.getch()
+            elif ch in (10, 13, curses.KEY_ENTER):
+                # Enter — switch to edit mode
+                app.doc_edit_mode = True
+                app.doc_edit_lines = list(app.doc_reader_lines) or [""]
+                app.doc_edit_cursor_row = 0
+                app.doc_edit_cursor_col = 0
+                app.doc_edit_scroll = 0
+                app.doc_edit_save_confirm = False
+                app.set_status("Edit mode — ESC to save/discard")
+            elif ch in (ord("q"), ord("Q")):
+                app.show_doc_reader = False
+            elif ch == curses.KEY_UP:
+                app.doc_reader_scroll = max(0, app.doc_reader_scroll - 1)
+            elif ch == curses.KEY_DOWN:
+                app.doc_reader_scroll += 1  # clamped at draw time
+            elif ch == curses.KEY_PPAGE:  # Page Up
+                h = app.stdscr.getmaxyx()[0]
+                page = max(1, h - 8)
+                app.doc_reader_scroll = max(0, app.doc_reader_scroll - page)
+            elif ch == curses.KEY_NPAGE:  # Page Down
+                h = app.stdscr.getmaxyx()[0]
+                page = max(1, h - 8)
+                app.doc_reader_scroll += page  # clamped at draw time
+            elif ch == curses.KEY_HOME:
+                app.doc_reader_scroll = 0
+            elif ch == curses.KEY_END:
+                app.doc_reader_scroll = len(app.doc_reader_lines) * 2  # clamped at draw time
+            elif ch in (curses.KEY_IC, 331):  # Insert — inject doc path into dictation
+                slug = app.doc_reader_title
+                if app.recording:
+                    with app.audio_lock:
+                        audio_secs = (sum(len(f) for f in app.audio_frames)
+                                      / SAMPLE_RATE) if app.audio_frames else 0.0
+                    app._recording_injections.append((audio_secs, slug))
+                    preview = app._live_preview_text
+                    combined = f"{preview} {slug}" if preview else slug
+                    app.ui_queue.put(("live_preview", combined))
+                    app.set_status(f"Injected: {slug}")
+                else:
+                    left_width = app.stdscr.getmaxyx()[1] * 2 // 5
+                    app.fragments.append(slug)
+                    self.persist_buffer()
+                    ts = datetime.datetime.now().strftime("%H:%M:%S")
+                    app.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
+                    app.set_status(f"Inserted: {slug}")
+                app.show_doc_reader = False
+            return
+
         # Handle folder slug overlay
         if app.show_folder_slug:
             if ch == curses.KEY_UP:
@@ -247,7 +463,7 @@ class InputHandler:
                 app.folder_slug_cursor = 0
                 app.folder_slug_scroll = 0
                 return
-            elif ch in (10, 13, curses.KEY_ENTER):
+            elif ch in (curses.KEY_IC, 331):  # Insert key — inject string
                 if app.folder_slug_list:
                     slug = app.folder_slug_list[app.folder_slug_cursor]
                     if app.recording:
@@ -269,6 +485,17 @@ class InputHandler:
                         ts = datetime.datetime.now().strftime("%H:%M:%S")
                         app.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
                         app.set_status(f"Inserted: {slug}")
+                return
+            elif ch in (10, 13, curses.KEY_ENTER):
+                # Enter on Documents tab opens the document reader
+                if app._browser_category == 2 and app.folder_slug_list:
+                    from pathlib import Path
+                    rel_path = app.folder_slug_list[app.folder_slug_cursor]
+                    full_path = Path(app.working_dir).expanduser() / rel_path
+                    if full_path.is_file():
+                        app.overlays.open_doc_reader(str(full_path), rel_path)
+                else:
+                    app.set_status("Enter opens documents. Use Insert to inject strings.")
                 return
             elif ch in (ord("e"), ord("E")):
                 # Only allow editing in the Shortcuts category
@@ -382,6 +609,10 @@ class InputHandler:
                 app.publish_overlay.cursor_move(-1)
             elif ch == curses.KEY_DOWN:
                 app.publish_overlay.cursor_move(1)
+            elif ch == curses.KEY_PPAGE:
+                app.publish_overlay.info_scroll(-1)
+            elif ch == curses.KEY_NPAGE:
+                app.publish_overlay.info_scroll(1)
             elif ch in (10, 13, curses.KEY_ENTER):
                 app.publish_overlay.select()
             elif ch == 27:

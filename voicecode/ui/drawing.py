@@ -310,15 +310,6 @@ class DrawingHelper:
                 except curses.error:
                     pass
 
-        # -- Publish hint on prompt pane top border (purple P, right side before arrow) --
-        p_hint = " [P]ublish "
-        p_attr = curses.color_pair(CP_PUBLISH) | curses.A_BOLD
-        p_x = arrow_x - len(p_hint)
-        if p_x > 4:
-            try:
-                app.stdscr.addstr(content_y, p_x, p_hint, p_attr)
-            except curses.error:
-                pass
 
         # -- Favorites hint on prompt pane top border (drawn after arrow to take priority) --
         if app.browser_index >= 0:
@@ -427,6 +418,8 @@ class DrawingHelper:
             app.overlays.draw_shortcut_editor()
         if app.show_publish_overlay:
             app.publish_overlay.draw()
+        if app.show_doc_reader:
+            app.overlays.draw_doc_reader()
         if app.show_escape_menu:
             app.overlays.draw_escape_menu()
 

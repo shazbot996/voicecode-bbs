@@ -156,7 +156,8 @@ The DRE model is also why VoiceCode is a retro CLI and not a web app. Everything
 | `O` | Settings / voice configuration |
 | `W` | New session (clear conversation context) |
 | `K` | Kill running agent |
-| `P` | Replay TTS summary |
+| `P` | Publish document (open publish overlay) |
+| `Y` | Replay TTS summary |
 | `H` | Help overlay |
 | `A` | About / title screen |
 | `X` | Restart application |
@@ -241,6 +242,33 @@ Enable via **O** (options) → **Google Cast Notifications**:
 
 When enabled, every TTS summary is generated as a WAV file and streamed to all selected Cast devices simultaneously.
 
+
+### Publish Documents
+
+Press **P** to open the Publish overlay — a two-step modal that generates structured documentation from your codebase using specialized AI agents.
+
+**Step 1 — Pick a document type:**
+
+| Type | Purpose |
+|------|---------|
+| **ARCH** | High-level architecture overview — components, boundaries, data flow, and deployment topology |
+| **PLAN** | Time-boxed implementation plan — scope, milestones, task breakdown, and dependencies |
+| **SPEC** | Detailed feature specification — requirements, API contracts, edge cases, and acceptance criteria |
+
+Additional types (BRIEF, SCHEMA, ADR, CONVENTIONS, CONSTRAINTS, GLOSSARY, RUNBOOK, WORKFLOW, CHANGELOG, README) are planned but not yet implemented.
+
+**Step 2 — Pick a destination folder** within `docs/`:
+
+```
+docs/
+  context/          — what the agent reads every session
+  decisions/        — ADRs, numbered sequentially
+  plans/            — active and archived plans
+  specs/            — feature specs
+  runbooks/         — operational docs
+```
+
+The publish agent uses your current prompt as its scope (what to focus on), builds a specialized system prompt for the selected document type, and sends it through the normal agent execution pipeline. The result is a well-structured markdown file written to your chosen `docs/` subfolder.
 
 ### Configuration
 

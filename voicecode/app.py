@@ -67,10 +67,16 @@ class BBSApp:
             "╚══════════════════════════════════════╝",
             "",
             "  [SPACE] Record   [R] Refine   [D] Direct execute",
-            "  [END] Clear working prompt & buffer",
+            "  [P] Publish   [END] Clear prompt & buffer",
             "",
             "  ←→ to browse history  ↑↓ scroll",
             "  [F] favorites  1-0 load favorites",
+            "",
+            "  Publish processes your prompt through",
+            "  purpose-built agents to create polished",
+            "  documents ready for sharing, export, or",
+            "  further agent processing by referencing",
+            "  directly.",
         ]
         self.dictation_pane.welcome_art = [
             "╔══════════════════════════════════════╗",
@@ -110,6 +116,7 @@ class BBSApp:
             "  R     ··· Refine into prompt",
             "  E     ··· Execute prompt",
             "  D     ··· Direct execute",
+            "  P     ··· Publish document",
             "  F     ··· Favorites (toggle / add)",
             "  W     ··· New session (clear context)",
             "  O     ··· Options / Settings",
@@ -189,6 +196,20 @@ class BBSApp:
         self._browser_category = 0
         self._browser_categories = ["Shortcuts", "Project Folders", "Documents"]
         self._browser_cat_lists: list[list[str]] = [[], [], []]
+
+        # Document reader overlay state
+        self.show_doc_reader = False
+        self.doc_reader_path = ""
+        self.doc_reader_title = ""
+        self.doc_reader_lines: list[str] = []
+        self.doc_reader_scroll = 0
+        # Document editor state (edit mode within reader)
+        self.doc_edit_mode = False
+        self.doc_edit_lines: list[str] = []
+        self.doc_edit_cursor_row = 0
+        self.doc_edit_cursor_col = 0
+        self.doc_edit_scroll = 0
+        self.doc_edit_save_confirm = False
 
         # Shortcut editor overlay state
         self.show_shortcut_editor = False

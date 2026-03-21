@@ -1,6 +1,7 @@
-"""Overlay renderers for help, about, escape menu, shortcuts browser, and shortcut editor."""
+"""Overlay renderers for help, about, escape menu, shortcuts browser, shortcut editor, and document reader."""
 
 import curses
+import textwrap
 from pathlib import Path
 
 from version import __version__
@@ -8,6 +9,7 @@ from voicecode.ui.colors import (
     CP_AGENT,
     CP_HEADER,
     CP_HELP,
+    CP_PROMPT,
     CP_RECORDING,
     CP_VOICE,
     CP_XTREE_BG,
@@ -60,6 +62,7 @@ class OverlayRenderer:
             "  R      Refine fragments → prompt",
             "  E      Execute current prompt",
             "  D      Direct execute (skip refine)",
+            "  P      Publish document",
             "  F      Toggle favorites / add to fav",
             "  1-0    Quick-load favorites 1-10",
             "  N      New prompt",
@@ -419,8 +422,13 @@ class OverlayRenderer:
                         app.stdscr.addnstr(row_y, overlay_x, blank, overlay_w, bg_attr)
 
             # Footer
-            edit_hint = "  E Edit" if cat == 0 else ""
-            footer_text = f" ←→ Tab  ↑↓ Select  Enter Insert{edit_hint}  Tab/Esc Close "
+            if cat == 0:
+                extra_hint = "  E Edit"
+            elif cat == 2:
+                extra_hint = "  Enter View"
+            else:
+                extra_hint = ""
+            footer_text = f" ←→ Tab  ↑↓ Select  Ins Inject{extra_hint}  Tab/Esc Close "
             footer_padded = footer_text.center(inner_w)
             footer_line = "║" + footer_padded[:inner_w] + "║"
             app.stdscr.addnstr(overlay_y + overlay_h - 2, overlay_x,
@@ -565,5 +573,253 @@ class OverlayRenderer:
             bottom = "╚" + "═" * inner_w + "╝"
             app.stdscr.addnstr(start_y + overlay_h - 1, start_x, bottom,
                                overlay_w, border_attr)
+        except curses.error:
+            pass
+
+    # ─── Document Reader ──────────────────────────────────────────
+
+    def open_doc_reader(self, full_path: str, display_title: str):
+        """Open the document reader overlay for the given file."""
+        app = self.app
+        app.doc_reader_path = full_path
+        app.doc_reader_title = display_title
+        app.doc_reader_scroll = 0
+        try:
+            content = Path(full_path).read_text(encoding="utf-8")
+        except Exception as e:
+            content = f"[Error reading file: {e}]"
+        # Pre-wrap lines will happen at draw time based on available width
+        app.doc_reader_lines = content.splitlines()
+        app.show_doc_reader = True
+
+    def draw_doc_reader(self):
+        """Draw a near-full-screen markdown document reader/editor overlay."""
+        app = self.app
+        h, w = app.stdscr.getmaxyx()
+
+        # Near full-screen with margins
+        margin_x = 2
+        margin_top = 2
+        margin_bot = 2
+        box_x = margin_x
+        box_y = margin_top
+        box_w = w - margin_x * 2
+        box_h = h - margin_top - margin_bot
+
+        if box_w < 40 or box_h < 10:
+            return
+
+        border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
+        title_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
+        body_attr = curses.color_pair(CP_PROMPT) | curses.A_BOLD
+        heading_attr = curses.color_pair(CP_AGENT) | curses.A_BOLD
+        dim_attr = curses.color_pair(CP_HELP)
+
+        inner_w = box_w - 2
+        content_w = inner_w - 2  # 1 char padding each side
+        visible_h = box_h - 4  # top border + title + sep + bottom border
+
+        if app.doc_edit_mode:
+            self._draw_doc_editor(app, box_x, box_y, box_w, box_h, inner_w, content_w,
+                                  visible_h, border_attr, title_attr, body_attr,
+                                  heading_attr, dim_attr)
+        else:
+            self._draw_doc_viewer(app, box_x, box_y, box_w, box_h, inner_w, content_w,
+                                  visible_h, border_attr, title_attr, body_attr,
+                                  heading_attr, dim_attr)
+
+    def _draw_doc_viewer(self, app, box_x, box_y, box_w, box_h, inner_w, content_w,
+                         visible_h, border_attr, title_attr, body_attr, heading_attr, dim_attr):
+        """Draw read-only document viewer."""
+        # Word-wrap source lines to fit content width
+        wrapped: list[tuple[str, int]] = []  # (line_text, style: 0=normal, 1=heading, 2=dim)
+        for raw_line in app.doc_reader_lines:
+            stripped = raw_line.rstrip()
+            if stripped.startswith("#"):
+                for wl in textwrap.wrap(stripped, width=content_w) or [stripped]:
+                    wrapped.append((wl, 1))
+            elif stripped.startswith("---") or stripped.startswith("```"):
+                wrapped.append((stripped[:content_w], 2))
+            elif stripped == "":
+                wrapped.append(("", 0))
+            else:
+                for wl in textwrap.wrap(stripped, width=content_w) or [stripped]:
+                    wrapped.append((wl, 0))
+
+        max_scroll = max(0, len(wrapped) - visible_h)
+        app.doc_reader_scroll = max(0, min(app.doc_reader_scroll, max_scroll))
+
+        try:
+            # Top border
+            top = "╔" + "═" * inner_w + "╗"
+            app.stdscr.addnstr(box_y, box_x, top, box_w, border_attr)
+
+            # Title bar
+            title = f" {app.doc_reader_title} "
+            if len(title) > inner_w - 4:
+                title = title[:inner_w - 7] + "… "
+            title_line = "║" + title.center(inner_w) + "║"
+            app.stdscr.addnstr(box_y + 1, box_x, title_line, box_w, title_attr)
+
+            # Separator
+            sep = "╠" + "═" * inner_w + "╣"
+            app.stdscr.addnstr(box_y + 2, box_x, sep, box_w, border_attr)
+
+            # Content lines
+            for i in range(visible_h):
+                row_y = box_y + 3 + i
+                line_idx = app.doc_reader_scroll + i
+                if line_idx < len(wrapped):
+                    text, style = wrapped[line_idx]
+                    if style == 1:
+                        attr = heading_attr
+                    elif style == 2:
+                        attr = dim_attr
+                    else:
+                        attr = body_attr
+                    padded = " " + text + " " * max(0, inner_w - 1 - len(text))
+                    line = "║" + padded[:inner_w] + "║"
+                    app.stdscr.addnstr(row_y, box_x, line, box_w, attr)
+                else:
+                    blank = "║" + " " * inner_w + "║"
+                    app.stdscr.addnstr(row_y, box_x, blank, box_w, body_attr)
+
+            # Bottom border with scroll info and help
+            pct = int(app.doc_reader_scroll / max_scroll * 100) if max_scroll > 0 else 100
+            scroll_info = f" {pct}% "
+            help_text = " [↑↓/PgUp/PgDn]Scroll [Enter]Edit [Ins]Inject [ESC/Q]Close "
+            border_bot = "╚" + "═" * inner_w + "╝"
+            app.stdscr.addnstr(box_y + box_h - 1, box_x, border_bot, box_w, border_attr)
+            app.stdscr.addstr(box_y + box_h - 1, box_x + 2, scroll_info, border_attr)
+            hx = box_x + box_w - len(help_text) - 2
+            if hx > box_x + len(scroll_info) + 4:
+                app.stdscr.addstr(box_y + box_h - 1, hx, help_text, border_attr)
+
+            # Scroll indicator bar on right border
+            if max_scroll > 0 and visible_h > 2:
+                pos = app.doc_reader_scroll / max_scroll
+                indicator_y = box_y + 3 + int(pos * (visible_h - 1))
+                app.stdscr.addstr(indicator_y, box_x + box_w - 1, "█", border_attr)
+
+        except curses.error:
+            pass
+
+    def _draw_doc_editor(self, app, box_x, box_y, box_w, box_h, inner_w, content_w,
+                         visible_h, border_attr, title_attr, body_attr, heading_attr, dim_attr):
+        """Draw editable document editor with cursor."""
+        edit_border = curses.color_pair(CP_RECORDING) | curses.A_BOLD
+        lines = app.doc_edit_lines
+        total_lines = len(lines)
+
+        # Auto-scroll to keep cursor visible
+        if app.doc_edit_cursor_row < app.doc_edit_scroll:
+            app.doc_edit_scroll = app.doc_edit_cursor_row
+        elif app.doc_edit_cursor_row >= app.doc_edit_scroll + visible_h:
+            app.doc_edit_scroll = app.doc_edit_cursor_row - visible_h + 1
+        app.doc_edit_scroll = max(0, min(app.doc_edit_scroll, max(0, total_lines - visible_h)))
+
+        try:
+            # Top border (red in edit mode)
+            top = "╔" + "═" * inner_w + "╗"
+            app.stdscr.addnstr(box_y, box_x, top, box_w, edit_border)
+
+            # Title bar — show EDIT indicator
+            title = f" EDITING: {app.doc_reader_title} "
+            if len(title) > inner_w - 4:
+                title = title[:inner_w - 7] + "… "
+            title_line = "║" + title.center(inner_w) + "║"
+            app.stdscr.addnstr(box_y + 1, box_x, title_line, box_w, edit_border)
+
+            # Separator
+            sep = "╠" + "═" * inner_w + "╣"
+            app.stdscr.addnstr(box_y + 2, box_x, sep, box_w, edit_border)
+
+            # Content lines with cursor
+            for i in range(visible_h):
+                row_y = box_y + 3 + i
+                line_idx = app.doc_edit_scroll + i
+
+                # Left border
+                app.stdscr.addstr(row_y, box_x, "║", edit_border)
+
+                if line_idx < total_lines:
+                    raw = lines[line_idx]
+                    # Determine style based on content
+                    stripped = raw.rstrip()
+                    if stripped.startswith("#"):
+                        attr = heading_attr
+                    elif stripped.startswith("---") or stripped.startswith("```"):
+                        attr = dim_attr
+                    else:
+                        attr = body_attr
+
+                    # Truncate/pad for display (1 char left pad)
+                    display = raw[:content_w]
+                    padded = " " + display + " " * max(0, content_w - len(display)) + " "
+                    app.stdscr.addnstr(row_y, box_x + 1, padded[:inner_w], inner_w, attr)
+
+                    # Draw cursor if on this line
+                    if line_idx == app.doc_edit_cursor_row:
+                        cursor_screen_col = box_x + 2 + app.doc_edit_cursor_col
+                        if cursor_screen_col < box_x + box_w - 1:
+                            char_under = raw[app.doc_edit_cursor_col] if app.doc_edit_cursor_col < len(raw) else " "
+                            app.stdscr.addstr(row_y, cursor_screen_col, char_under,
+                                              curses.A_REVERSE | curses.A_BOLD)
+                else:
+                    blank = " " * inner_w
+                    app.stdscr.addnstr(row_y, box_x + 1, blank, inner_w, body_attr)
+
+                # Right border
+                app.stdscr.addstr(row_y, box_x + box_w - 1, "║", edit_border)
+
+            # Bottom border
+            line_info = f" Ln {app.doc_edit_cursor_row + 1}/{total_lines} Col {app.doc_edit_cursor_col + 1} "
+            help_text = " [ESC]Save/Discard "
+            border_bot = "╚" + "═" * inner_w + "╝"
+            app.stdscr.addnstr(box_y + box_h - 1, box_x, border_bot, box_w, edit_border)
+            app.stdscr.addstr(box_y + box_h - 1, box_x + 2, line_info, edit_border)
+            hx = box_x + box_w - len(help_text) - 2
+            if hx > box_x + len(line_info) + 4:
+                app.stdscr.addstr(box_y + box_h - 1, hx, help_text, edit_border)
+
+            # Scroll indicator
+            max_scroll = max(0, total_lines - visible_h)
+            if max_scroll > 0 and visible_h > 2:
+                pos = app.doc_edit_scroll / max_scroll
+                indicator_y = box_y + 3 + int(pos * (visible_h - 1))
+                app.stdscr.addstr(indicator_y, box_x + box_w - 1, "█", edit_border)
+
+            # Save confirmation dialog
+            if app.doc_edit_save_confirm:
+                self._draw_save_confirm(app, box_x, box_y, box_w, box_h)
+
+        except curses.error:
+            pass
+
+    def _draw_save_confirm(self, app, box_x, box_y, box_w, box_h):
+        """Draw the save/discard confirmation dialog centered on the editor."""
+        dialog_w = 42
+        dialog_h = 5
+        dx = box_x + (box_w - dialog_w) // 2
+        dy = box_y + (box_h - dialog_h) // 2
+
+        border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
+        text_attr = curses.color_pair(CP_PROMPT) | curses.A_BOLD
+        key_attr = curses.color_pair(CP_AGENT) | curses.A_BOLD
+
+        try:
+            # Dialog box
+            app.stdscr.addnstr(dy, dx, "╔" + "═" * (dialog_w - 2) + "╗", dialog_w, border_attr)
+            for i in range(1, dialog_h - 1):
+                app.stdscr.addstr(dy + i, dx, "║", border_attr)
+                app.stdscr.addnstr(dy + i, dx + 1, " " * (dialog_w - 2), dialog_w - 2, text_attr)
+                app.stdscr.addstr(dy + i, dx + dialog_w - 1, "║", border_attr)
+            app.stdscr.addnstr(dy + dialog_h - 1, dx, "╚" + "═" * (dialog_w - 2) + "╝", dialog_w, border_attr)
+
+            # Dialog content
+            msg = "Save changes?"
+            app.stdscr.addstr(dy + 1, dx + (dialog_w - len(msg)) // 2, msg, text_attr)
+            options = "[Y]es  [N]o  [ESC]Cancel"
+            app.stdscr.addstr(dy + 3, dx + (dialog_w - len(options)) // 2, options, key_attr)
         except curses.error:
             pass

@@ -14,6 +14,7 @@ Voice-driven CLI interface for interacting with AI agents (Claude, Gemini). Dict
   - `providers/` — AI provider adapters (Claude, Gemini) with base class
   - `stt/` — Speech-to-text (faster-whisper)
   - `tts/` — Text-to-speech engine, voice config, Google Cast
+  - `publish/` — Document publishing agents (ARCH, PLAN, SPEC) with base class and prompt templates
   - `ui/` — Curses UI: panes, overlays, drawing, colors, animation, input handling
 
 ### Audio Pipeline
@@ -63,6 +64,7 @@ python -m voicecode
 - Session continuity across prompts via `--resume` with session IDs (Claude) or `--resume latest` (Gemini)
 - Mid-recording shortcuts injection merges paths into transcripts using word-level timestamps
 - App expects a working folder (typically repo root) with `prompts/` and `docs/` subfolders
+- **Publish system** — `publish/` contains specialized agents that generate structured docs (ARCH, PLAN, SPEC). Each agent subclasses `PublishAgent` (in `publish/base.py`) and defines a `prompt_template` with `{scope}` and `{dest_folder}` placeholders. The publish overlay (`ui/publish_overlay.py`) is a two-step modal: pick doc type → pick destination folder under `docs/`. The built prompt is sent through the normal agent execution pipeline.
 - No tests or CI currently
 
 ## BBS App Three-Pane Layout
@@ -106,7 +108,8 @@ python -m voicecode
 | O | Settings / voice config |
 | K | Kill running agent |
 | W | New session (clear conversation context) |
-| P | Replay TTS summary |
+| P | Publish document (open publish overlay) |
+| Y | Replay TTS summary |
 | M | Toggle AI provider (Claude/Gemini) |
 | T | Cycle status bar tip |
 | [/] | Cycle TTS voice |
