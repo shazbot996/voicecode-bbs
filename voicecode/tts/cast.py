@@ -124,8 +124,22 @@ def cast_tts_to_devices(text, device_names, ui_queue=None, volume=None):
                 mc.play_media(url, "audio/wav")
                 mc.block_until_active()
 
-            # Keep server alive long enough for devices to finish playback
-            time.sleep(30)
+            # Wait for all devices to finish playback (poll every 0.5s,
+            # give up after 60s so we never hang forever).
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                still_playing = False
+                for cast in chromecasts:
+                    try:
+                        ms = cast.media_controller.status
+                        if ms and ms.player_state in ("PLAYING", "BUFFERING"):
+                            still_playing = True
+                            break
+                    except Exception:
+                        pass
+                if not still_playing:
+                    break
+                time.sleep(0.5)
 
             # Restore original volumes
             for cast, orig_vol in original_volumes.items():
