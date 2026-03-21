@@ -564,7 +564,7 @@ class SettingsOverlay:
         if missing:
             items.append({
                 "type": "section",
-                "label": "SAVED (not found on network)",
+                "label": "SAVED",
                 "style": "red",
             })
             for dev_name in missing:
