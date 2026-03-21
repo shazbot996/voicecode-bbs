@@ -11,7 +11,7 @@ from voicecode.ui.colors import (
     CP_HEADER, CP_PROMPT, CP_DICTATION, CP_STATUS, CP_HELP,
     CP_RECORDING, CP_BANNER, CP_ACCENT, CP_AGENT, CP_XFER,
     CP_VOICE, CP_CTX_GREEN, CP_CTX_YELLOW, CP_CTX_RED,
-    CP_FAV_EMPTY, CP_FAV_FILLED,
+    CP_FAV_EMPTY, CP_FAV_FILLED, CP_PUBLISH,
 )
 from voicecode.tts.voices import TTS_AVAILABLE, get_tts_voice_name
 
@@ -310,6 +310,16 @@ class DrawingHelper:
                 except curses.error:
                     pass
 
+        # -- Publish hint on prompt pane top border (purple P, right side before arrow) --
+        p_hint = " [P]ublish "
+        p_attr = curses.color_pair(CP_PUBLISH) | curses.A_BOLD
+        p_x = arrow_x - len(p_hint)
+        if p_x > 4:
+            try:
+                app.stdscr.addstr(content_y, p_x, p_hint, p_attr)
+            except curses.error:
+                pass
+
         # -- Favorites hint on prompt pane top border (drawn after arrow to take priority) --
         if app.browser_index >= 0:
             fav_hint = " [F] \u2605 Fav slot "
@@ -356,6 +366,15 @@ class DrawingHelper:
             app.stdscr.addstr(e_y, left_width - 1, e_label, hint_attr)
         except curses.error:
             pass
+        # P: right edge of Prompt Browser -- publish also sends to agent
+        p_label = "P>"
+        p_y = e_y + 1
+        if p_y < content_y + prompt_height - 1:
+            try:
+                app.stdscr.addstr(p_y, left_width - 1, p_label,
+                                  curses.color_pair(CP_PUBLISH) | curses.A_BOLD)
+            except curses.error:
+                pass
         # D: right edge of Dictation Buffer -- dictation > direct to agent
         d_label = "D>"
         d_y = content_y + prompt_height + dictation_height // 2
@@ -406,6 +425,8 @@ class DrawingHelper:
             app.overlays.draw_folder_slug()
         if app.show_shortcut_editor:
             app.overlays.draw_shortcut_editor()
+        if app.show_publish_overlay:
+            app.publish_overlay.draw()
         if app.show_escape_menu:
             app.overlays.draw_escape_menu()
 

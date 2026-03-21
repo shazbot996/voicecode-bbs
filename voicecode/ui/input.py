@@ -376,6 +376,22 @@ class InputHandler:
                         app.shortcut_editor_cursor = len(app._shortcut_strings)
             return
 
+        # Handle publish overlay navigation
+        if app.show_publish_overlay:
+            if ch == curses.KEY_UP:
+                app.publish_overlay.cursor_move(-1)
+            elif ch == curses.KEY_DOWN:
+                app.publish_overlay.cursor_move(1)
+            elif ch in (10, 13, curses.KEY_ENTER):
+                app.publish_overlay.select()
+            elif ch == 27:
+                app.publish_overlay.go_back()
+                app.stdscr.nodelay(True)
+                app.stdscr.getch()
+            elif ch in (ord("q"), ord("Q"), ord("p"), ord("P")):
+                app.publish_overlay.close()
+            return
+
         # Handle settings overlay navigation
         if app.show_settings_overlay:
             # Inline text editing mode (e.g. prompt library path)
@@ -798,6 +814,10 @@ class InputHandler:
             app.set_status("Dictation buffer cleared.")
 
         elif ch == ord("p") or ch == ord("P"):
+            app.publish_overlay.open()
+
+        elif ch == ord("y") or ch == ord("Y"):
+            # Replay last TTS summary
             if app.last_tts_summary:
                 stop_speaking()
                 speak_text(app.last_tts_summary, on_done=lambda: app.ui_queue.put(

@@ -25,13 +25,14 @@ from voicecode.ui.colors import (
     CP_CTX_GREEN, CP_CTX_YELLOW, CP_CTX_RED,
     CP_XTREE_BG, CP_XTREE_SEL, CP_XTREE_BORDER,
     CP_TTS, CP_SECT_RED, CP_SUBMENU, CP_SETTINGS_TITLE,
-    CP_FAV_EMPTY, CP_FAV_FILLED,
+    CP_FAV_EMPTY, CP_FAV_FILLED, CP_PUBLISH, CP_PUBLISH_TITLE,
     init_colors,
 )
 from voicecode.ui.panes import TextPane
 from voicecode.ui.drawing import DrawingHelper
 from voicecode.ui.overlays import OverlayRenderer
 from voicecode.ui.settings_overlay import SettingsOverlay
+from voicecode.ui.publish_overlay import PublishOverlay
 from voicecode.ui.input import InputHandler
 from voicecode.ui.animation import AnimationHelper
 from voicecode.agent.runner import RunnerHelper
@@ -86,7 +87,7 @@ class BBSApp:
             "  [U] Undo   → remove last entry",
             "  [C] Clear  → wipe and start over",
             "",
-            "                         [P] Replay TTS ♪",
+            "                         [Y] Replay TTS ♪",
         ]
         # Load all tips for cycling
         self._all_tips = self._load_all_tips()
@@ -228,6 +229,13 @@ class BBSApp:
         self.cast_submenu_cursor = 0
         self.cast_submenu_items = []
         self._settings_scroll_top = 0  # vertical scroll offset for settings
+
+        # Publish overlay state
+        self.show_publish_overlay = False
+        self.publish_step = 0           # 0 = type, 1 = folder
+        self.publish_cursor = 0
+        self.publish_selected_type = None
+        self.publish_selected_folder = None
         self.cast_enabled = saved.get("cast_enabled", False)
         self.cast_volume = float(saved.get("cast_volume", 0.8))
         self.cast_discovered_devices: list[str] = []
@@ -304,6 +312,7 @@ class BBSApp:
         self.drawing = DrawingHelper(self)
         self.overlays = OverlayRenderer(self)
         self.settings_overlay = SettingsOverlay(self)
+        self.publish_overlay = PublishOverlay(self)
         self.input_handler = InputHandler(self)
         self.animation = AnimationHelper(self)
         self.runner = RunnerHelper(self)
