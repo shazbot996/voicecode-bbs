@@ -245,7 +245,7 @@ When enabled, every TTS summary is generated as a WAV file and streamed to all s
 
 ### Publish Documents
 
-Press **P** to open the Publish overlay — a two-step modal that generates structured documentation from your codebase using specialized AI agents.
+Press **P** to open the Publish overlay — a two-step modal that generates structured documentation from your codebase using specialized AI agents. This is just scratching the surface of proper prompt orchestration, but it's building towards a freeform input funnel into a new kind of context structure that we are all forming as we go!  I'm framing an opinion here on folder layout and docs structure to start here, and eventually more convention can be applied, and automations implemented. For now, I'm trying to funnel freeform thoughts into refinement loops and context publication standards.  
 
 **Step 1 — Pick a document type:**
 
@@ -258,6 +258,8 @@ Press **P** to open the Publish overlay — a two-step modal that generates stru
 Additional types (BRIEF, SCHEMA, ADR, CONVENTIONS, CONSTRAINTS, GLOSSARY, RUNBOOK, WORKFLOW, CHANGELOG, README) are planned but not yet implemented.
 
 **Step 2 — Pick a destination folder** within `docs/`:
+
+For now, I let the user generate any kind of file in any kind of folder, but we do enforce a specific folder structure under our configured working directory:
 
 ```
 docs/
