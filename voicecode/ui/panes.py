@@ -16,6 +16,7 @@ class TextPane:
         self.scroll_offset = 0
         self.color_pair = color_pair
         self.welcome_art: list[str] = []  # shown centered when lines is empty
+        self.auto_scroll = True  # auto-follow new content (disabled by manual scroll)
 
     def set_text(self, text: str, width: int):
         self.lines = []
@@ -30,7 +31,8 @@ class TextPane:
         wrapped = textwrap.wrap(text, width=max(1, width - 2))
         self.lines.extend(wrapped if wrapped else [text])
         self._trim_lines()
-        self.scroll_to_bottom(self._last_height if hasattr(self, '_last_height') else 10)
+        if self.auto_scroll:
+            self.scroll_to_bottom(self._last_height if hasattr(self, '_last_height') else 10)
 
     def _trim_lines(self):
         """Trim oldest lines when buffer exceeds MAX_LINES."""
@@ -58,7 +60,8 @@ class TextPane:
             else:
                 self.lines[-1] = last + ch
         self._trim_lines()
-        self.scroll_to_bottom(self._last_height if hasattr(self, '_last_height') else 10)
+        if self.auto_scroll:
+            self.scroll_to_bottom(self._last_height if hasattr(self, '_last_height') else 10)
 
     @property
     def is_scrollable(self) -> bool:
@@ -72,10 +75,14 @@ class TextPane:
 
     def scroll_up(self, amount=1):
         self.scroll_offset = max(0, self.scroll_offset - amount)
+        self.auto_scroll = False
 
     def scroll_down(self, visible_height: int, amount=1):
         max_offset = max(0, len(self.lines) - visible_height)
         self.scroll_offset = min(max_offset, self.scroll_offset + amount)
+        # Re-enable auto-scroll when user reaches the bottom
+        if self.scroll_offset >= max_offset:
+            self.auto_scroll = True
 
     def draw(self, win, y: int, x: int, height: int, width: int):
         if height < 3 or width < 5:

@@ -146,8 +146,8 @@ class DrawingHelper:
         prompt_bottom_y = content_y + prompt_height - 1
         hint_attr = curses.color_pair(app.prompt_pane.color_pair) | curses.A_BOLD
         home_hint = " [Home]Current "
-        browse_hint = " [\u2190\u2192]Browse [\u2191\u2193]View "
-        scroll_hint = " [PgUp/Dn]Scroll " if app.prompt_pane.is_scrollable else ""
+        browse_hint = " [\u2190\u2192]Browse [\u2191\u2193]Scroll "
+        scroll_hint = " [PgUp/Dn]Agent " if app.agent_pane.is_scrollable else ""
         bh_x = left_width - len(browse_hint) - 1
         try:
             if bh_x > 1:
@@ -278,12 +278,13 @@ class DrawingHelper:
         # Draw colored bottom border for agent pane
         bar_inner_w = right_width - 2  # inside corner chars
         info_text = sess_label + ctx_label
+        scroll_label = " [PgUp/Dn]Scroll " if app.agent_pane.is_scrollable else ""
         # Pad bar to fill, then overlay info on the right
         if bar_inner_w > 0:
             ctx_attr = curses.color_pair(ctx_cp) | curses.A_BOLD
             # Build the bottom border with session/context info
-            bar = "\u2550" * max(0, bar_inner_w - len(info_text) - len(hint_label))
-            full_bar = "\u255a" + hint_label + bar + info_text + "\u255d"
+            bar = "\u2550" * max(0, bar_inner_w - len(info_text) - len(hint_label) - len(scroll_label))
+            full_bar = "\u255a" + hint_label + scroll_label + bar + info_text + "\u255d"
             try:
                 app.stdscr.addnstr(agent_bottom_y, left_width, full_bar,
                                    right_width, ctx_attr)
@@ -310,8 +311,8 @@ class DrawingHelper:
                     pass
 
         # -- Favorites hint on prompt pane top border (drawn after arrow to take priority) --
-        if app.browser_view == "favorites" and app.browser_index >= 0:
-            fav_hint = " [F] Remove "
+        if app.browser_index >= 0:
+            fav_hint = " [F] \u2605 Fav slot "
             fav_x = left_width - len(fav_hint) - 1
             if fav_x > 4:
                 try:
@@ -319,8 +320,17 @@ class DrawingHelper:
                                       curses.color_pair(CP_RECORDING) | curses.A_BOLD)
                 except curses.error:
                     pass
-        elif app.browser_index >= 0 or app.current_prompt or app.executed_prompt_text:
-            fav_hint = " [F] \u2605 Fav slot "
+        elif app.browser_view == "favorites":
+            fav_hint = " [F] Back "
+            fav_x = left_width - len(fav_hint) - 1
+            if fav_x > 4:
+                try:
+                    app.stdscr.addstr(content_y, fav_x, fav_hint,
+                                      curses.color_pair(CP_RECORDING) | curses.A_BOLD)
+                except curses.error:
+                    pass
+        elif app.current_prompt or app.executed_prompt_text:
+            fav_hint = " [F] Favorites "
             fav_x = left_width - len(fav_hint) - 1
             if fav_x > 4:
                 try:

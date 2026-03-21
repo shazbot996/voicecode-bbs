@@ -6,5 +6,5 @@
 
 - The app is structured as the `voicecode/` Python package — `voicecode_bbs.py` is a thin entry-point wrapper
 - No build system or tests; dependencies in `requirements.txt`, virtualenv in `venv/`
-- The `GeminiProvider` class (in `voicecode/providers/gemini.py`) handles Gemini CLI integration — uses `--yolo -o stream-json` flags, session continuity via `--resume latest`
+- The `GeminiProvider` class (in `voicecode/providers/gemini.py`) handles Gemini CLI integration — uses `--yolo -o stream-json` flags, session continuity via `--resume` with session IDs
 - This is a curses application with background threads — changes to shared state must be thread-safe (use `queue.Queue` for UI updates)

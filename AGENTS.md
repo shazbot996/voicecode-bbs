@@ -26,7 +26,7 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 
 - Sample rate: 16kHz, mono, 30ms blocks (480 samples)
 - VAD threshold: 0.5, silence timeout: 1.5s, min speech: 0.3s
-- Typewriter effect: time-based budget at 600 chars/sec
+- Typewriter effect: time-based budget at configurable speed (default 200 chars/sec)
 
 ## Tech Stack
 
@@ -60,7 +60,7 @@ python -m voicecode
 - Comment lines (`#`) in prompt files are stripped before execution
 - TTS summaries extracted from `[TTS_SUMMARY]...[/TTS_SUMMARY]` blocks in agent responses
 - Thread-safe UI updates via `queue.Queue`
-- Session continuity across prompts via `--resume` with session IDs (Claude) or `--yolo` flag (Gemini)
+- Session continuity across prompts via `--resume` with session IDs (Claude) or `--resume latest` (Gemini)
 - Mid-recording shortcuts injection merges paths into transcripts using word-level timestamps
 - App expects a working folder (typically repo root) with `prompts/` and `docs/` subfolders
 - No tests or CI currently
@@ -89,9 +89,10 @@ python -m voicecode
 |-----|--------|
 | SPACE | Toggle recording |
 | R | Refine fragments into prompt |
+| S | Save current prompt to history |
 | E | Execute current prompt |
 | D | Direct execute (skip refinement) |
-| F | Assign prompt to favorites slot (1-10) |
+| F | Toggle favorites view / add history prompt to favorites |
 | 1-9, 0 | Quick-load favorites slot 1-10 |
 | N | New prompt (clear buffer, keep session) |
 | U | Undo last dictation entry |
@@ -99,13 +100,16 @@ python -m voicecode
 | Enter | Type text directly into dictation buffer (Enter to submit, ESC to cancel) |
 | Tab | Shortcuts browser (inject strings/paths into dictation; works mid-recording) |
 | ←/→ | Browse prompt history |
-| ↑/↓ | Cycle active/favorites views |
+| ↑/↓ | Scroll prompt pane |
 | Home | Return to current prompt |
-| PgUp/PgDn | Scroll prompt browser (when browsing history) or agent terminal |
+| PgUp/PgDn | Scroll agent terminal |
 | O | Settings / voice config |
 | K | Kill running agent |
 | W | New session (clear conversation context) |
 | P | Replay TTS summary |
+| M | Toggle AI provider (Claude/Gemini) |
+| T | Cycle status bar tip |
+| [/] | Cycle TTS voice |
 | H | Help overlay |
 | A | About / title screen |
 | X | Restart application |

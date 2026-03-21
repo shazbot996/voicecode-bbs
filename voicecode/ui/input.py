@@ -753,10 +753,23 @@ class InputHandler:
 
         elif ch == ord("f") or ch == ord("F"):
             if not app.refining and not app.recording:
-                if app.browser_view == "favorites" and app.browser_index >= 0:
-                    app.favorites.remove_from_favorites()
-                else:
+                if app.browser_index >= 0:
+                    # Viewing a historical prompt — add it as a favorite
                     app.favorites.add_to_favorites(None)
+                elif app.browser_view == "favorites":
+                    # Toggle back from favorites to active view
+                    app.browser_view = "active"
+                    app.browser_index = -1
+                    app.browser.load_browser_prompt(app.stdscr.getmaxyx()[1] // 2)
+                    app.set_status("Returned to prompt view.")
+                else:
+                    # Toggle into favorites view
+                    app.favorites.load_favorites_slots()
+                    app.browser_view = "favorites"
+                    app.browser_index = -1
+                    app.browser.load_browser_prompt(app.stdscr.getmaxyx()[1] // 2)
+                    count = app.favorites.favorites_slot_count()
+                    app.set_status(f"Favorites view. ({count}/10 slots used)")
 
         elif ch == ord("e") or ch == ord("E"):
             if app.agent_state in (AgentState.IDLE, AgentState.DONE):
@@ -794,12 +807,13 @@ class InputHandler:
                 app.set_status("No summary to replay.")
 
         elif ch == curses.KEY_LEFT:
-            if app.browser_view == "active":
-                app.browser.scan_history_prompts()
+            if app.browser_view != "active":
+                app.browser_view = "active"
+                app.browser_index = -1
+            app.browser.scan_history_prompts()
             prompt_list = app.browser.current_browser_list()
             if not prompt_list:
-                view_name = "favorite" if app.browser_view == "favorites" else "history"
-                app.set_status(f"No {view_name} prompts to browse.")
+                app.set_status("No history prompts to browse.")
             elif app.browser_index == -1:
                 app.browser_index = len(prompt_list) - 1
                 app.browser.load_browser_prompt(app.stdscr.getmaxyx()[1] // 2)
@@ -810,6 +824,8 @@ class InputHandler:
                 app.set_status("Already at oldest prompt.")
 
         elif ch == curses.KEY_RIGHT:
+            if app.browser_view != "active":
+                app.browser_view = "active"
             prompt_list = app.browser.current_browser_list()
             if app.browser_index == -1:
                 app.set_status("Already at current session.")
@@ -821,45 +837,15 @@ class InputHandler:
                 app.browser.load_browser_prompt(app.stdscr.getmaxyx()[1] // 2)
 
         elif ch == curses.KEY_UP:
-            # Toggle between active and favorites (up)
-            if app.prompt_pane.scroll_offset == 0:
-                if app.browser_view == "active":
-                    app.favorites.load_favorites_slots()
-                    app.browser_view = "favorites"
-                else:
-                    app.browser_view = "active"
-                app.browser_index = -1
-                app.browser.load_browser_prompt(app.stdscr.getmaxyx()[1] // 2)
-                h = app.stdscr.getmaxyx()[0]
-                content_height = h - 4
-                visible = content_height // 2 - 2
-                max_off = max(0, len(app.prompt_pane.lines) - visible)
-                app.prompt_pane.scroll_offset = max_off
-                view_names = {"active": "active prompts", "favorites": "favorites"}
-                count = len(app.browser.current_browser_list())
-                app.set_status(f"Switched to {view_names[app.browser_view]}. ({count} entries)")
-            else:
-                app.prompt_pane.scroll_up(2)
+            # Scroll prompt pane up
+            app.prompt_pane.scroll_up(1)
 
         elif ch == curses.KEY_DOWN:
-            # Toggle between active and favorites (down)
+            # Scroll prompt pane down
             h = app.stdscr.getmaxyx()[0]
             content_height = h - 4
             visible = content_height // 2 - 2
-            max_off = max(0, len(app.prompt_pane.lines) - visible)
-            if app.prompt_pane.scroll_offset >= max_off:
-                if app.browser_view == "active":
-                    app.favorites.load_favorites_slots()
-                    app.browser_view = "favorites"
-                else:
-                    app.browser_view = "active"
-                app.browser_index = -1
-                app.browser.load_browser_prompt(app.stdscr.getmaxyx()[1] // 2)
-                view_names = {"active": "active prompts", "favorites": "favorites"}
-                count = len(app.browser.current_browser_list())
-                app.set_status(f"Switched to {view_names[app.browser_view]}. ({count} entries)")
-            else:
-                app.prompt_pane.scroll_down(visible, 2)
+            app.prompt_pane.scroll_down(visible, 1)
 
         elif ch == curses.KEY_END:
             if not app.refining and not app.recording:
@@ -873,19 +859,12 @@ class InputHandler:
             app.set_status("Returned to current prompt.")
 
         elif ch == curses.KEY_PPAGE:
-            if app.prompt_pane.is_scrollable:
-                app.prompt_pane.scroll_up(5)
-            else:
-                app.agent_pane.scroll_up(5)
+            app.agent_pane.scroll_up(5)
 
         elif ch == curses.KEY_NPAGE:
             h = app.stdscr.getmaxyx()[0]
             content_height = h - 4
-            visible = content_height // 2 - 2
-            if app.prompt_pane.is_scrollable:
-                app.prompt_pane.scroll_down(visible, 5)
-            else:
-                app.agent_pane.scroll_down(content_height - 2, 5)
+            app.agent_pane.scroll_down(content_height - 2, 5)
 
         elif ch == ord("["):
             name = cycle_tts_voice(-1)

@@ -34,7 +34,7 @@ class BrowserHelper:
                     f"★ Favorites — {app.favorites.favorites_slot_count()}/10 slots used\n\n"
                     f"{slots_info}\n\n"
                     "Press 1-9/0 to quick-load\n"
-                    "↑↓ switch views\n"
+                    "[F] return to prompt view\n"
                     "HOME reset to new prompt", width)
             elif app.executed_prompt_text:
                 app.prompt_pane.title = "EXECUTING PROMPT"

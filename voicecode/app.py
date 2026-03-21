@@ -68,8 +68,8 @@ class BBSApp:
             "  [SPACE] Record   [R] Refine   [D] Direct execute",
             "  [END] Clear working prompt & buffer",
             "",
-            "  ←→ to browse history",
-            "  ↑↓ cycle views  1-0 load favorites",
+            "  ←→ to browse history  ↑↓ scroll",
+            "  [F] favorites  1-0 load favorites",
         ]
         self.dictation_pane.welcome_art = [
             "╔══════════════════════════════════════╗",
@@ -109,6 +109,7 @@ class BBSApp:
             "  R     ··· Refine into prompt",
             "  E     ··· Execute prompt",
             "  D     ··· Direct execute",
+            "  F     ··· Favorites (toggle / add)",
             "  W     ··· New session (clear context)",
             "  O     ··· Options / Settings",
             "  H     ··· Full help screen",
