@@ -172,7 +172,9 @@ class RunnerHelper:
                     break
 
                 app.agent_last_activity = time.time()
-                stall_warned = False
+                if stall_warned:
+                    stall_warned = False
+                    app.ui_queue.put(("status", "", CP_STATUS))
                 if not app.agent_first_output:
                     app.agent_first_output = True
 

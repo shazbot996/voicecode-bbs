@@ -102,6 +102,15 @@ class SettingsOverlay:
             })
 
         app.settings_items.append({
+            "key": "typewriter_speed",
+            "label": "Typewriter Speed",
+            "desc": "Agent text streaming speed (characters per second)",
+            "options": [50, 100, 200, 400, 800, 1500],
+            "get": lambda: app._typewriter_chars_per_sec,
+            "set": self.set_typewriter_speed,
+        })
+
+        app.settings_items.append({
             "key": "_action_test_tools_submenu",
             "label": "Test Tools",
             "desc": "Echo test, TTS test sound, and volume controls",
@@ -682,6 +691,12 @@ class SettingsOverlay:
             app.tts_volume_gain = 1.0
         persist_setting("tts_volume_gain", app.tts_volume_gain)
         self._set_status(f"TTS Volume Gain set to {app.tts_volume_gain:.1f}x")
+
+    def set_typewriter_speed(self, val):
+        app = self.app
+        app._typewriter_chars_per_sec = val
+        persist_setting("typewriter_speed", val)
+        self._set_status(f"Typewriter speed set to {val} chars/sec")
 
     # ─── Voice / STT setters ───────────────────────────────────────
 

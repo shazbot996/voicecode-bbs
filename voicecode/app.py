@@ -286,7 +286,7 @@ class BBSApp:
         self._typewriter_budget = 0.0       # fractional char budget carried across frames
         self._typewriter_last_ts = 0.0      # monotonic timestamp of last _process call
         self._typewriter_line_color = None   # per-line color override (None = default)
-        self._typewriter_chars_per_sec = 600 # steady output rate
+        self._typewriter_chars_per_sec = saved.get("typewriter_speed", 200)
         self.agent_first_output = False      # tracks if agent has produced any output
         self.agent_last_activity = 0.0       # time.time() of last output from agent
         self.agent_welcome_shown = False     # True after initial welcome art displayed

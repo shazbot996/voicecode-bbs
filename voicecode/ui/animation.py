@@ -126,9 +126,11 @@ class AnimationHelper:
             elapsed = now - app._typewriter_last_ts
             app._typewriter_last_ts = now
             app._typewriter_budget += elapsed * app._typewriter_chars_per_sec
-            # Cap budget so a long idle period doesn't cause a huge dump
-            if app._typewriter_budget > 120:
-                app._typewriter_budget = 120
+            # Cap budget to ~3 frames worth so a long idle period or slow
+            # frame doesn't cause a visible batch dump.
+            cap = max(5, app._typewriter_chars_per_sec / 20.0)
+            if app._typewriter_budget > cap:
+                app._typewriter_budget = cap
 
         right_width = app.stdscr.getmaxyx()[1] - app.stdscr.getmaxyx()[1] // 2
         chars_this_frame = 0
