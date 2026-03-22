@@ -14,6 +14,7 @@ IMPLEMENTED_TYPES = [
     "PLAN",
     "SPEC",
     "GLOSSARY",
+    "CONSTRAINTS",
 ]
 
 # Document types planned but not yet implemented
@@ -22,7 +23,6 @@ UNIMPLEMENTED_TYPES = [
     "SCHEMA",
     "ADR",
     "CONVENTIONS",
-    "CONSTRAINTS",
     "RUNBOOK",
     "WORKFLOW",
     "CHANGELOG",
@@ -49,6 +49,10 @@ AGENT_INFO = {
     "GLOSSARY": {
         "title": "Glossary Agent",
         "description": "Maintains a single glossary at docs/context/GLOSSARY.md. Can add, edit, or remove terms. Request a full codebase scan in your prompt to auto-generate definitions.",
+    },
+    "CONSTRAINTS": {
+        "title": "Constraints Agent",
+        "description": "Maintains docs/context/CONSTRAINTS.md with hard boundaries and safety rails. Describe constraints in plain language and the agent adds them to the file. Ask for the questionnaire reference to see what kinds of constraints you can define.",
     },
 }
 
@@ -112,10 +116,12 @@ def get_publish_agent(doc_type: str):
         from voicecode.publish.plan import PlanAgent
         from voicecode.publish.spec import SpecAgent
         from voicecode.publish.glossary import GlossaryAgent
+        from voicecode.publish.constraints import ConstraintsAgent
         _AGENT_REGISTRY["ARCH"] = ArchAgent()
         _AGENT_REGISTRY["PLAN"] = PlanAgent()
         _AGENT_REGISTRY["SPEC"] = SpecAgent()
         _AGENT_REGISTRY["GLOSSARY"] = GlossaryAgent()
+        _AGENT_REGISTRY["CONSTRAINTS"] = ConstraintsAgent()
     return _AGENT_REGISTRY.get(doc_type)
 
 
@@ -173,15 +179,15 @@ class PublishOverlay:
                 app.set_status(f"{name} agent not yet implemented.")
                 return
             app.publish_selected_type = name
-            if name == "GLOSSARY":
-                # Glossary always targets context/ — show step 1 for info only
+            if name in ("GLOSSARY", "CONSTRAINTS"):
+                # Fixed-destination agents always target context/
                 app.publish_step = 1
                 app.publish_cursor = 0  # context/ is index 0
             else:
                 app.publish_step = 1
                 app.publish_cursor = 0
         else:
-            if app.publish_selected_type == "GLOSSARY":
+            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS"):
                 app.publish_selected_folder = "context/"
             else:
                 app.publish_selected_folder = DEST_FOLDERS[app.publish_cursor]
@@ -195,7 +201,7 @@ class PublishOverlay:
             # Allow -1 to select the "Edit Refine Agent Prompt" line
             app.publish_cursor = max(-1, min(count - 1, app.publish_cursor + direction))
         else:
-            if app.publish_selected_type == "GLOSSARY":
+            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS"):
                 return  # fixed destination, no cursor movement
             count = len(DEST_FOLDERS)
             app.publish_cursor = max(0, min(count - 1, app.publish_cursor + direction))
@@ -479,7 +485,7 @@ class PublishOverlay:
             self._draw_type_selector(app, right_x, right_w, sel_y, box_y + box_h,
                                      purple, bright, sel_attr, disabled_attr, dim)
         else:
-            is_glossary = (app.publish_selected_type == "GLOSSARY")
+            is_fixed_dest = app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS")
             sel_title = f"Destination for {app.publish_selected_type}"
             try:
                 app.stdscr.addnstr(sel_y, right_x, sel_title, right_w, purple)
@@ -492,20 +498,22 @@ class PublishOverlay:
                 pass
             sel_y += 1
 
-            if is_glossary:
-                # Glossary has a fixed path — show it, don't allow changing
+            if is_fixed_dest:
+                # Fixed-destination agent — show path, don't allow changing
                 fixed_label = "▸ context/  (fixed)"
                 try:
                     app.stdscr.addnstr(sel_y, right_x, fixed_label[:right_w], right_w, sel_attr)
                 except curses.error:
                     pass
                 sel_y += 2
-                note = "The glossary is always at docs/context/GLOSSARY.md"
+                doc_name = app.publish_selected_type
+                note = f"This document is always at docs/context/{doc_name}.md"
                 for wline in textwrap.wrap(note, width=max(right_w, 20)):
                     if sel_y >= box_y + box_h - 2:
                         break
                     try:
-                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, dim)
+                        note_attr = curses.color_pair(CP_VOICE) | curses.A_BOLD
+                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, note_attr)
                     except curses.error:
                         pass
                     sel_y += 1
