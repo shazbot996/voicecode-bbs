@@ -270,8 +270,11 @@ class PublishOverlay:
             app.set_status(f"No agent for {doc_type} — this shouldn't happen.")
             return
 
-        # Use current prompt as scope, fall back to a default
+        # Use current prompt as scope; if prompt window is in initial state,
+        # use dictation buffer fragments instead; fall back to default scope.
         scope = app.browser.get_active_prompt_text() or app.current_prompt
+        if not scope and app.fragments:
+            scope = " ".join(app.fragments)
         if not scope:
             scope = "the entire repository (all top-level folders and files)"
 

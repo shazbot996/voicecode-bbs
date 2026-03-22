@@ -373,6 +373,15 @@ class DrawingHelper:
             app.stdscr.addstr(d_y, left_width - 1, d_label, hint_attr)
         except curses.error:
             pass
+        # P: right edge of Dictation Buffer (below D) -- publish from dictation
+        dp_label = "P>"
+        dp_y = d_y + 1
+        if dp_y < content_y + prompt_height + dictation_height - 1:
+            try:
+                app.stdscr.addstr(dp_y, left_width - 1, dp_label,
+                                  curses.color_pair(CP_PUBLISH) | curses.A_BOLD)
+            except curses.error:
+                pass
 
         # -- Help bar --
         help_y = h - 2

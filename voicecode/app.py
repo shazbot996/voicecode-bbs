@@ -535,6 +535,12 @@ class BBSApp:
                 self.agent_state = msg[1]
                 if msg[1] == AgentState.DONE:
                     self.session_turns += 1
+                    # Clear the gold executed-prompt display; the prompt
+                    # is already saved in history, so return the prompt
+                    # pane to its initial "new prompt" state.
+                    if self.executed_prompt_text is not None:
+                        self.execution.clear_executed_prompt()
+                        self.browser.load_browser_prompt(left_width)
 
             elif msg[0] == "session_id":
                 self.session_id = msg[1]
