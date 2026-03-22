@@ -32,7 +32,6 @@ UNIMPLEMENTED_TYPES = [
 # Combined list for display and reference
 ALL_DOC_TYPES = IMPLEMENTED_TYPES + UNIMPLEMENTED_TYPES
 
-# Best-use descriptions for each document type
 # Short agent descriptions for the info panel (shown when agent is highlighted)
 AGENT_INFO = {
     "ARCH": {
