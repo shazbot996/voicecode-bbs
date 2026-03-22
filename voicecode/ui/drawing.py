@@ -11,7 +11,7 @@ from voicecode.ui.colors import (
     CP_HEADER, CP_PROMPT, CP_DICTATION, CP_STATUS, CP_HELP,
     CP_RECORDING, CP_BANNER, CP_ACCENT, CP_AGENT, CP_XFER,
     CP_VOICE, CP_CTX_GREEN, CP_CTX_YELLOW, CP_CTX_RED,
-    CP_FAV_EMPTY, CP_FAV_FILLED, CP_PUBLISH,
+    CP_FAV_EMPTY, CP_FAV_FILLED, CP_PUBLISH, CP_PUBLISH_HINT,
 )
 from voicecode.tts.voices import TTS_AVAILABLE, get_tts_voice_name
 
@@ -399,8 +399,23 @@ class DrawingHelper:
             help_text = " \u25cc Agent working... [K] to kill"
             self.draw_bar(help_y, help_text, CP_STATUS)
         else:
-            keys = " [Q]uit [X]Restart | [N]ew [U]ndo [C]lear [K]ill [W]NewSess [M]odel [Tab]Shortcuts"
-            self.draw_bar(help_y, keys, CP_HELP)
+            w = app.stdscr.getmaxyx()[1]
+            left_part = " [N]ew [U]ndo [C]lear [K]ill [W]NewSess [M]odel [Tab]Shortcuts"
+            pub_part = " [P]ublisher"
+            right_part = "[Q]uit [X]Restart "
+            # Fill the bar background first
+            bar_attr = curses.color_pair(CP_HELP) | curses.A_BOLD
+            pub_attr = curses.color_pair(CP_PUBLISH_HINT) | curses.A_BOLD
+            try:
+                app.stdscr.addnstr(help_y, 0, " " * (w - 1), w - 1, bar_attr)
+                app.stdscr.addnstr(help_y, 0, left_part, len(left_part), bar_attr)
+                x = len(left_part)
+                app.stdscr.addnstr(help_y, x, pub_part, len(pub_part), pub_attr)
+                rx = w - len(right_part) - 1
+                if rx > 0:
+                    app.stdscr.addnstr(help_y, rx, right_part, len(right_part), bar_attr)
+            except curses.error:
+                pass
 
         # -- Status bar --
         self.draw_bar(h - 1, f" {app.status_msg}", app.status_color)

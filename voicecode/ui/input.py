@@ -489,7 +489,6 @@ class InputHandler:
             elif ch in (10, 13, curses.KEY_ENTER):
                 # Enter on Documents tab opens the document reader
                 if app._browser_category == 2 and app.folder_slug_list:
-                    from pathlib import Path
                     rel_path = app.folder_slug_list[app.folder_slug_cursor]
                     full_path = Path(app.working_dir).expanduser() / rel_path
                     if full_path.is_file():
@@ -619,6 +618,8 @@ class InputHandler:
                 app.publish_overlay.go_back()
                 app.stdscr.nodelay(True)
                 app.stdscr.getch()
+            elif ch in (ord("e"), ord("E")):
+                app.publish_overlay.edit_prompt()
             elif ch in (ord("q"), ord("Q"), ord("p"), ord("P")):
                 app.publish_overlay.close()
             return

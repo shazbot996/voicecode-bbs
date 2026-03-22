@@ -17,3 +17,5 @@ This app should be fairly portable, but has only been tested on a few kinds of s
 Yes I wrote these tips with my wee fingers. 
 If you have a chromecast on the same network as this app, you can configure voicecode-bbs to send agent response summaries to google cast devices it can find. (the testing tool is also fun to play with)
 I noticed that every client renders colors a bit differently, with "themes" being popular - so I threw my hands up - use voicecode on itself to tweak the colors any way you want anyway :) ¯\_(ツ)_/¯ 
+You can edit the [R]efine and [P]ublisher prompts in the publisher window - just press [E]!
+The [P]ublisher is a good way to groom standards into your context! For instance, we include some basic frontmatter YAML in our relevant documents - only really date tracking now, but this allows tracking staleness, and builds a "data" component to the prompts that will allow future automated tooling to benefit.

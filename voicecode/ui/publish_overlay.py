@@ -178,6 +178,27 @@ class PublishOverlay:
             items.append((t, False))
         return items
 
+    def edit_prompt(self):
+        """Open the highlighted agent's prompt template in the doc reader/editor."""
+        app = self.app
+        if app.publish_step == 0:
+            items = self._type_display_items()
+            name, enabled = items[app.publish_cursor]
+            if not enabled:
+                app.set_status(f"{name} agent not yet implemented — no prompt to edit.")
+                return
+        else:
+            name = app.publish_selected_type
+
+        agent = get_publish_agent(name)
+        if not agent:
+            app.set_status(f"No agent for {name}.")
+            return
+
+        prompt_path = str(agent.prompt_path)
+        self.close()
+        app.overlays.open_doc_reader(prompt_path, f"{name} Prompt Template")
+
     def _execute_publish(self):
         """Build the publish prompt and send it through the agent pipeline."""
         import time
@@ -287,7 +308,7 @@ class PublishOverlay:
 
         # Bottom border
         step_label = " Step 1: Document Type " if app.publish_step == 0 else " Step 2: Destination Folder "
-        help_text = " [↑↓]Select [PgUp/Dn]Info [Enter]Confirm [ESC]Back "
+        help_text = " [↑↓]Select [E]Edit Prompt [PgUp/Dn]Info [Enter]Confirm [ESC]Back "
         border_bot = "╚" + "═" * (box_w - 2) + "╝"
         try:
             app.stdscr.addnstr(box_y + box_h - 1, box_x, border_bot, box_w, purple)

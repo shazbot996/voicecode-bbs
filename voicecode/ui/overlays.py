@@ -704,19 +704,59 @@ class OverlayRenderer:
         except curses.error:
             pass
 
+    @staticmethod
+    def _wrap_edit_lines(lines, content_w):
+        """Build a visual-line map by wrapping logical lines to *content_w*.
+
+        Returns a list of tuples ``(logical_idx, start_col, text)`` where each
+        entry represents one screen row.
+        """
+        vlines: list[tuple[int, int, str]] = []
+        w = max(content_w, 1)
+        for li, raw in enumerate(lines):
+            if len(raw) == 0:
+                vlines.append((li, 0, ""))
+            else:
+                for off in range(0, len(raw), w):
+                    vlines.append((li, off, raw[off:off + w]))
+        return vlines
+
     def _draw_doc_editor(self, app, box_x, box_y, box_w, box_h, inner_w, content_w,
                          visible_h, border_attr, title_attr, body_attr, heading_attr, dim_attr):
-        """Draw editable document editor with cursor."""
+        """Draw editable document editor with cursor and word wrap."""
         edit_border = curses.color_pair(CP_RECORDING) | curses.A_BOLD
         lines = app.doc_edit_lines
         total_lines = len(lines)
 
-        # Auto-scroll to keep cursor visible
-        if app.doc_edit_cursor_row < app.doc_edit_scroll:
-            app.doc_edit_scroll = app.doc_edit_cursor_row
-        elif app.doc_edit_cursor_row >= app.doc_edit_scroll + visible_h:
-            app.doc_edit_scroll = app.doc_edit_cursor_row - visible_h + 1
-        app.doc_edit_scroll = max(0, min(app.doc_edit_scroll, max(0, total_lines - visible_h)))
+        # Build wrapped visual lines
+        vlines = self._wrap_edit_lines(lines, content_w)
+        total_vlines = len(vlines)
+
+        # Find which visual row the cursor sits on
+        cursor_vrow = 0
+        for vi, (li, start_col, _text) in enumerate(vlines):
+            if li == app.doc_edit_cursor_row:
+                if start_col + content_w > app.doc_edit_cursor_col >= start_col:
+                    cursor_vrow = vi
+                    break
+                # If cursor is exactly at end-of-chunk boundary, stay on this row
+                if app.doc_edit_cursor_col == start_col:
+                    cursor_vrow = vi
+                    break
+            elif li > app.doc_edit_cursor_row:
+                # Past the cursor line — use the last visual row of cursor line
+                cursor_vrow = max(vi - 1, 0)
+                break
+        else:
+            # Cursor is on/past the last logical line
+            cursor_vrow = max(total_vlines - 1, 0)
+
+        # Auto-scroll to keep cursor visible (using visual rows)
+        if cursor_vrow < app.doc_edit_scroll:
+            app.doc_edit_scroll = cursor_vrow
+        elif cursor_vrow >= app.doc_edit_scroll + visible_h:
+            app.doc_edit_scroll = cursor_vrow - visible_h + 1
+        app.doc_edit_scroll = max(0, min(app.doc_edit_scroll, max(0, total_vlines - visible_h)))
 
         try:
             # Top border (red in edit mode)
@@ -737,15 +777,16 @@ class OverlayRenderer:
             # Content lines with cursor
             for i in range(visible_h):
                 row_y = box_y + 3 + i
-                line_idx = app.doc_edit_scroll + i
+                vi = app.doc_edit_scroll + i
 
                 # Left border
                 app.stdscr.addstr(row_y, box_x, "║", edit_border)
 
-                if line_idx < total_lines:
-                    raw = lines[line_idx]
-                    # Determine style based on content
-                    stripped = raw.rstrip()
+                if vi < total_vlines:
+                    li, start_col, segment = vlines[vi]
+                    raw_full = lines[li]
+                    # Determine style based on logical line content
+                    stripped = raw_full.rstrip()
                     if stripped.startswith("#"):
                         attr = heading_attr
                     elif stripped.startswith("---") or stripped.startswith("```"):
@@ -753,16 +794,17 @@ class OverlayRenderer:
                     else:
                         attr = body_attr
 
-                    # Truncate/pad for display (1 char left pad)
-                    display = raw[:content_w]
+                    # Pad for display (1 char left pad)
+                    display = segment[:content_w]
                     padded = " " + display + " " * max(0, content_w - len(display)) + " "
                     app.stdscr.addnstr(row_y, box_x + 1, padded[:inner_w], inner_w, attr)
 
-                    # Draw cursor if on this line
-                    if line_idx == app.doc_edit_cursor_row:
-                        cursor_screen_col = box_x + 2 + app.doc_edit_cursor_col
-                        if cursor_screen_col < box_x + box_w - 1:
-                            char_under = raw[app.doc_edit_cursor_col] if app.doc_edit_cursor_col < len(raw) else " "
+                    # Draw cursor if on this visual line
+                    if vi == cursor_vrow:
+                        vis_col = app.doc_edit_cursor_col - start_col
+                        cursor_screen_col = box_x + 2 + vis_col
+                        if 0 <= vis_col and cursor_screen_col < box_x + box_w - 1:
+                            char_under = segment[vis_col] if vis_col < len(segment) else " "
                             app.stdscr.addstr(row_y, cursor_screen_col, char_under,
                                               curses.A_REVERSE | curses.A_BOLD)
                 else:
@@ -783,7 +825,7 @@ class OverlayRenderer:
                 app.stdscr.addstr(box_y + box_h - 1, hx, help_text, edit_border)
 
             # Scroll indicator
-            max_scroll = max(0, total_lines - visible_h)
+            max_scroll = max(0, total_vlines - visible_h)
             if max_scroll > 0 and visible_h > 2:
                 pos = app.doc_edit_scroll / max_scroll
                 indicator_y = box_y + 3 + int(pos * (visible_h - 1))

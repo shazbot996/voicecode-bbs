@@ -28,6 +28,7 @@ CP_FAV_EMPTY = 22
 CP_FAV_FILLED = 23
 CP_PUBLISH = 24
 CP_PUBLISH_TITLE = 25
+CP_PUBLISH_HINT = 26
 
 
 def init_colors(tts_available: bool = False):
@@ -60,6 +61,7 @@ def init_colors(tts_available: bool = False):
     curses.init_pair(CP_FAV_FILLED, curses.COLOR_RED, -1)
     curses.init_pair(CP_PUBLISH, curses.COLOR_MAGENTA, -1)
     curses.init_pair(CP_PUBLISH_TITLE, curses.COLOR_BLACK, curses.COLOR_MAGENTA)
+    curses.init_pair(CP_PUBLISH_HINT, curses.COLOR_MAGENTA, bg_blue)
     if tts_available:
         curses.init_pair(CP_TTS, curses.COLOR_WHITE, -1)
     else:
