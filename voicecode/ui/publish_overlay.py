@@ -13,6 +13,7 @@ IMPLEMENTED_TYPES = [
     "ARCH",
     "PLAN",
     "SPEC",
+    "GLOSSARY",
 ]
 
 # Document types planned but not yet implemented
@@ -22,7 +23,6 @@ UNIMPLEMENTED_TYPES = [
     "ADR",
     "CONVENTIONS",
     "CONSTRAINTS",
-    "GLOSSARY",
     "RUNBOOK",
     "WORKFLOW",
     "CHANGELOG",
@@ -33,6 +33,26 @@ UNIMPLEMENTED_TYPES = [
 ALL_DOC_TYPES = IMPLEMENTED_TYPES + UNIMPLEMENTED_TYPES
 
 # Best-use descriptions for each document type
+# Short agent descriptions for the info panel (shown when agent is highlighted)
+AGENT_INFO = {
+    "ARCH": {
+        "title": "Architecture Agent",
+        "description": "Analyzes your codebase and produces a comprehensive architecture document covering components, data flow, state management, and design decisions. Reads actual code — does not hallucinate.",
+    },
+    "PLAN": {
+        "title": "Plan Agent",
+        "description": "Produces a stepwise implementation plan with scope, milestones, task breakdown, and dependencies. Ideal for planning features or initiatives before writing code.",
+    },
+    "SPEC": {
+        "title": "Spec Agent",
+        "description": "Generates a detailed feature specification with requirements, API contracts, edge cases, and acceptance criteria. The authoritative reference for reviewers.",
+    },
+    "GLOSSARY": {
+        "title": "Glossary Agent",
+        "description": "Maintains a single glossary at docs/context/GLOSSARY.md. Can add, edit, or remove terms. Request a full codebase scan in your prompt to auto-generate definitions.",
+    },
+}
+
 DOC_TYPE_DESCRIPTIONS = {
     "ARCH": "High-level system architecture overview — components, boundaries, data flow, and deployment topology. The single document an unfamiliar engineer reads first.",
     "PLAN": "Time-boxed implementation plan for a feature or initiative — scope, milestones, task breakdown, and dependencies. Lives in plans/active/ while in progress.",
@@ -92,9 +112,11 @@ def get_publish_agent(doc_type: str):
         from voicecode.publish.arch import ArchAgent
         from voicecode.publish.plan import PlanAgent
         from voicecode.publish.spec import SpecAgent
+        from voicecode.publish.glossary import GlossaryAgent
         _AGENT_REGISTRY["ARCH"] = ArchAgent()
         _AGENT_REGISTRY["PLAN"] = PlanAgent()
         _AGENT_REGISTRY["SPEC"] = SpecAgent()
+        _AGENT_REGISTRY["GLOSSARY"] = GlossaryAgent()
     return _AGENT_REGISTRY.get(doc_type)
 
 
@@ -152,10 +174,18 @@ class PublishOverlay:
                 app.set_status(f"{name} agent not yet implemented.")
                 return
             app.publish_selected_type = name
-            app.publish_step = 1
-            app.publish_cursor = 0
+            if name == "GLOSSARY":
+                # Glossary always targets context/ — show step 1 for info only
+                app.publish_step = 1
+                app.publish_cursor = 0  # context/ is index 0
+            else:
+                app.publish_step = 1
+                app.publish_cursor = 0
         else:
-            app.publish_selected_folder = DEST_FOLDERS[app.publish_cursor]
+            if app.publish_selected_type == "GLOSSARY":
+                app.publish_selected_folder = "context/"
+            else:
+                app.publish_selected_folder = DEST_FOLDERS[app.publish_cursor]
             self.close()
             self._execute_publish()
 
@@ -166,6 +196,8 @@ class PublishOverlay:
             # Allow -1 to select the "Edit Refine Agent Prompt" line
             app.publish_cursor = max(-1, min(count - 1, app.publish_cursor + direction))
         else:
+            if app.publish_selected_type == "GLOSSARY":
+                return  # fixed destination, no cursor movement
             count = len(DEST_FOLDERS)
             app.publish_cursor = max(0, min(count - 1, app.publish_cursor + direction))
 
@@ -448,6 +480,7 @@ class PublishOverlay:
             self._draw_type_selector(app, right_x, right_w, sel_y, box_y + box_h,
                                      purple, bright, sel_attr, disabled_attr, dim)
         else:
+            is_glossary = (app.publish_selected_type == "GLOSSARY")
             sel_title = f"Destination for {app.publish_selected_type}"
             try:
                 app.stdscr.addnstr(sel_y, right_x, sel_title, right_w, purple)
@@ -460,37 +493,65 @@ class PublishOverlay:
                 pass
             sel_y += 1
 
-            items = DEST_FOLDERS
-            visible_rows = box_y + box_h - 2 - sel_y
-            scroll = 0
-            if app.publish_cursor >= visible_rows:
-                scroll = app.publish_cursor - visible_rows + 1
-
-            for i, item in enumerate(items):
-                if i < scroll:
-                    continue
-                if sel_y >= box_y + box_h - 2:
-                    break
-                if i == app.publish_cursor:
-                    attr = sel_attr
-                    label = f"▸ {item}"
-                else:
-                    attr = curses.color_pair(CP_VOICE) | curses.A_BOLD
-                    label = f"  {item}"
+            if is_glossary:
+                # Glossary has a fixed path — show it, don't allow changing
+                fixed_label = "▸ context/  (fixed)"
                 try:
-                    app.stdscr.addnstr(sel_y, right_x, label[:right_w], right_w, attr)
+                    app.stdscr.addnstr(sel_y, right_x, fixed_label[:right_w], right_w, sel_attr)
+                except curses.error:
+                    pass
+                sel_y += 2
+                note = "The glossary is always at docs/context/GLOSSARY.md"
+                for wline in textwrap.wrap(note, width=max(right_w, 20)):
+                    if sel_y >= box_y + box_h - 2:
+                        break
+                    try:
+                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, dim)
+                    except curses.error:
+                        pass
+                    sel_y += 1
+            else:
+                items = DEST_FOLDERS
+                visible_rows = box_y + box_h - 2 - sel_y
+                scroll = 0
+                if app.publish_cursor >= visible_rows:
+                    scroll = app.publish_cursor - visible_rows + 1
+
+                for i, item in enumerate(items):
+                    if i < scroll:
+                        continue
+                    if sel_y >= box_y + box_h - 2:
+                        break
+                    if i == app.publish_cursor:
+                        attr = sel_attr
+                        label = f"▸ {item}"
+                    else:
+                        attr = curses.color_pair(CP_VOICE) | curses.A_BOLD
+                        label = f"  {item}"
+                    try:
+                        app.stdscr.addnstr(sel_y, right_x, label[:right_w], right_w, attr)
+                    except curses.error:
+                        pass
+                    sel_y += 1
+
+            # Show agent instruction below folder list
+            sel_y += 1
+            agent_info = AGENT_INFO.get(app.publish_selected_type)
+            if agent_info and sel_y < box_y + box_h - 2:
+                yellow_attr = curses.color_pair(CP_VOICE) | curses.A_BOLD
+                try:
+                    app.stdscr.addnstr(sel_y, right_x, agent_info["title"], right_w, yellow_attr)
                 except curses.error:
                     pass
                 sel_y += 1
-
-            # Show note about selected type
-            sel_y += 1
-            if sel_y < box_y + box_h - 2:
-                note = f"Type: {app.publish_selected_type}"
-                try:
-                    app.stdscr.addnstr(sel_y, right_x, note, right_w, dim)
-                except curses.error:
-                    pass
+                for wline in textwrap.wrap(agent_info["description"], width=max(right_w, 20)):
+                    if sel_y >= box_y + box_h - 2:
+                        break
+                    try:
+                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, dim)
+                    except curses.error:
+                        pass
+                    sel_y += 1
 
     def _draw_type_selector(self, app, right_x, right_w, start_y, max_y,
                             purple, bright, sel_attr, disabled_attr, dim):
@@ -590,3 +651,37 @@ class PublishOverlay:
                 pass
             sel_y += 1
             idx += 1
+
+        # ── Agent info panel at the bottom ──
+        # Determine which agent is highlighted
+        highlighted_name = None
+        if app.publish_cursor >= 0:
+            cur_items = self._type_display_items()
+            if app.publish_cursor < len(cur_items):
+                highlighted_name = cur_items[app.publish_cursor][0]
+
+        agent_info = AGENT_INFO.get(highlighted_name) if highlighted_name else None
+        if agent_info:
+            sel_y += 1
+            if sel_y < max_y - 2:
+                # Separator
+                try:
+                    app.stdscr.addnstr(sel_y, right_x, "─" * min(right_w, right_w), right_w, purple)
+                except curses.error:
+                    pass
+                sel_y += 1
+            if sel_y < max_y - 2:
+                yellow_attr = curses.color_pair(CP_VOICE) | curses.A_BOLD
+                try:
+                    app.stdscr.addnstr(sel_y, right_x, agent_info["title"], right_w, yellow_attr)
+                except curses.error:
+                    pass
+                sel_y += 1
+                for wline in textwrap.wrap(agent_info["description"], width=max(right_w, 20)):
+                    if sel_y >= max_y - 2:
+                        break
+                    try:
+                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, dim)
+                    except curses.error:
+                        pass
+                    sel_y += 1
