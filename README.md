@@ -116,11 +116,11 @@ The interface is a full curses TUI styled after 1990s bulletin board systems wit
 
 ---
 
-## DRE Prompt Execution
+## DREP Prompt Execution
 
-**Direct, Refine, Execute** — a prompt execution strategy that should be standard practice for anyone working with AI agents.
+**Direct, Refine, Execute, Publish** — a prompt execution strategy that should be standard practice for anyone working with AI agents.
 
-We spend far more time managing prompts than we do managing agents. The bottleneck in AI-assisted development isn't the agent — it's getting the right prompt to the agent in the first place. DRE gives you two paths to execution: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**. In future, I can imagine having different kinds of refinement models to enhance this greatly. The refinement models as they are are just best-effort. I haven't tuned them greatly. 
+We spend far more time managing prompts than we do managing agents. The bottleneck in AI-assisted development isn't the agent — it's getting the right prompt to the agent in the first place. DREP gives you two paths to execution: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**. Execute sends your prompt to claude code for execution directly. **Publish** now has an increasing list of task-specific agents to create and refine specific types of context markdown in an opinionated structure - it's goal is to incorporate precise context generation for application architecture, planning and agent behavior. 
 
 This is the philosophy behind VoiceCode's three-pane layout:
 
@@ -129,8 +129,9 @@ This is the philosophy behind VoiceCode's three-pane layout:
 - **Prompt Browser** (top-left) — View and browse your refined prompts. History entries show both the prompt and agent response in a combined scrollable view. Favorites indicators on the left border.
 - **Dictation Buffer** (bottom-left) — Watch voice fragments accumulate in real-time. This is where the refinement loop lives — dictate, refine, dictate more, refine again.
 - **Agent Terminal** (right) — ZMODEM transfer animation, then typewriter-streamed responses with context meter. Activity spinner shows agent status and stall warnings.
+- **Publish Document Window** (modal, fullscreen) — Pressing [P] opens the publish document window that lists available document publishing agents, and lets you execute them from your existing prompt content, either direct or refined.
 
-The DRE model is also why VoiceCode is a retro CLI and not a web app. Everything in this application is keyboard shortcuts — the thing you lose in a modern web UI is often found in the simplicity of a command line interface. When your workflow is about fast iteration between voice and text, every millisecond of friction matters. Curses gives you that speed and simplicity. 
+The DREP model is also why VoiceCode is a retro CLI and not a web app. Everything in this application is keyboard shortcuts — the thing you lose in a modern web UI is often found in the simplicity of a command line interface. When your workflow is about fast iteration between voice and text, every millisecond of friction matters. Curses gives you that speed and simplicity. 
 
 ---
 
