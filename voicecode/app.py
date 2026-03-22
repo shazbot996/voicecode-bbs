@@ -210,6 +210,7 @@ class BBSApp:
         self.doc_edit_cursor_col = 0
         self.doc_edit_scroll = 0
         self.doc_edit_save_confirm = False
+        self.doc_reader_on_close: object = None  # optional callback when doc reader closes
 
         # Shortcut editor overlay state
         self.show_shortcut_editor = False

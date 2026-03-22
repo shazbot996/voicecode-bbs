@@ -206,7 +206,8 @@ class PublishOverlay:
 
         prompt_path = str(agent.prompt_path)
         self.close()
-        app.overlays.open_doc_reader(prompt_path, f"{name} Prompt Template")
+        app.overlays.open_doc_reader(prompt_path, f"{name} Prompt Template",
+                                     on_close=self.open)
 
     def edit_refine_prompt(self):
         """Open the Refine Agent's prompt template in the doc reader/editor."""
@@ -214,7 +215,8 @@ class PublishOverlay:
         app = self.app
         prompt_path = str(REFINE_PROMPT_PATH)
         self.close()
-        app.overlays.open_doc_reader(prompt_path, "Refine Agent Prompt")
+        app.overlays.open_doc_reader(prompt_path, "Refine Agent Prompt",
+                                     on_close=self.open)
 
     def _execute_publish(self):
         """Build the publish prompt and send it through the agent pipeline."""

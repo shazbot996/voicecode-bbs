@@ -578,12 +578,13 @@ class OverlayRenderer:
 
     # ─── Document Reader ──────────────────────────────────────────
 
-    def open_doc_reader(self, full_path: str, display_title: str):
+    def open_doc_reader(self, full_path: str, display_title: str, on_close=None):
         """Open the document reader overlay for the given file."""
         app = self.app
         app.doc_reader_path = full_path
         app.doc_reader_title = display_title
         app.doc_reader_scroll = 0
+        app.doc_reader_on_close = on_close
         try:
             content = Path(full_path).read_text(encoding="utf-8")
         except Exception as e:

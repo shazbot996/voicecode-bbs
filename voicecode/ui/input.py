@@ -23,6 +23,16 @@ class InputHandler:
     def __init__(self, app):
         self.app = app
 
+    def _close_doc_reader(self):
+        """Close the doc reader and fire any on_close callback."""
+        app = self.app
+        app.show_doc_reader = False
+        app.doc_edit_mode = False
+        cb = app.doc_reader_on_close
+        app.doc_reader_on_close = None
+        if callable(cb):
+            cb()
+
     def read_paste_content(self) -> str:
         """Read characters until the bracketed-paste end sequence ESC[201~."""
         app = self.app
@@ -387,8 +397,7 @@ class InputHandler:
 
             # ── View mode (read-only) ──
             if ch in (27,):
-                app.show_doc_reader = False
-                app.doc_edit_mode = False
+                self._close_doc_reader()
                 app.stdscr.nodelay(True)
                 app.stdscr.getch()
             elif ch in (10, 13, curses.KEY_ENTER):
@@ -401,7 +410,7 @@ class InputHandler:
                 app.doc_edit_save_confirm = False
                 app.set_status("Edit mode — ESC to save/discard")
             elif ch in (ord("q"), ord("Q")):
-                app.show_doc_reader = False
+                self._close_doc_reader()
             elif ch == curses.KEY_UP:
                 app.doc_reader_scroll = max(0, app.doc_reader_scroll - 1)
             elif ch == curses.KEY_DOWN:
@@ -436,7 +445,7 @@ class InputHandler:
                     ts = datetime.datetime.now().strftime("%H:%M:%S")
                     app.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
                     app.set_status(f"Inserted: {slug}")
-                app.show_doc_reader = False
+                self._close_doc_reader()
             return
 
         # Handle folder slug overlay
