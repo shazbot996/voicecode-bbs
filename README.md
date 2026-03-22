@@ -96,12 +96,12 @@ The interface is a full curses TUI styled after 1990s bulletin board systems wit
 ## The Prompt Refinery Workflow
 
 ```
-  1. DICTATE       2. REFINE        3. ITERATE       4. EXECUTE       5. LISTEN
+  1. DICTATE       2. REFINE        3. ITERATE       4. EXECUTE       5. PUBLISH
  ┌──────────┐   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
- │  Speak   │   │ AI turns │    │ Add more │    │  Prompt  │    │ Response │
- │  your    │──►│ fragments│───►│ fragments│───►│  sent to │───►│ streamed │
- │  ideas   │   │ into a   │    │ re-refine│    │  Claude/ │    │ back w/  │
- │          │   │ prompt   │    │ repeat   │    │  Gemini  │    │ TTS      │
+ │  Speak   │   │ AI turns │    │ Add more │    │  Prompt  │    │ Publish  │
+ │  your    │──►│ fragments│───►│ fragments│───►│  sent to │───►│ docs from│
+ │  ideas   │   │ into a   │    │ re-refine│    │  Claude/ │    │ your     │
+ │          │   │ prompt   │    │ repeat   │    │  Gemini  │    │ prompts  │
  └──────────┘   └──────────┘    └──────────┘    └──────────┘    └──────────┘
     [SPACE]         [R]          [SPACE] [R]        [E]              [P]
 ```
@@ -110,7 +110,7 @@ The interface is a full curses TUI styled after 1990s bulletin board systems wit
 2. **Refine** — Press R to have AI synthesize your fragments into a polished prompt.
 3. **Iterate** — Continue dictating additional fragments and refine again. The AI merges new dictations into the ongoing refined prompt, building on what's already there. This loop is the core of the Prompt Refinery — you can circle back through dictate and refine as many times as needed until the prompt captures exactly what you mean.
 4. **Execute** — Press E to send the prompt to your agent. Watch the ZMODEM animation, then the response streams in with a typewriter effect.
-5. **Listen** — The agent's TTS summary is read aloud locally (and on Cast speakers if configured). Press P to replay.
+5. **Publish** — Press P to turn your refined prompts into structured documentation. Publish agents take your prompt as scope and generate architecture docs, plans, specs, glossaries, and constraints files — building a living docs library from your voice-driven workflow.
 
 **Direct Query** — Not every prompt needs refinement. In fact, many are damaged by it. Press **D** to skip the refinery entirely and send your dictation straight to the agent. The value here is still the multimodal dictation buffer — combining voice, keyboard edits, and shortcut injection gives you a better first draft than voice dictating into a text field. When your dictation comes out clean, just fire it. Mess up? Just press "U" and try the last section again. The dictation system is meant to append repeated "chunks" of vocal capture. The user will quickly learn a balance between a long monologue of text, and smaller fragment captures to assemble a layered dictation transcript. 
 
@@ -245,17 +245,19 @@ When enabled, every TTS summary is generated as a WAV file and streamed to all s
 
 ### Publish Documents
 
-Press **P** to open the Publish overlay — a two-step modal that generates structured documentation from your codebase using specialized AI agents. This is just scratching the surface of proper prompt orchestration, but it's building towards a freeform input funnel into a new kind of context structure that we are all forming as we go!  I'm framing an opinion here on folder layout and docs structure to start here, and eventually more convention can be applied, and automations implemented. For now, I'm trying to funnel freeform thoughts into refinement loops and context publication standards.  
+Press **P** to open the Publish overlay — a two-step modal that generates structured documentation from your codebase using specialized AI agents. The publish workflow closes the loop on the Prompt Refinery: you dictate and refine your thoughts, then publish them as living documentation that agents and teammates can reference on every session. Each publish agent reads actual code and merges your prompt scope into a well-structured markdown file.
 
 **Step 1 — Pick a document type:**
 
-| Type | Purpose |
-|------|---------|
-| **ARCH** | High-level architecture overview — components, boundaries, data flow, and deployment topology |
-| **PLAN** | Time-boxed implementation plan — scope, milestones, task breakdown, and dependencies |
-| **SPEC** | Detailed feature specification — requirements, API contracts, edge cases, and acceptance criteria |
+| Type | Agent | Purpose |
+|------|-------|---------|
+| **ARCH** | Architecture Agent | Analyzes the codebase and produces a comprehensive architecture document — components, data flow, state management, and design decisions. The single document an unfamiliar engineer reads first. |
+| **PLAN** | Plan Agent | Produces a stepwise implementation plan with scope, milestones, task breakdown, and dependencies. References real files and functions so a developer or AI agent can follow it without guessing. |
+| **SPEC** | Spec Agent | Generates a detailed feature specification — requirements, API contracts, edge cases, and acceptance criteria. The authoritative reference designers and reviewers check against. |
+| **GLOSSARY** | Glossary Agent | Maintains a single glossary at `docs/context/GLOSSARY.md`. Defines shared vocabulary — domain terms, acronyms, and project-specific jargon. Request a full codebase scan to auto-generate definitions, or add terms incrementally. |
+| **CONSTRAINTS** | Constraints Agent | Maintains `docs/context/CONSTRAINTS.md` with hard boundaries and safety rails that AI agents read every session. Describe constraints in plain language and the agent structures them. Ask for the questionnaire to discover what kinds of constraints you should define. |
 
-Additional types (BRIEF, SCHEMA, ADR, CONVENTIONS, CONSTRAINTS, GLOSSARY, RUNBOOK, WORKFLOW, CHANGELOG, README) are planned but not yet implemented.
+Additional types (BRIEF, SCHEMA, ADR, CONVENTIONS, RUNBOOK, WORKFLOW, CHANGELOG, README) are planned but not yet implemented.
 
 **Step 2 — Pick a destination folder** within `docs/`:
 

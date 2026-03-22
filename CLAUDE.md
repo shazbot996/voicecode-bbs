@@ -8,4 +8,4 @@
 - No build system or tests; dependencies in `requirements.txt`, virtualenv in `venv/`
 - The `ClaudeProvider` class (in `voicecode/providers/claude.py`) handles Claude CLI integration — session continuity uses `--resume` with session IDs
 - This is a curses application with background threads — changes to shared state must be thread-safe (use `queue.Queue` for UI updates)
-- The `publish/` module contains document publishing agents (ARCH, PLAN, SPEC) — each subclasses `PublishAgent` with a prompt template that gets sent through the normal agent execution pipeline. The publish overlay UI is in `ui/publish_overlay.py`.
+- The `publish/` module contains document publishing agents (ARCH, PLAN, SPEC, GLOSSARY, CONSTRAINTS) — each subclasses `PublishAgent` with a prompt template that gets sent through the normal agent execution pipeline. GLOSSARY and CONSTRAINTS use fixed destination folders (`context/`). The publish overlay UI is in `ui/publish_overlay.py`.
