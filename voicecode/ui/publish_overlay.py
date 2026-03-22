@@ -4,7 +4,7 @@ import curses
 import textwrap
 
 from voicecode.ui.colors import (
-    CP_PUBLISH, CP_PUBLISH_TITLE, CP_ACCENT, CP_VOICE, CP_AGENT,
+    CP_PUBLISH, CP_PUBLISH_TITLE, CP_ACCENT, CP_VOICE, CP_AGENT, CP_PROMPT,
 )
 
 
@@ -143,6 +143,9 @@ class PublishOverlay:
         """Confirm the current selection and advance."""
         app = self.app
         if app.publish_step == 0:
+            if app.publish_cursor == -1:
+                self.edit_refine_prompt()
+                return
             items = self._type_display_items()
             name, enabled = items[app.publish_cursor]
             if not enabled:
@@ -160,9 +163,11 @@ class PublishOverlay:
         app = self.app
         if app.publish_step == 0:
             count = len(self._type_display_items())
+            # Allow -1 to select the "Edit Refine Agent Prompt" line
+            app.publish_cursor = max(-1, min(count - 1, app.publish_cursor + direction))
         else:
             count = len(DEST_FOLDERS)
-        app.publish_cursor = max(0, min(count - 1, app.publish_cursor + direction))
+            app.publish_cursor = max(0, min(count - 1, app.publish_cursor + direction))
 
     def info_scroll(self, direction: int, page_size: int = 5):
         """Scroll the left informational panel by page_size lines."""
@@ -182,6 +187,10 @@ class PublishOverlay:
         """Open the highlighted agent's prompt template in the doc reader/editor."""
         app = self.app
         if app.publish_step == 0:
+            if app.publish_cursor == -1:
+                # Cursor is on the refine line — E edits refine prompt too
+                self.edit_refine_prompt()
+                return
             items = self._type_display_items()
             name, enabled = items[app.publish_cursor]
             if not enabled:
@@ -198,6 +207,14 @@ class PublishOverlay:
         prompt_path = str(agent.prompt_path)
         self.close()
         app.overlays.open_doc_reader(prompt_path, f"{name} Prompt Template")
+
+    def edit_refine_prompt(self):
+        """Open the Refine Agent's prompt template in the doc reader/editor."""
+        from voicecode.agent.refine import REFINE_PROMPT_PATH
+        app = self.app
+        prompt_path = str(REFINE_PROMPT_PATH)
+        self.close()
+        app.overlays.open_doc_reader(prompt_path, "Refine Agent Prompt")
 
     def _execute_publish(self):
         """Build the publish prompt and send it through the agent pipeline."""
@@ -478,6 +495,31 @@ class PublishOverlay:
         """Draw the two-section type selector (implemented + coming soon)."""
         sel_y = start_y
         items = self._type_display_items()
+        white_attr = curses.color_pair(CP_PROMPT) | curses.A_BOLD
+
+        # Refine agent prompt editor link
+        yellow_attr = curses.color_pair(CP_VOICE) | curses.A_BOLD
+        refine_selected = (app.publish_cursor == -1)
+        try:
+            part1 = "Edit "
+            part2 = "[R]efine"
+            part3 = " Agent Prompt"
+            if refine_selected:
+                full_label = f"▸ {part1}{part2}{part3}"
+                app.stdscr.addnstr(sel_y, right_x, full_label[:right_w], right_w, sel_attr)
+            else:
+                x = right_x
+                prefix = "  "
+                app.stdscr.addnstr(sel_y, x, prefix, right_w, yellow_attr)
+                x += len(prefix)
+                app.stdscr.addnstr(sel_y, x, part1, right_w - len(prefix), yellow_attr)
+                x += len(part1)
+                app.stdscr.addnstr(sel_y, x, part2, right_w - len(prefix) - len(part1), white_attr)
+                x += len(part2)
+                app.stdscr.addnstr(sel_y, x, part3, right_w - len(prefix) - len(part1) - len(part2), yellow_attr)
+        except curses.error:
+            pass
+        sel_y += 2
 
         # Section header: Available
         header = "Available"

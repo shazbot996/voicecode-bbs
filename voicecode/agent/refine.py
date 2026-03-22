@@ -5,7 +5,22 @@ import subprocess
 
 from voicecode.providers.base import CLIProvider
 from voicecode.providers.claude import ClaudeProvider
-from voicecode.constants import INITIAL_REFINE_PROMPT, MODIFY_REFINE_PROMPT
+from voicecode.publish.base import PROMPTS_DIR
+
+# Path to the combined refine prompt template on disk
+REFINE_PROMPT_PATH = PROMPTS_DIR / "REFINE.md"
+
+# Separator between the initial and modify sections in the template file
+_SECTION_SEP = "===MODIFY==="
+
+
+def _load_refine_prompts() -> tuple[str, str]:
+    """Load and split the refine prompt template from disk."""
+    raw = REFINE_PROMPT_PATH.read_text(encoding="utf-8")
+    parts = raw.split(_SECTION_SEP, 1)
+    initial = parts[0].rstrip("\n")
+    modify = parts[1].lstrip("\n") if len(parts) > 1 else initial
+    return initial, modify
 
 
 def refine_with_llm(fragments: list[str], current_prompt: str | None,
@@ -16,12 +31,13 @@ def refine_with_llm(fragments: list[str], current_prompt: str | None,
         status_callback(f"Refining with {provider.name}...")
 
     fragment_text = "\n".join(f"- {f}" for f in fragments)
+    initial_tpl, modify_tpl = _load_refine_prompts()
 
     if current_prompt:
-        meta_prompt = MODIFY_REFINE_PROMPT.format(
+        meta_prompt = modify_tpl.format(
             current_prompt=current_prompt, fragments=fragment_text)
     else:
-        meta_prompt = INITIAL_REFINE_PROMPT.format(fragments=fragment_text)
+        meta_prompt = initial_tpl.format(fragments=fragment_text)
 
     try:
         cmd = provider.build_refine_cmd(meta_prompt)

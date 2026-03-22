@@ -620,6 +620,8 @@ class InputHandler:
                 app.stdscr.getch()
             elif ch in (ord("e"), ord("E")):
                 app.publish_overlay.edit_prompt()
+            elif ch in (ord("r"), ord("R")):
+                app.publish_overlay.edit_refine_prompt()
             elif ch in (ord("q"), ord("Q"), ord("p"), ord("P")):
                 app.publish_overlay.close()
             return
