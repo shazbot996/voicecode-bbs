@@ -100,5 +100,7 @@ class GeminiProvider(CLIProvider):
 
     def is_result_event(self, event: dict) -> str | None:
         if event.get("type") == "result":
-            return event.get("status", "")
+            # Return the actual response text (like Claude's "result" field).
+            # Fall back to "" so the runner uses streamed response_text_parts.
+            return event.get("result", event.get("response", ""))
         return None
