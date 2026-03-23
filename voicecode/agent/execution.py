@@ -246,15 +246,12 @@ class ExecutionHelper:
         if not prompt_text:
             app.set_status("Could not read historical prompt.")
             return
-        # Reset state for a fresh working prompt
+        # Copy historical prompt as the new working prompt, preserving
+        # any in-progress dictation so the user can refine into it.
         self.clear_executed_prompt()
-        app.fragments.clear()
-        app.input_handler.clear_buffer_file()
         app.current_prompt = prompt_text
         app.prompt_version = 1
         app.prompt_saved = False
-        app.dictation_pane.lines.clear()
-        app.dictation_pane.scroll_offset = 0
         app.browser_view = "active"
         app.browser_index = -1
         w = app.stdscr.getmaxyx()[1] // 2
