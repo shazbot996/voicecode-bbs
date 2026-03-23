@@ -1,7 +1,6 @@
 """Agent execution — stream processing, event parsing, stall detection."""
 
 import json
-import os
 import time
 import select
 import subprocess
@@ -139,7 +138,7 @@ class RunnerHelper:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                env=os.environ,
+                env=provider.get_env(),
                 start_new_session=True,
             )
 

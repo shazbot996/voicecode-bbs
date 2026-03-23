@@ -1,6 +1,5 @@
 """LLM-based prompt refinement."""
 
-import os
 import subprocess
 
 from voicecode.providers.base import CLIProvider
@@ -42,7 +41,7 @@ def refine_with_llm(fragments: list[str], current_prompt: str | None,
     try:
         cmd = provider.build_refine_cmd(meta_prompt)
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120, env=os.environ)
+            cmd, capture_output=True, text=True, timeout=120, env=provider.get_env())
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
         else:

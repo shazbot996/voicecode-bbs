@@ -1,5 +1,6 @@
 """Abstract base class for CLI AI providers."""
 
+import os
 import shutil
 import subprocess
 
@@ -27,6 +28,13 @@ class CLIProvider:
             return result.stdout.strip() if result.returncode == 0 else None
         except Exception:
             return None
+
+    def get_env(self) -> dict[str, str]:
+        """Return the environment dict for subprocess calls.
+
+        Subclasses can override to modify env (e.g. removing proxy vars).
+        """
+        return os.environ.copy()
 
     def build_refine_cmd(self, prompt: str) -> list[str]:
         raise NotImplementedError

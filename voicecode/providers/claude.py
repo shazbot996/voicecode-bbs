@@ -1,7 +1,5 @@
 """Claude CLI provider for VoiceCode BBS."""
 
-import shlex
-
 from voicecode.providers.base import CLIProvider
 
 
