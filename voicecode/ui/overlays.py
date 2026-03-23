@@ -81,6 +81,7 @@ class OverlayRenderer:
             "  ── Navigation & Scrolling ────────",
             "  ↑/↓      Scroll prompt pane",
             "  PgUp/Dn  Scroll agent output",
+            "  End      Jump to bottom of output",
             "  Tab      Shortcuts/docs browser",
             "",
             "  ── Voice & AI ───────────────────",
