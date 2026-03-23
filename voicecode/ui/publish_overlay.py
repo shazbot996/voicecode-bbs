@@ -10,6 +10,7 @@ from voicecode.ui.colors import (
 
 # Document types with a publishing agent implemented
 IMPLEMENTED_TYPES = [
+    "ADR",
     "ARCH",
     "PLAN",
     "SPEC",
@@ -21,7 +22,6 @@ IMPLEMENTED_TYPES = [
 UNIMPLEMENTED_TYPES = [
     "BRIEF",
     "SCHEMA",
-    "ADR",
     "CONVENTIONS",
     "RUNBOOK",
     "WORKFLOW",
@@ -34,6 +34,10 @@ ALL_DOC_TYPES = IMPLEMENTED_TYPES + UNIMPLEMENTED_TYPES
 
 # Short agent descriptions for the info panel (shown when agent is highlighted)
 AGENT_INFO = {
+    "ADR": {
+        "title": "ADR Agent — Architecture Decision Records",
+        "description": "Captures a single significant technical decision: the context that prompted it, alternatives considered, the choice made, and its consequences. Use ADRs for hard-to-reverse decisions like choosing a framework, adopting a pattern, or establishing a convention. Each ADR is numbered sequentially (0001, 0002, ...) and lives in decisions/.",
+    },
     "ARCH": {
         "title": "Architecture Agent",
         "description": "Analyzes your codebase and produces a comprehensive architecture document covering components, data flow, state management, and design decisions. Reads actual code — does not hallucinate.",
@@ -112,11 +116,13 @@ def get_publish_agent(doc_type: str):
     """Return a publishing agent instance for the given doc type, or None."""
     if not _AGENT_REGISTRY:
         # Lazy import to avoid circular deps
+        from voicecode.publish.adr import AdrAgent
         from voicecode.publish.arch import ArchAgent
         from voicecode.publish.plan import PlanAgent
         from voicecode.publish.spec import SpecAgent
         from voicecode.publish.glossary import GlossaryAgent
         from voicecode.publish.constraints import ConstraintsAgent
+        _AGENT_REGISTRY["ADR"] = AdrAgent()
         _AGENT_REGISTRY["ARCH"] = ArchAgent()
         _AGENT_REGISTRY["PLAN"] = PlanAgent()
         _AGENT_REGISTRY["SPEC"] = SpecAgent()
