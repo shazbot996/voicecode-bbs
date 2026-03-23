@@ -258,7 +258,7 @@ Press **P** to open the Publish overlay — a two-step modal that generates stru
 | **GLOSSARY** | Glossary Agent | Maintains a single glossary at `docs/context/GLOSSARY.md`. Defines shared vocabulary — domain terms, acronyms, and project-specific jargon. Request a full codebase scan to auto-generate definitions, or add terms incrementally. |
 | **CONSTRAINTS** | Constraints Agent | Maintains `docs/context/CONSTRAINTS.md` with hard boundaries and safety rails that AI agents read every session. Describe constraints in plain language and the agent structures them. Ask for the questionnaire to discover what kinds of constraints you should define. |
 
-Additional types (BRIEF, SCHEMA, ADR, CONVENTIONS, RUNBOOK, WORKFLOW, CHANGELOG, README) are planned but not yet implemented.
+Additional types (BRIEF) are planned but not yet implemented.
 
 **Step 2 — Pick a destination folder** within `docs/`:
 
@@ -270,7 +270,6 @@ docs/
   decisions/        — ADRs, numbered sequentially
   plans/            — active and archived plans
   specs/            — feature specs
-  runbooks/         — operational docs
 ```
 
 The publish agent uses your current prompt as its scope (what to focus on), builds a specialized system prompt for the selected document type, and sends it through the normal agent execution pipeline. The result is a well-structured markdown file written to your chosen `docs/` subfolder.

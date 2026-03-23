@@ -18,14 +18,11 @@ IMPLEMENTED_TYPES = [
     "CONSTRAINTS",
     "CONVENTIONS",
     "SCHEMA",
+    "README",
 ]
 
 # Document types planned but not yet implemented
 UNIMPLEMENTED_TYPES = [
-    "RUNBOOK",
-    "WORKFLOW",
-    "CHANGELOG",
-    "README",
 ]
 
 # Combined list for display and reference
@@ -65,6 +62,10 @@ AGENT_INFO = {
         "title": "Schema Agent — Data Layer Reference",
         "description": "Derives and maintains docs/context/SCHEMA.md by scanning the codebase for models, tables, data classes, and relationships. Does not require specific items — it reads the code and produces the schema. Point it at reference materials or ask for a full scan.",
     },
+    "README": {
+        "title": "README Agent — Repository Entry Point",
+        "description": "Curates and maintains README.md at the project root. Keeps the GitHub landing page accurate with project overview, setup instructions, features, and usage. Ask for a full scan to generate from scratch, or describe specific updates.",
+    },
 }
 
 DOC_TYPE_DESCRIPTIONS = {
@@ -77,19 +78,14 @@ DOC_TYPE_DESCRIPTIONS = {
     "CONVENTIONS": "Coding and workflow conventions — naming, file layout, PR etiquette, and style rules the team has agreed on. Reduces review friction and onboarding time.",
     "CONSTRAINTS": "Hard boundaries the project must respect — regulatory requirements, performance budgets, compatibility targets, and non-negotiable dependencies.",
     "GLOSSARY": "Shared vocabulary — domain terms, acronyms, and project-specific jargon with precise definitions. Eliminates ambiguity in specs, tickets, and conversations.",
-    "RUNBOOK": "Operational playbook for a recurring procedure — deployment steps, incident response, rollback instructions, or environment setup. Optimized for quick execution under pressure.",
-    "WORKFLOW": "Process documentation — how a cross-functional workflow (release cycle, RFC review, on-call rotation) operates end to end, including roles and hand-offs.",
-    "CHANGELOG": "User-facing release notes — what changed, why it matters, and any migration steps. Grouped by version and category (added, changed, fixed, removed).",
     "README": "Repository entry point — what the project does, how to set it up, and where to find deeper documentation. The first file every visitor and contributor sees.",
 }
 
-# Destination folders (no changelog/ — those should be automatic)
 DEST_FOLDERS = [
     "context/",
     "decisions/",
     "plans/",
     "specs/",
-    "runbooks/",
 ]
 
 # Reference tree shown in the tutorial section
@@ -111,8 +107,6 @@ REFERENCE_TREE = [
     "  specs/            — feature specs",
     "    active/",
     "    archive/",
-    "  runbooks/         — operational docs",
-    "  changelog/        — or just CHANGELOG.md at root",
 ]
 
 # Registry of publishing agents by doc type
@@ -131,6 +125,7 @@ def get_publish_agent(doc_type: str):
         from voicecode.publish.constraints import ConstraintsAgent
         from voicecode.publish.conventions import ConventionsAgent
         from voicecode.publish.schema import SchemaAgent
+        from voicecode.publish.readme import ReadmeAgent
         _AGENT_REGISTRY["ADR"] = AdrAgent()
         _AGENT_REGISTRY["ARCH"] = ArchAgent()
         _AGENT_REGISTRY["PLAN"] = PlanAgent()
@@ -139,6 +134,7 @@ def get_publish_agent(doc_type: str):
         _AGENT_REGISTRY["CONSTRAINTS"] = ConstraintsAgent()
         _AGENT_REGISTRY["CONVENTIONS"] = ConventionsAgent()
         _AGENT_REGISTRY["SCHEMA"] = SchemaAgent()
+        _AGENT_REGISTRY["README"] = ReadmeAgent()
     return _AGENT_REGISTRY.get(doc_type)
 
 
@@ -196,7 +192,7 @@ class PublishOverlay:
                 app.set_status(f"{name} agent not yet implemented.")
                 return
             app.publish_selected_type = name
-            if name in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA"):
+            if name in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README"):
                 # Fixed-destination agents always target context/
                 app.publish_step = 1
                 app.publish_cursor = 0  # context/ is index 0
@@ -204,7 +200,9 @@ class PublishOverlay:
                 app.publish_step = 1
                 app.publish_cursor = 0
         else:
-            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA"):
+            if app.publish_selected_type == "README":
+                app.publish_selected_folder = ""
+            elif app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA"):
                 app.publish_selected_folder = "context/"
             else:
                 app.publish_selected_folder = DEST_FOLDERS[app.publish_cursor]
@@ -218,7 +216,7 @@ class PublishOverlay:
             # Allow -1 to select the "Edit Refine Agent Prompt" line
             app.publish_cursor = max(-1, min(count - 1, app.publish_cursor + direction))
         else:
-            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA"):
+            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README"):
                 return  # fixed destination, no cursor movement
             count = len(DEST_FOLDERS)
             app.publish_cursor = max(0, min(count - 1, app.publish_cursor + direction))
@@ -299,7 +297,8 @@ class PublishOverlay:
         prompt_text = agent.build_prompt(scope, dest_folder)
 
         # Feed into the standard execution pipeline
-        app.executed_prompt_text = f"[PUBLISH {doc_type} → docs/{dest_folder}]"
+        dest_label = f"docs/{dest_folder}" if dest_folder else "README.md"
+        app.executed_prompt_text = f"[PUBLISH {doc_type} → {dest_label}]"
         from voicecode.ui.colors import CP_XFER
         if app._prompt_pane_original_color is None:
             app._prompt_pane_original_color = app.prompt_pane.color_pair
@@ -327,7 +326,7 @@ class PublishOverlay:
         app._tts_in_summary = False
 
         app.browser.set_agent_welcome(40)
-        app.set_status(f"Publishing {doc_type} → docs/{dest_folder} ...")
+        app.set_status(f"Publishing {doc_type} → {dest_label} ...")
 
         app._agent_cancel.clear()
         threading.Thread(target=app.runner.run_agent, daemon=True).start()
@@ -507,7 +506,7 @@ class PublishOverlay:
             self._draw_type_selector(app, right_x, right_w, sel_y, box_y + box_h,
                                      purple, bright, sel_attr, disabled_attr, dim, body)
         else:
-            is_fixed_dest = app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS")
+            is_fixed_dest = app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README")
             sel_title = f"Destination for {app.publish_selected_type}"
             try:
                 app.stdscr.addnstr(sel_y, right_x, sel_title, right_w, purple)
@@ -522,14 +521,17 @@ class PublishOverlay:
 
             if is_fixed_dest:
                 # Fixed-destination agent — show path, don't allow changing
-                fixed_label = "▸ context/  (fixed)"
+                if app.publish_selected_type == "README":
+                    fixed_label = "▸ ./  (project root, fixed)"
+                    note = "This document is always at README.md in the project root"
+                else:
+                    fixed_label = "▸ context/  (fixed)"
+                    note = f"This document is always at docs/context/{app.publish_selected_type}.md"
                 try:
                     app.stdscr.addnstr(sel_y, right_x, fixed_label[:right_w], right_w, sel_attr)
                 except curses.error:
                     pass
                 sel_y += 2
-                doc_name = app.publish_selected_type
-                note = f"This document is always at docs/context/{doc_name}.md"
                 for wline in textwrap.wrap(note, width=max(right_w, 20)):
                     if sel_y >= box_y + box_h - 2:
                         break

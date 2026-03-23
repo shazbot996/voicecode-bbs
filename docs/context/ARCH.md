@@ -142,7 +142,7 @@ All inter-thread communication flows through `BBSApp.ui_queue` (a `queue.Queue`)
 
 **`arch.py` — `ArchAgent`**: Concrete agent for generating architecture documents. Contains a detailed prompt template that instructs the AI to analyze code and produce a structured ARCH.md with 9 sections.
 
-**`publish_overlay.py`**: The UI surface. Two-step modal: select document type (only ARCH is currently implemented; 12 others are planned), then select destination folder (context/, decisions/, plans/, specs/, runbooks/). Feeds the assembled prompt into the standard `runner.run_agent()` pipeline.
+**`publish_overlay.py`**: The UI surface. Two-step modal: select document type, then select destination folder (context/, decisions/, plans/, specs/). Feeds the assembled prompt into the standard `runner.run_agent()` pipeline.
 
 ### 3.9 Settings & Persistence (`voicecode/settings.py`)
 
