@@ -30,9 +30,9 @@ class OverlayRenderer:
         app = self.app
         h, w = app.stdscr.getmaxyx()
 
-        # Overlay dimensions — leave a border of surrounding UI visible
-        overlay_w = min(64, w - 6)
-        overlay_h = min(42, h - 4)
+        # Two-column layout — wider overlay to fit all content
+        overlay_w = min(100, w - 4)
+        overlay_h = min(30, h - 4)
         if overlay_w < 40 or overlay_h < 16:
             return
 
@@ -40,69 +40,76 @@ class OverlayRenderer:
         start_x = max(2, (w - overlay_w) // 2)
 
         border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        text_attr = curses.color_pair(CP_HELP) | curses.A_BOLD
         body_attr = curses.color_pair(CP_HELP)
         accent_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
 
         inner_w = overlay_w - 2
+        col_w = inner_w // 2
 
-        # Content lines for the help overlay
-        content = [
+        # Left column content
+        left_col = [
+            f" V O I C E C O D E  B B S  v{__version__}",
+            " Voice-Driven Prompt Workshop",
             "",
-            f"  V O I C E C O D E   B B S   v{__version__}",
-            "  Voice-Driven Prompt Workshop",
+            " ── How It Works ──────────────",
+            " Dictate speech fragments, refine",
+            " them into prompts with AI, then",
+            " execute via AI agent.",
             "",
-            "  ── How It Works ──────────────────",
-            "  Dictate speech fragments, refine",
-            "  them into polished prompts with AI,",
-            "  then execute via AI agent.",
+            " ── Recording & Input ─────────",
+            " SPACE  Toggle voice recording",
+            " Enter  Type text into dictation",
+            " U      Undo last dictation entry",
+            " C      Clear dictation buffer",
             "",
-            "  ── Recording & Input ─────────────",
-            "  SPACE  Toggle voice recording",
-            "  Enter  Type text into dictation",
-            "  U      Undo last dictation entry",
-            "  C      Clear dictation buffer",
-            "",
-            "  ── Prompt Actions ────────────────",
-            "  R      Refine fragments → prompt",
-            "  E      Execute current prompt",
-            "  D      Direct execute (skip refine)",
-            "  S      Save prompt to history",
-            "  N      New prompt",
-            "  K      Kill running agent",
-            "  W      New session (clear context)",
-            "",
-            "  ── History & Favorites ───────────",
-            "  ←/→    Browse prompt history",
-            "  Home   Return to current prompt",
-            "  F      Toggle favorites view / add fav",
-            "  1-0    Quick-load favorites 1-10",
-            "",
-            "  ── Navigation & Scrolling ────────",
-            "  ↑/↓      Scroll prompt pane",
-            "  PgUp/Dn  Scroll agent output",
-            "  End      Jump to bottom of output",
-            "  Tab      Shortcuts/docs browser",
-            "",
-            "  ── Voice & AI ───────────────────",
-            "  [/]    Cycle TTS voice",
-            "  Y      Replay last TTS summary",
-            "  M      Toggle Gemini / Claude",
-            "  P      Publish document",
-            "",
-            "  ── System ───────────────────────",
-            "  O      Options / Settings",
-            "  T      Cycle tip text",
-            "  H      This help screen",
-            "  ESC    Main menu",
-            "  X      Restart application",
-            "  Q      Quit",
-            "",
-            "  Press H, ESC, or Q to close",
+            " ── Prompt Actions ────────────",
+            " R      Refine fragments → prompt",
+            " E      Execute current prompt",
+            " D      Direct execute (skip refine)",
+            " S      Save prompt to history",
+            " N      New prompt",
+            " K      Kill running agent",
+            " W      New session (clear context)",
         ]
 
-        # Truncate if overlay is too small
-        content = content[:overlay_h - 2]
+        # Right column content
+        right_col = [
+            " ── History & Favorites ───────",
+            " ←/→    Browse prompt history",
+            " Home   Return to current prompt",
+            " F      Toggle favorites / add fav",
+            " 1-0    Quick-load favorites 1-10",
+            "",
+            " ── Navigation & Scrolling ────",
+            " ↑/↓      Scroll prompt pane",
+            " PgUp/Dn  Scroll agent output",
+            " End      Jump to bottom of output",
+            " Tab      Shortcuts/docs browser",
+            "",
+            " ── Voice & AI ────────────────",
+            " [/]    Cycle TTS voice",
+            " Y      Replay last TTS summary",
+            " M      Toggle Gemini / Claude",
+            " P      Publish document",
+            "",
+            " ── System ────────────────────",
+            " O      Options / Settings",
+            " T      Cycle tip text",
+            " H      This help screen",
+            " ESC    Main menu",
+            " X      Restart application",
+            " Q      Quit",
+        ]
+
+        # Pad columns to same length
+        max_rows = max(len(left_col), len(right_col))
+        while len(left_col) < max_rows:
+            left_col.append("")
+        while len(right_col) < max_rows:
+            right_col.append("")
+
+        # Adjust overlay height to fit content (title rows + body + bottom border)
+        body_rows = min(max_rows, overlay_h - 4)
 
         try:
             # Top border
@@ -114,29 +121,35 @@ class OverlayRenderer:
             title_line = "║" + title.center(inner_w) + "║"
             app.stdscr.addnstr(start_y + 1, start_x, title_line, overlay_w, accent_attr)
 
-            # Title separator
-            sep = "╠" + "═" * inner_w + "╣"
+            # Title separator with column divider
+            sep = "╠" + "═" * col_w + "╤" + "═" * (inner_w - col_w - 1) + "╣"
             app.stdscr.addnstr(start_y + 2, start_x, sep, overlay_w, border_attr)
 
-            # Body lines
-            for i, line in enumerate(content):
+            # Body lines — two columns side by side
+            for i in range(body_rows):
                 row = start_y + 3 + i
-                if row >= start_y + overlay_h - 1:
-                    break
-                padded = line + " " * max(0, inner_w - len(line))
-                body_line = "║" + padded[:inner_w] + "║"
+                ltext = left_col[i] if i < len(left_col) else ""
+                rtext = right_col[i] if i < len(right_col) else ""
+                right_w = inner_w - col_w - 1
+                lpad = ltext + " " * max(0, col_w - len(ltext))
+                rpad = rtext + " " * max(0, right_w - len(rtext))
+                body_line = "║" + lpad[:col_w] + "│" + rpad[:right_w] + "║"
                 app.stdscr.addnstr(row, start_x, body_line, overlay_w, body_attr)
 
-            # Fill remaining rows
-            for row in range(start_y + 3 + len(content), start_y + overlay_h - 1):
-                if row >= start_y + overlay_h - 1:
-                    break
-                empty_line = "║" + " " * inner_w + "║"
-                app.stdscr.addnstr(row, start_x, empty_line, overlay_w, body_attr)
+            # Footer row
+            footer_row = start_y + 3 + body_rows
+            footer_text = " Press H, ESC, or Q to close "
+            right_w = inner_w - col_w - 1
+            footer_inner = footer_text.center(inner_w)
+            # Footer separator
+            fsep = "╠" + "═" * col_w + "╧" + "═" * (inner_w - col_w - 1) + "╣"
+            app.stdscr.addnstr(footer_row, start_x, fsep, overlay_w, border_attr)
+            footer_line = "║" + footer_inner + "║"
+            app.stdscr.addnstr(footer_row + 1, start_x, footer_line, overlay_w, accent_attr)
 
             # Bottom border
             bottom = "╚" + "═" * inner_w + "╝"
-            app.stdscr.addnstr(start_y + overlay_h - 1, start_x, bottom, overlay_w, border_attr)
+            app.stdscr.addnstr(footer_row + 2, start_x, bottom, overlay_w, border_attr)
         except curses.error:
             pass
 
