@@ -17,12 +17,11 @@ IMPLEMENTED_TYPES = [
     "GLOSSARY",
     "CONSTRAINTS",
     "CONVENTIONS",
+    "SCHEMA",
 ]
 
 # Document types planned but not yet implemented
 UNIMPLEMENTED_TYPES = [
-    "BRIEF",
-    "SCHEMA",
     "RUNBOOK",
     "WORKFLOW",
     "CHANGELOG",
@@ -61,6 +60,10 @@ AGENT_INFO = {
     "CONVENTIONS": {
         "title": "Conventions Agent",
         "description": "Maintains docs/context/CONVENTIONS.md with agreed-upon team practices: naming, file layout, code style, git workflow, testing, and documentation patterns. Describe conventions in plain language and the agent adds them. Unlike constraints, conventions guide rather than block.",
+    },
+    "SCHEMA": {
+        "title": "Schema Agent — Data Layer Reference",
+        "description": "Derives and maintains docs/context/SCHEMA.md by scanning the codebase for models, tables, data classes, and relationships. Does not require specific items — it reads the code and produces the schema. Point it at reference materials or ask for a full scan.",
     },
 }
 
@@ -127,6 +130,7 @@ def get_publish_agent(doc_type: str):
         from voicecode.publish.glossary import GlossaryAgent
         from voicecode.publish.constraints import ConstraintsAgent
         from voicecode.publish.conventions import ConventionsAgent
+        from voicecode.publish.schema import SchemaAgent
         _AGENT_REGISTRY["ADR"] = AdrAgent()
         _AGENT_REGISTRY["ARCH"] = ArchAgent()
         _AGENT_REGISTRY["PLAN"] = PlanAgent()
@@ -134,6 +138,7 @@ def get_publish_agent(doc_type: str):
         _AGENT_REGISTRY["GLOSSARY"] = GlossaryAgent()
         _AGENT_REGISTRY["CONSTRAINTS"] = ConstraintsAgent()
         _AGENT_REGISTRY["CONVENTIONS"] = ConventionsAgent()
+        _AGENT_REGISTRY["SCHEMA"] = SchemaAgent()
     return _AGENT_REGISTRY.get(doc_type)
 
 
@@ -191,7 +196,7 @@ class PublishOverlay:
                 app.set_status(f"{name} agent not yet implemented.")
                 return
             app.publish_selected_type = name
-            if name in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS"):
+            if name in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA"):
                 # Fixed-destination agents always target context/
                 app.publish_step = 1
                 app.publish_cursor = 0  # context/ is index 0
@@ -199,7 +204,7 @@ class PublishOverlay:
                 app.publish_step = 1
                 app.publish_cursor = 0
         else:
-            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS"):
+            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA"):
                 app.publish_selected_folder = "context/"
             else:
                 app.publish_selected_folder = DEST_FOLDERS[app.publish_cursor]
@@ -213,7 +218,7 @@ class PublishOverlay:
             # Allow -1 to select the "Edit Refine Agent Prompt" line
             app.publish_cursor = max(-1, min(count - 1, app.publish_cursor + direction))
         else:
-            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS"):
+            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA"):
                 return  # fixed destination, no cursor movement
             count = len(DEST_FOLDERS)
             app.publish_cursor = max(0, min(count - 1, app.publish_cursor + direction))
