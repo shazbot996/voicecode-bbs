@@ -279,6 +279,8 @@ class DrawingHelper:
         bar_inner_w = right_width - 2  # inside corner chars
         info_text = sess_label + ctx_label
         scroll_label = " [PgUp/Dn]Scroll " if app.agent_pane.is_scrollable else ""
+        if not app.agent_pane.auto_scroll:
+            scroll_label = " [End]Back to bottom " + scroll_label
         # Pad bar to fill, then overlay info on the right
         if bar_inner_w > 0:
             ctx_attr = curses.color_pair(ctx_cp) | curses.A_BOLD

@@ -72,6 +72,7 @@ class TextPane:
     def scroll_to_bottom(self, visible_height: int):
         max_offset = max(0, len(self.lines) - visible_height)
         self.scroll_offset = max_offset
+        self.auto_scroll = True
 
     def scroll_up(self, amount=1):
         self.scroll_offset = max(0, self.scroll_offset - amount)

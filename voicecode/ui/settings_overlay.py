@@ -979,7 +979,7 @@ class SettingsOverlay:
             render_items = app.ai_models_submenu_items
             render_cursor = app.ai_models_submenu_cursor
             render_title = " AI MODELS "
-            render_footer = " \u2191\u2193 Navigate  \u2190\u2192 Change  Esc Close "
+            render_footer = " \u2191\u2193 Navigate  \u2190\u2192 Change  Enter Edit  Esc Close "
         elif app.cast_submenu_open:
             render_items = app.cast_submenu_items
             render_cursor = app.cast_submenu_cursor

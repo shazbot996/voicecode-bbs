@@ -184,7 +184,10 @@ class RunnerHelper:
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError:
-                    # Non-JSON output (e.g. stderr), show as-is
+                    # Non-JSON output (e.g. stderr) — suppress known
+                    # CLI diagnostic banners (e.g. Gemini API-key notice).
+                    if line.startswith("Using GEMINI_API_KEY"):
+                        continue
                     self.emit_typewriter(line + "\n")
                     continue
 

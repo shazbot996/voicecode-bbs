@@ -12,11 +12,16 @@ class GeminiProvider(CLIProvider):
 
     def _common_flags(self) -> list[str]:
         flags = ["--yolo"]
+        if self.disable_proxy:
+            flags.append("--proxy=false")
         return flags
 
     def get_env(self) -> dict[str, str]:
         """Return env dict, stripping proxy vars if disable_proxy is set."""
         env = os.environ.copy()
+        # Never pass GEMINI_API_KEY — corporate auth does not use it, and
+        # its presence causes the CLI to print a distracting banner message.
+        env.pop("GEMINI_API_KEY", None)
         if self.disable_proxy:
             for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
                 env.pop(key, None)

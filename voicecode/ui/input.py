@@ -1110,10 +1110,6 @@ class InputHandler:
             visible = content_height // 2 - 2
             app.prompt_pane.scroll_down(visible, 1)
 
-        elif ch == curses.KEY_END:
-            if not app.refining and not app.recording:
-                app.execution.new_prompt()
-
         elif ch == curses.KEY_HOME:
             # Return to current prompt editor
             app.browser_view = "active"
@@ -1128,6 +1124,11 @@ class InputHandler:
             h = app.stdscr.getmaxyx()[0]
             content_height = h - 4
             app.agent_pane.scroll_down(content_height - 2, 5)
+
+        elif ch == curses.KEY_END:
+            h = app.stdscr.getmaxyx()[0]
+            content_height = h - 4
+            app.agent_pane.scroll_to_bottom(content_height - 2)
 
         elif ch == ord("["):
             name = cycle_tts_voice(-1)
