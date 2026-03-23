@@ -21,12 +21,7 @@ IMPLEMENTED_TYPES = [
     "README",
 ]
 
-# Document types planned but not yet implemented
-UNIMPLEMENTED_TYPES = [
-]
-
-# Combined list for display and reference
-ALL_DOC_TYPES = IMPLEMENTED_TYPES + UNIMPLEMENTED_TYPES
+ALL_DOC_TYPES = IMPLEMENTED_TYPES
 
 # Short agent descriptions for the info panel (shown when agent is highlighted)
 AGENT_INFO = {
@@ -228,12 +223,7 @@ class PublishOverlay:
 
     def _type_display_items(self):
         """Return list of (name, enabled) tuples for the type selector."""
-        items = []
-        for t in IMPLEMENTED_TYPES:
-            items.append((t, True))
-        for t in UNIMPLEMENTED_TYPES:
-            items.append((t, False))
-        return items
+        return [(t, True) for t in IMPLEMENTED_TYPES]
 
     def edit_prompt(self):
         """Open the highlighted agent's prompt template in the doc reader/editor."""
@@ -594,7 +584,7 @@ class PublishOverlay:
 
     def _draw_type_selector(self, app, right_x, right_w, start_y, max_y,
                             purple, bright, sel_attr, disabled_attr, dim, body):
-        """Draw the two-section type selector (implemented + coming soon)."""
+        """Draw the type selector."""
         sel_y = start_y
         items = self._type_display_items()
         white_attr = curses.color_pair(CP_PROMPT) | curses.A_BOLD
@@ -648,41 +638,6 @@ class PublishOverlay:
                 label = f"▸ {name}"
             else:
                 attr = bright
-                label = f"  {name}"
-            try:
-                app.stdscr.addnstr(sel_y, right_x, label[:right_w], right_w, attr)
-            except curses.error:
-                pass
-            sel_y += 1
-            idx += 1
-
-        # Section header: Coming Soon
-        sel_y += 1
-        if sel_y < max_y - 2:
-            header2 = "Coming Soon"
-            try:
-                app.stdscr.addnstr(sel_y, right_x, header2, right_w, dim)
-            except curses.error:
-                pass
-            sel_y += 1
-            try:
-                app.stdscr.addnstr(sel_y, right_x, "─" * min(len(header2), right_w), right_w, dim)
-            except curses.error:
-                pass
-            sel_y += 1
-
-        # Draw unimplemented types
-        for name, enabled in items:
-            if enabled:
-                continue
-            if sel_y >= max_y - 2:
-                break
-            if idx == app.publish_cursor:
-                # Cursor is on a disabled item — show it highlighted but dimmed
-                attr = curses.A_REVERSE | curses.color_pair(CP_ACCENT)
-                label = f"▸ {name}  (not yet)"
-            else:
-                attr = disabled_attr
                 label = f"  {name}"
             try:
                 app.stdscr.addnstr(sel_y, right_x, label[:right_w], right_w, attr)
