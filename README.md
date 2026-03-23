@@ -252,13 +252,15 @@ Press **P** to open the Publish overlay — a two-step modal that generates stru
 
 | Type | Agent | Purpose |
 |------|-------|---------|
+| **ADR** | ADR Agent | Captures a single significant technical decision — context, alternatives considered, the choice made, and consequences. Each ADR is numbered sequentially and lives in `decisions/`. |
 | **ARCH** | Architecture Agent | Analyzes the codebase and produces a comprehensive architecture document — components, data flow, state management, and design decisions. The single document an unfamiliar engineer reads first. |
-| **PLAN** | Plan Agent | Produces a stepwise implementation plan with scope, milestones, task breakdown, and dependencies. References real files and functions so a developer or AI agent can follow it without guessing. |
-| **SPEC** | Spec Agent | Generates a detailed feature specification — requirements, API contracts, edge cases, and acceptance criteria. The authoritative reference designers and reviewers check against. |
+| **CONSTRAINTS** | Constraints Agent | Maintains `docs/context/CONSTRAINTS.md` with hard boundaries and safety rails that AI agents read every session. Describe constraints in plain language and the agent structures them. |
+| **CONVENTIONS** | Conventions Agent | Maintains `docs/context/CONVENTIONS.md` with agreed-upon team practices — naming, file layout, code style, git workflow, and documentation patterns. Unlike constraints, conventions guide rather than block. |
 | **GLOSSARY** | Glossary Agent | Maintains a single glossary at `docs/context/GLOSSARY.md`. Defines shared vocabulary — domain terms, acronyms, and project-specific jargon. Request a full codebase scan to auto-generate definitions, or add terms incrementally. |
-| **CONSTRAINTS** | Constraints Agent | Maintains `docs/context/CONSTRAINTS.md` with hard boundaries and safety rails that AI agents read every session. Describe constraints in plain language and the agent structures them. Ask for the questionnaire to discover what kinds of constraints you should define. |
-
-Additional types (BRIEF) are planned but not yet implemented.
+| **PLAN** | Plan Agent | Produces a stepwise implementation plan with scope, milestones, task breakdown, and dependencies. References real files and functions so a developer or AI agent can follow it without guessing. |
+| **README** | README Agent | Curates and maintains `README.md` at the project root. Keeps the GitHub landing page accurate with project overview, setup instructions, features, and usage. Ask for a full scan or describe specific updates. |
+| **SCHEMA** | Schema Agent | Derives and maintains `docs/context/SCHEMA.md` by scanning the codebase for models, tables, data classes, and relationships. Point it at reference materials or ask for a full scan. |
+| **SPEC** | Spec Agent | Generates a detailed feature specification — requirements, API contracts, edge cases, and acceptance criteria. The authoritative reference designers and reviewers check against. |
 
 **Step 2 — Pick a destination folder** within `docs/`:
 

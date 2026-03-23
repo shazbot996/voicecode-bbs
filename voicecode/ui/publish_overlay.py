@@ -290,7 +290,6 @@ class PublishOverlay:
         scope = app.browser.get_active_prompt_text() or app.current_prompt
         if not scope and app.fragments:
             scope = " ".join(app.fragments)
-            app._publish_used_fragments = True
         if not scope:
             scope = "the entire repository (all top-level folders and files)"
 
@@ -307,6 +306,15 @@ class PublishOverlay:
         app.browser_index = -1
         w = app.stdscr.getmaxyx()[1] // 2
         app.browser.load_browser_prompt(w)
+
+        # Clear prompt state so next dictation starts fresh (matches execute_prompt)
+        app.fragments.clear()
+        app.input_handler.clear_buffer_file()
+        app.current_prompt = None
+        app.prompt_version = 0
+        app.prompt_saved = True
+        app.dictation_pane.lines.clear()
+        app.dictation_pane.scroll_offset = 0
 
         app._last_history_prompt_path = app.execution.save_to_history(prompt_text)
 

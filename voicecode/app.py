@@ -541,15 +541,6 @@ class BBSApp:
                     if self.executed_prompt_text is not None:
                         self.execution.clear_executed_prompt()
                         self.browser.load_browser_prompt(left_width)
-                    # If publish used dictation fragments as scope, clear the
-                    # buffer now that the agent is done.
-                    if getattr(self, '_publish_used_fragments', False):
-                        self._publish_used_fragments = False
-                        self.fragments.clear()
-                        self.input_handler.clear_buffer_file()
-                        self.dictation_pane.lines.clear()
-                        self.dictation_pane.scroll_offset = 0
-                        self.browser.set_dictation_info(left_width)
 
             elif msg[0] == "session_id":
                 self.session_id = msg[1]
