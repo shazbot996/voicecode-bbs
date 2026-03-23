@@ -13,6 +13,7 @@
 >
 > A retro BBS-style voice-driven prompt workshop for AI agents (Claude, Gemini).
 > Dictate prompts, refine them with AI, and execute them in a novel dictation and refinement workflow that builds its own prompt history.
+> Built for local development environments with ALSA-compatible hardware for audio intpu/output - not built for cloud dev environments.
 
 **Supports Claude CLI and Gemini CLI. Optional Google Cast output to Nest/Chromecast speakers.**
 
