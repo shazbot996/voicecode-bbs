@@ -16,13 +16,13 @@ IMPLEMENTED_TYPES = [
     "SPEC",
     "GLOSSARY",
     "CONSTRAINTS",
+    "CONVENTIONS",
 ]
 
 # Document types planned but not yet implemented
 UNIMPLEMENTED_TYPES = [
     "BRIEF",
     "SCHEMA",
-    "CONVENTIONS",
     "RUNBOOK",
     "WORKFLOW",
     "CHANGELOG",
@@ -57,6 +57,10 @@ AGENT_INFO = {
     "CONSTRAINTS": {
         "title": "Constraints Agent",
         "description": "Maintains docs/context/CONSTRAINTS.md with hard boundaries and safety rails. Describe constraints in plain language and the agent adds them to the file. Ask for the questionnaire reference to see what kinds of constraints you can define.",
+    },
+    "CONVENTIONS": {
+        "title": "Conventions Agent",
+        "description": "Maintains docs/context/CONVENTIONS.md with agreed-upon team practices: naming, file layout, code style, git workflow, testing, and documentation patterns. Describe conventions in plain language and the agent adds them. Unlike constraints, conventions guide rather than block.",
     },
 }
 
@@ -122,12 +126,14 @@ def get_publish_agent(doc_type: str):
         from voicecode.publish.spec import SpecAgent
         from voicecode.publish.glossary import GlossaryAgent
         from voicecode.publish.constraints import ConstraintsAgent
+        from voicecode.publish.conventions import ConventionsAgent
         _AGENT_REGISTRY["ADR"] = AdrAgent()
         _AGENT_REGISTRY["ARCH"] = ArchAgent()
         _AGENT_REGISTRY["PLAN"] = PlanAgent()
         _AGENT_REGISTRY["SPEC"] = SpecAgent()
         _AGENT_REGISTRY["GLOSSARY"] = GlossaryAgent()
         _AGENT_REGISTRY["CONSTRAINTS"] = ConstraintsAgent()
+        _AGENT_REGISTRY["CONVENTIONS"] = ConventionsAgent()
     return _AGENT_REGISTRY.get(doc_type)
 
 
@@ -185,7 +191,7 @@ class PublishOverlay:
                 app.set_status(f"{name} agent not yet implemented.")
                 return
             app.publish_selected_type = name
-            if name in ("GLOSSARY", "CONSTRAINTS"):
+            if name in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS"):
                 # Fixed-destination agents always target context/
                 app.publish_step = 1
                 app.publish_cursor = 0  # context/ is index 0
@@ -193,7 +199,7 @@ class PublishOverlay:
                 app.publish_step = 1
                 app.publish_cursor = 0
         else:
-            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS"):
+            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS"):
                 app.publish_selected_folder = "context/"
             else:
                 app.publish_selected_folder = DEST_FOLDERS[app.publish_cursor]
@@ -207,7 +213,7 @@ class PublishOverlay:
             # Allow -1 to select the "Edit Refine Agent Prompt" line
             app.publish_cursor = max(-1, min(count - 1, app.publish_cursor + direction))
         else:
-            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS"):
+            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS"):
                 return  # fixed destination, no cursor movement
             count = len(DEST_FOLDERS)
             app.publish_cursor = max(0, min(count - 1, app.publish_cursor + direction))
@@ -496,7 +502,7 @@ class PublishOverlay:
             self._draw_type_selector(app, right_x, right_w, sel_y, box_y + box_h,
                                      purple, bright, sel_attr, disabled_attr, dim, body)
         else:
-            is_fixed_dest = app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS")
+            is_fixed_dest = app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS")
             sel_title = f"Destination for {app.publish_selected_type}"
             try:
                 app.stdscr.addnstr(sel_y, right_x, sel_title, right_w, purple)
