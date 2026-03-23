@@ -275,6 +275,7 @@ class PublishOverlay:
         scope = app.browser.get_active_prompt_text() or app.current_prompt
         if not scope and app.fragments:
             scope = " ".join(app.fragments)
+            app._publish_used_fragments = True
         if not scope:
             scope = "the entire repository (all top-level folders and files)"
 
@@ -335,6 +336,7 @@ class PublishOverlay:
         purple = curses.color_pair(CP_PUBLISH) | curses.A_BOLD
         title_attr = curses.color_pair(CP_PUBLISH_TITLE) | curses.A_BOLD
         dim = curses.color_pair(CP_ACCENT)
+        body = curses.color_pair(CP_PROMPT)  # white for readable body text
         bright = curses.color_pair(CP_AGENT) | curses.A_BOLD
         sel_attr = curses.A_REVERSE | curses.A_BOLD | curses.color_pair(CP_PUBLISH)
         disabled_attr = curses.color_pair(CP_ACCENT)  # dim for unimplemented
@@ -407,7 +409,7 @@ class PublishOverlay:
         panel_title = "Voicecode Agent Docs Guidelines"
         info_lines.append((panel_title, title_attr))
         info_lines.append(("═" * min(len(panel_title), left_w), purple))
-        info_lines.append(("", dim))  # blank separator
+        info_lines.append(("", body))  # blank separator
 
         # Introductory guidance text
         intro_text = (
@@ -420,17 +422,17 @@ class PublishOverlay:
             "these agents."
         )
         for wline in textwrap.wrap(intro_text, width=max(left_w, 20)):
-            info_lines.append((wline, dim))
-        info_lines.append(("", dim))  # blank separator
+            info_lines.append((wline, body))
+        info_lines.append(("", body))  # blank separator
 
         # Section: Docs Folder Structure
         ref_title = "Docs Folder Structure"
         info_lines.append((ref_title, purple))
         info_lines.append(("─" * min(len(ref_title), left_w), purple))
         for line in REFERENCE_TREE:
-            info_lines.append((line, dim))
+            info_lines.append((line, body))
 
-        info_lines.append(("", dim))  # blank separator
+        info_lines.append(("", body))  # blank separator
 
         # Section: Document Types
         types_title = "Document Types"
@@ -446,8 +448,8 @@ class PublishOverlay:
             if desc:
                 wrapped = textwrap.wrap(desc, width=max(left_w - 2, 20))
                 for wline in wrapped:
-                    info_lines.append(("  " + wline, dim))
-            info_lines.append(("", dim))  # blank line between entries
+                    info_lines.append(("  " + wline, body))
+            info_lines.append(("", body))  # blank line between entries
 
         # Clamp scroll offset
         visible_rows = box_y + box_h - 2 - cy
@@ -471,13 +473,13 @@ class PublishOverlay:
         # Scroll indicators
         if app.publish_info_scroll > 0:
             try:
-                app.stdscr.addstr(cy, inner_x + left_w - 3, " ▲ ", dim)
+                app.stdscr.addstr(cy, inner_x + left_w - 3, " ▲ ", body)
             except curses.error:
                 pass
         if app.publish_info_scroll < max_scroll:
             try:
                 ind_y = min(ref_y, box_y + box_h - 3)
-                app.stdscr.addstr(ind_y, inner_x + left_w - 3, " ▼ ", dim)
+                app.stdscr.addstr(ind_y, inner_x + left_w - 3, " ▼ ", body)
             except curses.error:
                 pass
 
@@ -486,7 +488,7 @@ class PublishOverlay:
         if app.publish_step == 0:
             sel_title = "Select Document Type"
             self._draw_type_selector(app, right_x, right_w, sel_y, box_y + box_h,
-                                     purple, bright, sel_attr, disabled_attr, dim)
+                                     purple, bright, sel_attr, disabled_attr, dim, body)
         else:
             is_fixed_dest = app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS")
             sel_title = f"Destination for {app.publish_selected_type}"
@@ -558,13 +560,13 @@ class PublishOverlay:
                     if sel_y >= box_y + box_h - 2:
                         break
                     try:
-                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, dim)
+                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, body)
                     except curses.error:
                         pass
                     sel_y += 1
 
     def _draw_type_selector(self, app, right_x, right_w, start_y, max_y,
-                            purple, bright, sel_attr, disabled_attr, dim):
+                            purple, bright, sel_attr, disabled_attr, dim, body):
         """Draw the two-section type selector (implemented + coming soon)."""
         sel_y = start_y
         items = self._type_display_items()
@@ -691,7 +693,7 @@ class PublishOverlay:
                     if sel_y >= max_y - 2:
                         break
                     try:
-                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, dim)
+                        app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, body)
                     except curses.error:
                         pass
                     sel_y += 1
