@@ -335,8 +335,8 @@ class OverlayRenderer:
                     pass
         app._browser_cat_lists[2] = docs
 
-        # Category 3: Tools (static library)
-        app._browser_cat_lists[3] = get_tool_names()
+        # Category 3: Tools (provider-aware library)
+        app._browser_cat_lists[3] = get_tool_names(app.ai_provider.name)
 
         # Flat list is the active category's list (for cursor/scroll compat)
         app.folder_slug_list = app._browser_cat_lists[app._browser_category]
@@ -626,7 +626,7 @@ class OverlayRenderer:
     def open_tool_detail(self, index: int):
         """Open the document reader with tool detail content."""
         app = self.app
-        title, lines = get_tool_detail(index)
+        title, lines = get_tool_detail(index, app.ai_provider.name)
         app.doc_reader_path = ""
         app.doc_reader_title = title
         app.doc_reader_scroll = 0
