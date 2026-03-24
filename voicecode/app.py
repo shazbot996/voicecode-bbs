@@ -192,10 +192,10 @@ class BBSApp:
         self.folder_slug_scroll = 0
         self._shortcut_strings: list[str] = load_shortcuts()
         self._shortcut_count = 0  # how many items at the top are shortcuts
-        # Browser category: 0=Shortcuts, 1=Project Folders, 2=Documents
+        # Browser category: 0=Shortcuts, 1=Project Folders, 2=Documents, 3=Tools
         self._browser_category = 0
-        self._browser_categories = ["Shortcuts", "Project Folders", "Documents"]
-        self._browser_cat_lists: list[list[str]] = [[], [], []]
+        self._browser_categories = ["Shortcuts", "Project Folders", "Documents", "Tools"]
+        self._browser_cat_lists: list[list[str]] = [[], [], [], []]
 
         # Document reader overlay state
         self.show_doc_reader = False

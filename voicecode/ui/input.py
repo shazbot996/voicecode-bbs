@@ -400,8 +400,8 @@ class InputHandler:
                 self._close_doc_reader()
                 app.stdscr.nodelay(True)
                 app.stdscr.getch()
-            elif ch in (10, 13, curses.KEY_ENTER):
-                # Enter — switch to edit mode
+            elif ch in (10, 13, curses.KEY_ENTER) and app.doc_reader_path:
+                # Enter — switch to edit mode (only for real files)
                 app.doc_edit_mode = True
                 app.doc_edit_lines = list(app.doc_reader_lines) or [""]
                 app.doc_edit_cursor_row = 0
@@ -502,8 +502,10 @@ class InputHandler:
                     full_path = Path(app.working_dir).expanduser() / rel_path
                     if full_path.is_file():
                         app.overlays.open_doc_reader(str(full_path), rel_path)
+                elif app._browser_category == 3 and app.folder_slug_list:
+                    app.overlays.open_tool_detail(app.folder_slug_cursor)
                 else:
-                    app.set_status("Enter opens documents. Use Insert to inject strings.")
+                    app.set_status("Enter opens documents/tools. Use Insert to inject strings.")
                 return
             elif ch in (ord("e"), ord("E")):
                 # Only allow editing in the Shortcuts category

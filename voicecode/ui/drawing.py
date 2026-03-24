@@ -149,6 +149,8 @@ class DrawingHelper:
         browse_hint = " [\u2190\u2192]Browse [\u2191\u2193]Scroll "
         scroll_hint = " [PgUp/Dn]Agent " if app.agent_pane.is_scrollable else ""
         refine_hint = " [R]Copy&Refine " if app.browser_index >= 0 else ""
+        save_hint = (" [S]Save " if app.browser_index < 0
+                      and app.current_prompt and not app.prompt_saved else "")
         bh_x = left_width - len(browse_hint) - 1
         try:
             if bh_x > 1:
@@ -157,6 +159,9 @@ class DrawingHelper:
             if len(home_hint) + 1 < bh_x:
                 app.stdscr.addstr(prompt_bottom_y, left_edge, home_hint, hint_attr)
                 left_edge += len(home_hint)
+            if save_hint and left_edge + len(save_hint) < bh_x:
+                app.stdscr.addstr(prompt_bottom_y, left_edge, save_hint, hint_attr)
+                left_edge += len(save_hint)
             if refine_hint and left_edge + len(refine_hint) < bh_x:
                 app.stdscr.addstr(prompt_bottom_y, left_edge, refine_hint, hint_attr)
                 left_edge += len(refine_hint)

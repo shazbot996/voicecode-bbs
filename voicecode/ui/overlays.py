@@ -16,6 +16,7 @@ from voicecode.ui.colors import (
     CP_XTREE_BORDER,
     CP_XTREE_SEL,
 )
+from voicecode.data.tools import get_tool_names, get_tool_detail
 from voicecode.settings import load_shortcuts
 
 
@@ -334,6 +335,9 @@ class OverlayRenderer:
                     pass
         app._browser_cat_lists[2] = docs
 
+        # Category 3: Tools (static library)
+        app._browser_cat_lists[3] = get_tool_names()
+
         # Flat list is the active category's list (for cursor/scroll compat)
         app.folder_slug_list = app._browser_cat_lists[app._browser_category]
 
@@ -400,8 +404,8 @@ class OverlayRenderer:
                 app.folder_slug_scroll = app.folder_slug_cursor - inner_h + 1
 
             # Icon per category
-            cat_icons = {0: "⚡", 1: "📁", 2: "📄"}
-            cat_icons_sel = {0: "⚡", 1: "📂", 2: "📄"}
+            cat_icons = {0: "⚡", 1: "📁", 2: "📄", 3: "🔧"}
+            cat_icons_sel = {0: "⚡", 1: "📂", 2: "📄", 3: "🔧"}
             icon_base = cat_icons.get(cat, "·")
             icon_sel = cat_icons_sel.get(cat, "·")
 
@@ -450,7 +454,7 @@ class OverlayRenderer:
             # Footer
             if cat == 0:
                 extra_hint = "  E Edit"
-            elif cat == 2:
+            elif cat in (2, 3):
                 extra_hint = "  Enter View"
             else:
                 extra_hint = ""
@@ -619,6 +623,18 @@ class OverlayRenderer:
         app.doc_reader_lines = content.splitlines()
         app.show_doc_reader = True
 
+    def open_tool_detail(self, index: int):
+        """Open the document reader with tool detail content."""
+        app = self.app
+        title, lines = get_tool_detail(index)
+        app.doc_reader_path = ""
+        app.doc_reader_title = title
+        app.doc_reader_scroll = 0
+        app.doc_reader_on_close = None
+        app.doc_reader_lines = lines
+        app.doc_edit_mode = False
+        app.show_doc_reader = True
+
     def draw_doc_reader(self):
         """Draw a near-full-screen markdown document reader/editor overlay."""
         app = self.app
@@ -714,7 +730,10 @@ class OverlayRenderer:
             # Bottom border with scroll info and help
             pct = int(app.doc_reader_scroll / max_scroll * 100) if max_scroll > 0 else 100
             scroll_info = f" {pct}% "
-            help_text = " [↑↓/PgUp/PgDn]Scroll [Enter]Edit [Ins]Inject [ESC/Q]Close "
+            if app.doc_reader_path:
+                help_text = " [↑↓/PgUp/PgDn]Scroll [Enter]Edit [Ins]Inject [ESC/Q]Close "
+            else:
+                help_text = " [↑↓/PgUp/PgDn]Scroll [Ins]Inject [ESC/Q]Close "
             border_bot = "╚" + "═" * inner_w + "╝"
             app.stdscr.addnstr(box_y + box_h - 1, box_x, border_bot, box_w, border_attr)
             app.stdscr.addstr(box_y + box_h - 1, box_x + 2, scroll_info, border_attr)
