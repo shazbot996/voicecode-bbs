@@ -84,7 +84,10 @@ init-sub: ## Add a 'make voicecode' shortcut to the parent Makefile
 		echo "  Created $$PARENT/Makefile with help and voicecode targets"; \
 	fi
 
+test: ## Run the smoke test suite
+	. $(VENV)/bin/activate && python -m pytest -q
+
 clean: ## Delete the venv (re-run 'make init' to recreate)
 	rm -rf $(VENV)
 
-.PHONY: help check-deps init init-sub voicecode clean
+.PHONY: help check-deps init init-sub voicecode test clean
