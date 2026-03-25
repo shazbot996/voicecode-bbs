@@ -546,7 +546,9 @@ class OverlayRenderer:
             # Footer
             if cat == 0:
                 extra_hint = "  E Edit"
-            elif cat in (2, 3):
+            elif cat == 2:
+                extra_hint = "  Enter Actions"
+            elif cat == 3:
                 extra_hint = "  Enter View"
             else:
                 extra_hint = ""
