@@ -218,6 +218,14 @@ class BBSApp:
         self.maint_cursor = 0
         self.maint_actions: list[tuple[str, str]] = []  # (action_name, description)
 
+        # Document actions overlay state (modal within browser)
+        self.show_doc_actions = False
+        self.doc_actions_cursor = 0
+        self.doc_actions_list: list[tuple[str, str]] = []  # (action_id, label)
+        self.doc_actions_path = ""  # full path of selected doc
+        self.doc_actions_title = ""  # display title (rel path)
+        self.doc_actions_doc_type = ""  # cached doc type
+
         # Shortcut editor overlay state
         self.show_shortcut_editor = False
         self.shortcut_editor_cursor = 0

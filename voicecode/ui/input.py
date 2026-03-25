@@ -34,6 +34,25 @@ class InputHandler:
         if callable(cb):
             cb()
 
+    def _open_doc_actions(self, full_path: str, rel_path: str):
+        """Open the document actions overlay for a file in the browser."""
+        from voicecode.publish.maintenance import get_available_actions
+
+        app = self.app
+        doc_type = getattr(app, '_doc_type_cache', {}).get(rel_path, "")
+
+        # Build action list: View first, then maintenance actions
+        actions: list[tuple[str, str]] = [("VIEW", "View")]
+        for action_name, desc in get_available_actions(doc_type):
+            actions.append((action_name, desc))
+
+        app.doc_actions_list = actions
+        app.doc_actions_cursor = 0  # default to View
+        app.doc_actions_path = full_path
+        app.doc_actions_title = rel_path
+        app.doc_actions_doc_type = doc_type
+        app.show_doc_actions = True
+
     def _execute_maintenance(self, action_name: str):
         """Build and execute a maintenance agent prompt on the current document."""
         from voicecode.publish.maintenance import get_maintenance_agent
@@ -290,7 +309,6 @@ class InputHandler:
                 elif ch == curses.KEY_DOWN:
                     app.maint_cursor = min(len(app.maint_actions) - 1, app.maint_cursor + 1)
                 elif ch in (10, 13, curses.KEY_ENTER):
-                    from voicecode.constants import AgentState
                     if app.agent_state not in (AgentState.IDLE, AgentState.DONE):
                         app.set_status("Agent is busy. Wait or kill it first.")
                         app.show_maint_overlay = False
@@ -505,6 +523,39 @@ class InputHandler:
 
         # Handle folder slug overlay
         if app.show_folder_slug:
+            # ── Document actions overlay (modal within browser) ──
+            if app.show_doc_actions:
+                if ch in (27,):  # ESC
+                    app.show_doc_actions = False
+                    app.stdscr.nodelay(True)
+                    app.stdscr.getch()
+                elif ch == curses.KEY_UP:
+                    app.doc_actions_cursor = max(0, app.doc_actions_cursor - 1)
+                elif ch == curses.KEY_DOWN:
+                    app.doc_actions_cursor = min(len(app.doc_actions_list) - 1, app.doc_actions_cursor + 1)
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    if app.doc_actions_list:
+                        action_id, _ = app.doc_actions_list[app.doc_actions_cursor]
+                        app.show_doc_actions = False
+                        if action_id == "VIEW":
+                            app.overlays.open_doc_reader(app.doc_actions_path, app.doc_actions_title)
+                        else:
+                            # Execute maintenance action — need to open doc reader first for context
+                            if app.agent_state not in (AgentState.IDLE, AgentState.DONE):
+                                app.set_status("Agent is busy. Wait or kill it first.")
+                            else:
+                                # Set up doc reader state so _execute_maintenance has context
+                                app.doc_reader_path = app.doc_actions_path
+                                try:
+                                    with open(app.doc_actions_path, "r", encoding="utf-8") as f:
+                                        app.doc_reader_lines = f.read().splitlines()
+                                except (OSError, UnicodeDecodeError):
+                                    app.doc_reader_lines = []
+                                app.doc_reader_doc_type = app.doc_actions_doc_type
+                                app.show_folder_slug = False
+                                self._execute_maintenance(action_id)
+                return
+
             if ch == curses.KEY_UP:
                 if app.folder_slug_cursor > 0:
                     app.folder_slug_cursor -= 1
@@ -551,12 +602,12 @@ class InputHandler:
                         app.set_status(f"Inserted: {slug}")
                 return
             elif ch in (10, 13, curses.KEY_ENTER):
-                # Enter on Documents tab opens the document reader
+                # Enter on Documents tab opens the actions overlay
                 if app._browser_category == 2 and app.folder_slug_list:
                     rel_path = app.folder_slug_list[app.folder_slug_cursor]
                     full_path = Path(app.working_dir).expanduser() / rel_path
                     if full_path.is_file():
-                        app.overlays.open_doc_reader(str(full_path), rel_path)
+                        self._open_doc_actions(str(full_path), rel_path)
                 elif app._browser_category == 3 and app.folder_slug_list:
                     app.overlays.open_tool_detail(app.folder_slug_cursor)
                 else:
@@ -570,9 +621,11 @@ class InputHandler:
                 return
             elif ch == 9:  # Tab closes shortcuts browser
                 app.show_folder_slug = False
+                app.show_doc_actions = False
                 return
             elif ch == 27:
                 app.show_folder_slug = False
+                app.show_doc_actions = False
                 app.stdscr.nodelay(True)
                 app.stdscr.getch()
                 return

@@ -869,6 +869,74 @@ class OverlayRenderer:
         except curses.error:
             pass
 
+    def draw_doc_actions(self):
+        """Draw the document actions overlay within the browser."""
+        app = self.app
+        h, w = app.stdscr.getmaxyx()
+
+        actions = app.doc_actions_list
+        title_text = app.doc_actions_title
+        doc_type = app.doc_actions_doc_type
+
+        # Dialog sizing
+        max_label_len = max((len(label) for _, label in actions), default=20)
+        dialog_w = max(36, max_label_len + 10, len(title_text) + 6)
+        dialog_h = len(actions) + 5  # border + title + blank + actions + footer + border
+        dx = (w - dialog_w) // 2
+        dy = (h - dialog_h) // 2
+
+        type_cp = DOC_TYPE_COLORS.get(doc_type, CP_HEADER)
+        border_attr = curses.color_pair(type_cp) | curses.A_BOLD
+        text_attr = curses.color_pair(CP_DOC_BODY) | curses.A_BOLD
+        sel_attr = curses.color_pair(CP_DOC_LIST_SEL) | curses.A_BOLD
+        key_attr = curses.color_pair(CP_DOC_HEADING) | curses.A_BOLD
+        dim_attr = curses.color_pair(CP_DOC_BODY)
+
+        try:
+            # Top border with title
+            title = f" {title_text} "
+            if len(title) > dialog_w - 4:
+                title = title[:dialog_w - 5] + "… "
+            top_left = "╔═"
+            top_right = "═" * (dialog_w - len(top_left) - len(title) - 1) + "╗"
+            app.stdscr.addstr(dy, dx, top_left, border_attr)
+            app.stdscr.addstr(dy, dx + len(top_left), title, border_attr)
+            app.stdscr.addstr(dy, dx + len(top_left) + len(title), top_right, border_attr)
+
+            # Separator row
+            sep_y = dy + 1
+            sep_line = "║" + "─" * (dialog_w - 2) + "║"
+            app.stdscr.addstr(sep_y, dx, sep_line, border_attr)
+
+            # Action rows
+            for i, (action_id, label) in enumerate(actions):
+                row_y = dy + 2 + i
+                pointer = "▸" if i == app.doc_actions_cursor else " "
+                line_text = f" {pointer} {label}"
+                padded = line_text + " " * max(0, dialog_w - 2 - len(line_text))
+                attr = sel_attr if i == app.doc_actions_cursor else text_attr
+                app.stdscr.addstr(row_y, dx, "║", border_attr)
+                app.stdscr.addnstr(row_y, dx + 1, padded, dialog_w - 2, attr)
+                app.stdscr.addstr(row_y, dx + dialog_w - 1, "║", border_attr)
+
+            # Empty separator row
+            sep2_y = dy + 2 + len(actions)
+            app.stdscr.addstr(sep2_y, dx, "║" + " " * (dialog_w - 2) + "║", border_attr)
+
+            # Footer with help
+            foot_y = dy + 3 + len(actions)
+            options = "[Enter]Select  [ESC]Cancel"
+            app.stdscr.addstr(foot_y, dx, "║", border_attr)
+            centered = options.center(dialog_w - 2)
+            app.stdscr.addnstr(foot_y, dx + 1, centered, dialog_w - 2, key_attr)
+            app.stdscr.addstr(foot_y, dx + dialog_w - 1, "║", border_attr)
+
+            # Bottom border
+            bot = "╚" + "═" * (dialog_w - 2) + "╝"
+            app.stdscr.addnstr(foot_y + 1, dx, bot, dialog_w, border_attr)
+        except curses.error:
+            pass
+
     @staticmethod
     def _wrap_edit_lines(lines, content_w):
         """Build a visual-line map by wrapping logical lines to *content_w*.

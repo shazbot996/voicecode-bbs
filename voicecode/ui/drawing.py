@@ -449,6 +449,8 @@ class DrawingHelper:
             app.settings_overlay.draw()
         if app.show_folder_slug:
             app.overlays.draw_folder_slug()
+        if app.show_doc_actions:
+            app.overlays.draw_doc_actions()
         if app.show_shortcut_editor:
             app.overlays.draw_shortcut_editor()
         if app.show_publish_overlay:
