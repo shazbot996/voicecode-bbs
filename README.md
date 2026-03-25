@@ -13,7 +13,7 @@
 >
 > A retro BBS-style voice-driven prompt workshop for AI agents (Claude, Gemini).
 > Dictate prompts, refine them with AI, and execute them in a novel dictation and refinement workflow that builds its own prompt history.
-> Built for local development environments with ALSA-compatible hardware for audio intpu/output - not built for cloud dev environments.
+> Built for local development environments with ALSA-compatible hardware for audio input/output - not built for cloud dev environments.
 
 **Supports Claude CLI and Gemini CLI. Optional Google Cast output to Nest/Chromecast speakers.**
 
@@ -144,24 +144,29 @@ The DREP model is also why VoiceCode is a retro CLI and not a web app. Everythin
 | `R` | Refine fragments into a prompt |
 | `D` | Direct execute (skip refinement) |
 | `E` | Execute current prompt |
-| `F` | Assign prompt to favorites slot (1-10) |
-| `1`-`9`, `0` | Quick-load favorites 1-10 |
+| `S` | Save prompt to history |
 | `N` | New prompt (clear buffer, keep session) |
 | `U` | Undo last dictation entry |
 | `C` | Clear dictation buffer |
 | `Enter` | Type text directly into dictation buffer |
-| `Tab` | Shortcuts browser (inject paths/strings; works mid-recording) |
+| `Tab` | Shortcuts/docs browser (inject paths/strings; works mid-recording) |
 | `←` `→` | Browse prompt history |
-| `↑` `↓` | Cycle active/favorites views |
+| `↑` `↓` | Scroll prompt pane |
 | `Home` | Return to current prompt |
-| `PgUp` `PgDn` | Scroll prompt browser (history) or agent terminal |
-| `O` | Settings / voice configuration |
-| `W` | New session (clear conversation context) |
-| `K` | Kill running agent |
-| `P` | Publish document (open publish overlay) |
+| `PgUp` `PgDn` | Scroll agent output |
+| `End` | Jump to bottom of agent output |
+| `F` | Toggle favorites view / add to favorites |
+| `1`-`9`, `0` | Quick-load favorites 1-10 |
+| `[` `]` | Cycle TTS voice |
 | `Y` | Replay TTS summary |
+| `M` | Toggle AI provider (Gemini / Claude) |
+| `P` | Publish document (open publish overlay) |
+| `K` | Kill running agent |
+| `W` | New session (clear conversation context) |
+| `O` | Settings / voice configuration |
+| `T` | Cycle tip text |
 | `H` | Help overlay |
-| `A` | About / title screen |
+| `ESC` | Main menu |
 | `X` | Restart application |
 | `Q` | Quit |
 
@@ -207,11 +212,11 @@ Every executed prompt is saved as a paired set of files — the prompt and its a
   └── 003_add_unit_tests_prompt.md
 ```
 
-When browsing history with **Left/Right** arrows, the Prompt Browser shows both the original prompt and the agent's response in a combined view with ASCII section headers. Use **PgUp/PgDn** to scroll through long entries. Use **Up/Down** to toggle between active and favorites views.
+When browsing history with **Left/Right** arrows, the Prompt Browser shows both the original prompt and the agent's response in a combined view with ASCII section headers. Use **Up/Down** to scroll through long entries. Press **F** to toggle between active and favorites views.
 
 ### 10-Slot Favorites
 
-Press **F** to assign a prompt to one of 10 numbered favorites slots (keys 1-9 and 0). Quick-load any favorite by pressing its number. Favorites indicators on the Prompt Browser border show which slots are filled.
+Press **F** to toggle favorites view or add the currently viewed historical prompt to a favorites slot. When viewing a historical prompt, **F** prompts you to assign it to one of 10 numbered slots (keys 1-9 and 0). Quick-load any favorite by pressing its number. Favorites indicators on the Prompt Browser border show which slots are filled.
 
 ### Session Continuity
 
@@ -223,11 +228,12 @@ While an agent is running, VoiceCode monitors output activity. If no output is r
 
 ### Shortcuts Browser
 
-Press **Tab** to open the shortcuts browser — a navigable overlay with three categories (cycle with **Up/Down**):
+Press **Tab** to open the shortcuts browser — a navigable overlay with four categories (cycle with **Left/Right**):
 
-- **Custom shortcuts** — user-defined strings from `~/.config/voicecode/shortcuts.txt`
-- **Project folders** — top-level and nested folders from your working directory
-- **Documents** — markdown files from your `docs/` folder, sorted by modification time
+- **Shortcuts** — user-defined strings from `settings/shortcuts.txt`
+- **Project Folders** — top-level and nested folders from your working directory
+- **Documents** — root context files (AGENTS.md, CLAUDE.md, GEMINI.md, README.md) plus markdown files from your `docs/` folder, with color-coded type badges. Select a document and press **Enter** to open the document actions overlay (view, maintenance actions) or **Ins** to inject the path into the dictation buffer. Press **Del** to delete a file (with confirmation).
+- **Tools** — available tools for the active AI provider (Claude or Gemini)
 
 This works **mid-recording**: the shortcut is timestamped and merged into the final transcript at the correct position using Whisper's word-level timestamps.
 
@@ -277,9 +283,23 @@ docs/
 
 The publish agent uses your current prompt as its scope (what to focus on), builds a specialized system prompt for the selected document type, and sends it through the normal agent execution pipeline. The result is a well-structured markdown file written to your chosen `docs/` subfolder.
 
+### Document Maintenance
+
+Published documents can be maintained via specialized maintenance agents accessible from the document browser. Open **Tab** → **Documents**, select a document, and press **Enter** to see available actions, or open a document in the reader and press **M** for maintenance actions.
+
+| Action | Agent | Purpose |
+|--------|-------|---------|
+| **Reconcile** | Reconcile Agent | Checks a document for drift against the current codebase and produces a drift-report. |
+| **Refresh** | Refresh Agent | Rewrites a document in-place so every fact matches the live code. |
+| **Coverage** | Coverage Agent | Scans for gaps between a document and the codebase, producing a coverage-report. Available for ARCH, GLOSSARY, SCHEMA, CONSTRAINTS, and CONVENTIONS docs. |
+| **Drift Check** | CTX_DRIFT Agent | Finds stale sections in root context files (AGENTS.md, CLAUDE.md, GEMINI.md). |
+| **Update** | CTX_UPDATE Agent | Regenerates a root context file from the current codebase. |
+
+Drift-reports and coverage-reports appear as child documents nested under their parent in the browser and are view-only.
+
 ### Configuration
 
-Settings are persisted to `~/.config/voicecode/settings.json` and can be changed in-app via the **O** key:
+Settings are persisted to `settings/settings.json` (project-local) and can be changed in-app via the **O** key:
 
 - **Paths** — Prompt library, working directory, documents directory
 - **Voice** — Whisper model size, VAD sensitivity, silence timeout, min speech duration
