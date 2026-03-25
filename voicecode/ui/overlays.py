@@ -46,7 +46,8 @@ DOC_TYPE_COLORS = {
 # Root context files shown at top of Documents tab (order matters)
 ROOT_CONTEXT_PRIMARY = "AGENTS.md"
 ROOT_CONTEXT_SUBS = ["CLAUDE.md", "GEMINI.md"]
-ROOT_CONTEXT_FILES = [ROOT_CONTEXT_PRIMARY] + ROOT_CONTEXT_SUBS
+ROOT_CONTEXT_STANDALONE = ["README.md"]  # root-level items not nested under AGENTS.md
+ROOT_CONTEXT_FILES = [ROOT_CONTEXT_PRIMARY] + ROOT_CONTEXT_SUBS + ROOT_CONTEXT_STANDALONE
 
 
 class OverlayRenderer:
@@ -384,7 +385,7 @@ class OverlayRenderer:
             wd_root = Path(app.working_dir).expanduser()
             # Mark root context files with special type
             for rc in app._root_context_set:
-                app._doc_type_cache[rc] = "root-context"
+                app._doc_type_cache[rc] = "readme" if rc == "README.md" else "root-context"
             for rel_path in docs:
                 if rel_path in app._root_context_set:
                     continue  # already typed
@@ -559,9 +560,10 @@ class OverlayRenderer:
                             is_sub_ctx = is_root_ctx and entry in ROOT_CONTEXT_SUBS
                             is_child_doc = entry in getattr(app, '_doc_child_set', set())
 
+                            is_standalone_ctx = is_root_ctx and entry in ROOT_CONTEXT_STANDALONE
                             if is_root_ctx:
-                                # Root context files: show with [CONTEXT] badge
-                                badge = "[CONTEXT]"
+                                # Root context files: show with [CONTEXT] badge (or type badge for standalone)
+                                badge = f"[{doc_type.upper()}]" if is_standalone_ctx and doc_type else "[CONTEXT]"
                                 prefix = "  └ " if is_sub_ctx else " "
                                 badge_padded = badge.ljust(type_col_w)
                                 text = f"{prefix}{badge_padded} {entry}"
