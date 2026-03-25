@@ -64,16 +64,16 @@ AGENT_INFO = {
 }
 
 DOC_TYPE_DESCRIPTIONS = {
-    "ARCH": "High-level system architecture overview — components, boundaries, data flow, and deployment topology. The single document an unfamiliar engineer reads first.",
-    "PLAN": "Time-boxed implementation plan for a feature or initiative — scope, milestones, task breakdown, and dependencies. Lives in plans/active/ while in progress.",
-    "SPEC": "Detailed feature specification — requirements, API contracts, edge cases, and acceptance criteria. The authoritative reference designers and reviewers check against.",
-    "BRIEF": "Concise project or product brief — problem statement, goals, success metrics, and stakeholders. Frames the 'why' before any technical work begins.",
-    "SCHEMA": "Data model and schema reference — entity definitions, relationships, constraints, and migration strategy. Keeps backend and frontend aligned on shape of data.",
-    "ADR": "Architecture Decision Record — captures a single significant technical decision, its context, alternatives considered, and consequences. Numbered sequentially in decisions/.",
-    "CONVENTIONS": "Coding and workflow conventions — naming, file layout, PR etiquette, and style rules the team has agreed on. Reduces review friction and onboarding time.",
-    "CONSTRAINTS": "Hard boundaries the project must respect — regulatory requirements, performance budgets, compatibility targets, and non-negotiable dependencies.",
-    "GLOSSARY": "Shared vocabulary — domain terms, acronyms, and project-specific jargon with precise definitions. Eliminates ambiguity in specs, tickets, and conversations.",
-    "README": "Repository entry point — what the project does, how to set it up, and where to find deeper documentation. The first file every visitor and contributor sees.",
+    "ARCH": "High-level system architecture overview — components, boundaries, data flow, and deployment topology. The single document an unfamiliar engineer reads first. File: docs/context/ARCH.md",
+    "PLAN": "Time-boxed implementation plan for a feature or initiative — scope, milestones, task breakdown, and dependencies. Lives in plans/active/ while in progress. File: docs/plans/active/<name>.md",
+    "SPEC": "Detailed feature specification — requirements, API contracts, edge cases, and acceptance criteria. The authoritative reference designers and reviewers check against. File: docs/specs/active/<name>.md",
+    "BRIEF": "Concise project or product brief — problem statement, goals, success metrics, and stakeholders. Frames the 'why' before any technical work begins. File: docs/context/BRIEF.md",
+    "SCHEMA": "Data model and schema reference — entity definitions, relationships, constraints, and migration strategy. Keeps backend and frontend aligned on shape of data. File: docs/context/SCHEMA.md",
+    "ADR": "Architecture Decision Record — captures a single significant technical decision, its context, alternatives considered, and consequences. Numbered sequentially in decisions/. File: docs/decisions/<nnnn>-<slug>.md",
+    "CONVENTIONS": "Coding and workflow conventions — naming, file layout, PR etiquette, and style rules the team has agreed on. Reduces review friction and onboarding time. File: docs/context/CONVENTIONS.md",
+    "CONSTRAINTS": "Hard boundaries the project must respect — regulatory requirements, performance budgets, compatibility targets, and non-negotiable dependencies. File: docs/context/CONSTRAINTS.md",
+    "GLOSSARY": "Shared vocabulary — domain terms, acronyms, and project-specific jargon with precise definitions. Eliminates ambiguity in specs, tickets, and conversations. File: docs/context/GLOSSARY.md",
+    "README": "Repository entry point — what the project does, how to set it up, and where to find deeper documentation. The first file every visitor and contributor sees. File: README.md",
 }
 
 DEST_FOLDERS = [
@@ -392,7 +392,10 @@ class PublishOverlay:
 
         # Bottom border
         step_label = " Step 1: Document Type " if app.publish_step == 0 else " Step 2: Destination Folder "
-        help_text = " [↑↓]Select [E]Edit Prompt [PgUp/Dn]Info [Enter]Confirm [ESC]Back "
+        if app.publish_step == 0 and getattr(app, 'publish_cursor', 0) == -1:
+            help_text = " Edit publish/prompts/REFINE.md — the LLM prompt that refines your input into agent instructions "
+        else:
+            help_text = " [↑↓]Select [E]Edit Prompt [PgUp/Dn]Info [Enter]Confirm [ESC]Back "
         border_bot = "╚" + "═" * (box_w - 2) + "╝"
         try:
             app.stdscr.addnstr(box_y + box_h - 1, box_x, border_bot, box_w, purple)
@@ -664,7 +667,38 @@ class PublishOverlay:
                 highlighted_name = cur_items[app.publish_cursor][0]
 
         agent_info = AGENT_INFO.get(highlighted_name) if highlighted_name else None
-        if agent_info:
+        if app.publish_cursor == -1:
+            # Show refine agent description when the refine entry is highlighted
+            sel_y += 1
+            if sel_y < max_y - 2:
+                try:
+                    app.stdscr.addnstr(sel_y, right_x, "─" * min(right_w, right_w), right_w, purple)
+                except curses.error:
+                    pass
+                sel_y += 1
+            yellow_attr = curses.color_pair(CP_VOICE) | curses.A_BOLD
+            if sel_y < max_y - 2:
+                try:
+                    app.stdscr.addnstr(sel_y, right_x, "Refine Agent Prompt Editor", right_w, yellow_attr)
+                except curses.error:
+                    pass
+                sel_y += 1
+            refine_desc = (
+                "Opens publish/prompts/REFINE.md for editing. "
+                "This file contains the LLM prompt template that transforms "
+                "your free-form input into structured agent instructions "
+                "before a publish agent runs. Customise it to control how "
+                "the refine step interprets your intent."
+            )
+            for wline in textwrap.wrap(refine_desc, width=max(right_w, 20)):
+                if sel_y >= max_y - 2:
+                    break
+                try:
+                    app.stdscr.addnstr(sel_y, right_x, wline[:right_w], right_w, body)
+                except curses.error:
+                    pass
+                sel_y += 1
+        elif agent_info:
             sel_y += 1
             if sel_y < max_y - 2:
                 # Separator
