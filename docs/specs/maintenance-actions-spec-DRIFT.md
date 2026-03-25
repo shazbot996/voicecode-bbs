@@ -1,10 +1,10 @@
 ---
-type: reconcile-report
+type: drift-report
 source: "/home/schiele/projects/voicecode/docs/specs/maintenance-actions-spec.md"
 date: 2026-03-25
 ---
 
-# Reconcile Report: Document Type Styling & Maintenance Agents Spec
+# Drift Report: Document Type Styling & Maintenance Agents Spec
 
 ## Summary
 

@@ -47,15 +47,15 @@ Prioritized list of suggested updates, ordered by impact. For each:
 
 ## Output
 
-Save the report as a Markdown file alongside the source document. Derive the report filename from the source document's filename by appending `-RECONCILE`. For example:
-- `docs/context/GLOSSARY.md` → `docs/context/GLOSSARY-RECONCILE.md`
-- `docs/specs/speech-to-text-SPEC.md` → `docs/specs/speech-to-text-SPEC-RECONCILE.md`
+Save the report as a Markdown file alongside the source document. Derive the report filename from the source document's filename by appending `-DRIFT`. For example:
+- `docs/context/GLOSSARY.md` → `docs/context/GLOSSARY-DRIFT.md`
+- `docs/specs/speech-to-text-SPEC.md` → `docs/specs/speech-to-text-SPEC-DRIFT.md`
 
 Start the report with YAML front matter:
 
 ```yaml
 ---
-type: reconcile-report
+type: drift-report
 source: "{doc_path}"
 date: <today's date>
 ---

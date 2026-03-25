@@ -39,6 +39,8 @@ DOC_TYPE_COLORS = {
     "conventions": CP_DOC_BADGE_MAGENTA,
     "readme": CP_DOC_BADGE_YELLOW,
     "root-context": CP_DOC_BADGE_YELLOW,
+    "drift-report": CP_DOC_BADGE_YELLOW,
+    "coverage-report": CP_DOC_BADGE_YELLOW,
 }
 
 # Root context files shown at top of Documents tab (order matters)
@@ -376,6 +378,8 @@ class OverlayRenderer:
 
         # Build front matter type cache for document badges
         app._doc_type_cache = {}
+        app._doc_child_set: set[str] = set()  # entries rendered as nested children
+        _child_to_parent: dict[str, str] = {}  # child rel_path -> parent rel_path
         if app.working_dir:
             wd_root = Path(app.working_dir).expanduser()
             # Mark root context files with special type
@@ -390,8 +394,38 @@ class OverlayRenderer:
                     fm = parse_frontmatter(head)
                     if fm.get("type"):
                         app._doc_type_cache[rel_path] = fm["type"]
+                    # Track audit-type docs (e.g. drift-report) for nesting
+                    if fm.get("type", "").endswith("-report") and fm.get("source"):
+                        try:
+                            src = Path(fm["source"]).resolve()
+                            parent_rel = str(src.relative_to(wd_root))
+                            _child_to_parent[rel_path] = parent_rel
+                        except (ValueError, OSError):
+                            pass
                 except (OSError, UnicodeDecodeError):
                     pass
+
+            # Re-order docs so audit children appear right after their parent
+            if _child_to_parent:
+                children_by_parent: dict[str, list[str]] = {}
+                for child, parent in _child_to_parent.items():
+                    children_by_parent.setdefault(parent, []).append(child)
+                child_set = set(_child_to_parent.keys())
+                reordered: list[str] = []
+                for entry in docs:
+                    if entry in child_set:
+                        continue  # will be inserted after parent
+                    reordered.append(entry)
+                    if entry in children_by_parent:
+                        for ch in children_by_parent[entry]:
+                            reordered.append(ch)
+                            app._doc_child_set.add(ch)
+                # Append orphaned children (parent not in list) at original position
+                for child in _child_to_parent:
+                    if child not in app._doc_child_set:
+                        reordered.append(child)
+                docs = reordered
+                app._browser_cat_lists[2] = docs
 
         # Category 3: Tools (provider-aware library)
         app._browser_cat_lists[3] = get_tool_names(app.ai_provider.name)
@@ -505,11 +539,18 @@ class OverlayRenderer:
                             doc_type = app._doc_type_cache.get(entry, "") if hasattr(app, '_doc_type_cache') else ""
                             is_root_ctx = entry in getattr(app, '_root_context_set', set())
                             is_sub_ctx = is_root_ctx and entry in ROOT_CONTEXT_SUBS
+                            is_child_doc = entry in getattr(app, '_doc_child_set', set())
 
                             if is_root_ctx:
                                 # Root context files: show with [CONTEXT] badge
                                 badge = "[CONTEXT]"
                                 prefix = "  └ " if is_sub_ctx else " "
+                                badge_padded = badge.ljust(type_col_w)
+                                text = f"{prefix}{badge_padded} {entry}"
+                            elif is_child_doc:
+                                # Audit/child docs: nest under parent with short badge
+                                badge = f"[{doc_type.upper()}]" if doc_type else "[REPORT]"
+                                prefix = "  └ "
                                 badge_padded = badge.ljust(type_col_w)
                                 text = f"{prefix}{badge_padded} {entry}"
                             elif doc_type:
@@ -526,7 +567,7 @@ class OverlayRenderer:
                             app.stdscr.addnstr(row_y, overlay_x, line, overlay_w, attr)
                             # Overlay badge with type color
                             if badge and not is_sel:
-                                badge_x = overlay_x + 1 + len(prefix if is_root_ctx else " ")
+                                badge_x = overlay_x + 1 + len(prefix if (is_root_ctx or is_child_doc) else " ")
                                 badge_cp = DOC_TYPE_COLORS.get(doc_type, CP_HEADER)
                                 badge_attr = curses.color_pair(badge_cp) | curses.A_BOLD
                                 try:

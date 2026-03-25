@@ -42,9 +42,12 @@ class InputHandler:
         doc_type = getattr(app, '_doc_type_cache', {}).get(rel_path, "")
 
         # Build action list: View first, then maintenance actions
+        # Drift reports are view-only — child docs should be created by
+        # their parent agent, not through reconciliation of a report.
         actions: list[tuple[str, str]] = [("VIEW", "View")]
-        for action_name, desc in get_available_actions(doc_type):
-            actions.append((action_name, desc))
+        if doc_type != "drift-report":
+            for action_name, desc in get_available_actions(doc_type):
+                actions.append((action_name, desc))
 
         app.doc_actions_list = actions
         app.doc_actions_cursor = 0  # default to View
