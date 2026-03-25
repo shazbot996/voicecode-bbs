@@ -1,6 +1,6 @@
 ---
 type: drift-report
-source: "/home/schiele/projects/voicecode/docs/specs/maintenance-actions-spec.md"
+source: "docs/specs/maintenance-actions-spec.md"
 date: 2026-03-25
 ---
 

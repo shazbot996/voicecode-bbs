@@ -451,6 +451,8 @@ class DrawingHelper:
             app.overlays.draw_folder_slug()
         if app.show_doc_actions:
             app.overlays.draw_doc_actions()
+        if app.show_browser_delete_confirm:
+            app.overlays.draw_browser_delete_confirm()
         if app.show_shortcut_editor:
             app.overlays.draw_shortcut_editor()
         if app.show_publish_overlay:

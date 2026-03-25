@@ -68,6 +68,12 @@ class InputHandler:
             return
 
         doc_path = app.doc_reader_path
+        # Use relative path so front matter references stay portable across machines
+        if app.working_dir and doc_path:
+            try:
+                doc_path = str(Path(doc_path).relative_to(Path(app.working_dir).expanduser()))
+            except ValueError:
+                pass
         doc_content = "\n".join(app.doc_reader_lines)
         doc_type = app.doc_reader_doc_type or "unknown"
 
@@ -559,6 +565,28 @@ class InputHandler:
                                 self._execute_maintenance(action_id)
                 return
 
+            # ── Browser delete confirmation (modal within browser) ──
+            if app.show_browser_delete_confirm:
+                if ch in (ord("y"), ord("Y")):
+                    try:
+                        Path(app._browser_delete_path).unlink()
+                        app.set_status(f"Deleted: {app._browser_delete_title}")
+                        # Remove from the browser list and refresh
+                        if app._browser_delete_title in app.folder_slug_list:
+                            app.folder_slug_list.remove(app._browser_delete_title)
+                            app._browser_cat_lists[app._browser_category] = app.folder_slug_list
+                        if app.folder_slug_cursor >= len(app.folder_slug_list):
+                            app.folder_slug_cursor = max(0, len(app.folder_slug_list) - 1)
+                    except OSError as e:
+                        app.set_status(f"Delete failed: {e}")
+                    app.show_browser_delete_confirm = False
+                elif ch in (ord("n"), ord("N"), 27):
+                    app.show_browser_delete_confirm = False
+                    if ch == 27:
+                        app.stdscr.nodelay(True)
+                        app.stdscr.getch()
+                return
+
             if ch == curses.KEY_UP:
                 if app.folder_slug_cursor > 0:
                     app.folder_slug_cursor -= 1
@@ -624,6 +652,23 @@ class InputHandler:
                     app.overlays.open_tool_detail(app.folder_slug_cursor)
                 else:
                     app.set_status("Enter opens documents/tools. Use Insert to inject strings.")
+                return
+            elif ch == curses.KEY_DC:  # Delete key
+                # Delete file in Documents tab (not root context files)
+                if app._browser_category == 2 and app.folder_slug_list:
+                    rel_path = app.folder_slug_list[app.folder_slug_cursor]
+                    if rel_path == "---":
+                        return
+                    if rel_path in getattr(app, '_root_context_set', set()):
+                        app.set_status("Cannot delete root context files.")
+                        return
+                    full_path = Path(app.working_dir).expanduser() / rel_path
+                    if full_path.is_file():
+                        app._browser_delete_path = str(full_path)
+                        app._browser_delete_title = rel_path
+                        app.show_browser_delete_confirm = True
+                    else:
+                        app.set_status("File not found.")
                 return
             elif ch in (ord("e"), ord("E")):
                 # Only allow editing in the Shortcuts category

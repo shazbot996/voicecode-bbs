@@ -218,6 +218,11 @@ class BBSApp:
         self.maint_cursor = 0
         self.maint_actions: list[tuple[str, str]] = []  # (action_name, description)
 
+        # Browser delete confirmation state (modal within browser)
+        self.show_browser_delete_confirm = False
+        self._browser_delete_path = ""  # full path of file to delete
+        self._browser_delete_title = ""  # display title (rel path)
+
         # Document actions overlay state (modal within browser)
         self.show_doc_actions = False
         self.doc_actions_cursor = 0

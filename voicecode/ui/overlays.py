@@ -363,14 +363,14 @@ class OverlayRenderer:
                     found_any_rc = True
             if found_any_rc:
                 docs.append("---")  # visual separator sentinel
-            # Then add docs/ tree (sorted by mtime, newest first)
+            # Then add docs/ tree (sorted alphabetically by relative path)
             doc_root = wd_root / "docs"
             if doc_root.is_dir():
                 try:
                     all_files = [f for f in doc_root.rglob("*")
                                  if f.is_file()
                                  and not any(p.startswith(".") for p in f.relative_to(doc_root).parts)]
-                    for doc_file in sorted(all_files, key=lambda f: f.stat().st_mtime, reverse=True):
+                    for doc_file in sorted(all_files, key=lambda f: str(f.relative_to(wd_root))):
                         docs.append(str(doc_file.relative_to(wd_root)))
                 except (PermissionError, OSError):
                     pass
@@ -397,9 +397,27 @@ class OverlayRenderer:
                     # Track audit-type docs (e.g. drift-report) for nesting
                     if fm.get("type", "").endswith("-report") and fm.get("source"):
                         try:
-                            src = Path(fm["source"]).resolve()
-                            parent_rel = str(src.relative_to(wd_root))
-                            _child_to_parent[rel_path] = parent_rel
+                            src = Path(fm["source"])
+                            if src.is_absolute():
+                                # Try resolving absolute path relative to working dir;
+                                # fall back to matching by the relative suffix for
+                                # portability across machines.
+                                try:
+                                    parent_rel = str(src.relative_to(wd_root))
+                                except ValueError:
+                                    # Extract the relative portion (e.g. docs/specs/foo.md)
+                                    # by matching tail segments against known docs
+                                    src_parts = src.parts
+                                    parent_rel = None
+                                    for d in docs:
+                                        d_parts = Path(d).parts
+                                        if src_parts[-len(d_parts):] == d_parts:
+                                            parent_rel = d
+                                            break
+                            else:
+                                parent_rel = str(src)
+                            if parent_rel:
+                                _child_to_parent[rel_path] = parent_rel
                         except (ValueError, OSError):
                             pass
                 except (OSError, UnicodeDecodeError):
@@ -588,7 +606,7 @@ class OverlayRenderer:
             if cat == 0:
                 extra_hint = "  E Edit"
             elif cat == 2:
-                extra_hint = "  Enter Actions"
+                extra_hint = "  Enter Actions  Del Delete"
             elif cat == 3:
                 extra_hint = "  Enter View"
             else:
@@ -1017,6 +1035,38 @@ class OverlayRenderer:
             # Bottom border
             bot = "╚" + "═" * (dialog_w - 2) + "╝"
             app.stdscr.addnstr(foot_y + 1, dx, bot, dialog_w, border_attr)
+        except curses.error:
+            pass
+
+    def draw_browser_delete_confirm(self):
+        """Draw a delete confirmation dialog centered on screen."""
+        app = self.app
+        h, w = app.stdscr.getmaxyx()
+
+        filename = app._browser_delete_title
+        msg = f"Delete {filename}?"
+        dialog_w = max(42, len(msg) + 6)
+        dialog_h = 5
+        dx = (w - dialog_w) // 2
+        dy = (h - dialog_h) // 2
+
+        border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
+        text_attr = curses.color_pair(CP_PROMPT) | curses.A_BOLD
+        key_attr = curses.color_pair(CP_AGENT) | curses.A_BOLD
+
+        try:
+            app.stdscr.addnstr(dy, dx, "╔" + "═" * (dialog_w - 2) + "╗", dialog_w, border_attr)
+            for i in range(1, dialog_h - 1):
+                app.stdscr.addstr(dy + i, dx, "║", border_attr)
+                app.stdscr.addnstr(dy + i, dx + 1, " " * (dialog_w - 2), dialog_w - 2, text_attr)
+                app.stdscr.addstr(dy + i, dx + dialog_w - 1, "║", border_attr)
+            app.stdscr.addnstr(dy + dialog_h - 1, dx, "╚" + "═" * (dialog_w - 2) + "╝", dialog_w, border_attr)
+
+            # Truncate message if needed
+            display_msg = msg if len(msg) <= dialog_w - 4 else msg[:dialog_w - 5] + "…"
+            app.stdscr.addstr(dy + 1, dx + (dialog_w - len(display_msg)) // 2, display_msg, text_attr)
+            options = "[Y]es  [N]o"
+            app.stdscr.addstr(dy + 3, dx + (dialog_w - len(options)) // 2, options, key_attr)
         except curses.error:
             pass
 
