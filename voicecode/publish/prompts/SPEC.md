@@ -71,4 +71,4 @@ Produce the following sections. Omit any section that genuinely does not apply, 
 - **Respect existing patterns.** If the codebase does something a certain way, the spec should acknowledge and build on that.
 - **Focus on "what" and "why", not "how to implement step by step".** That is what a PLAN document is for. The spec defines the destination, not the route.
 - Write the document as a single Markdown file. Use `##` for top-level sections and `###` for subsections.
-- Start the document with a YAML frontmatter block containing title, scope, and date.
+- Start the document with a YAML frontmatter block containing type (always `spec`), title, scope, and date.

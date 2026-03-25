@@ -51,6 +51,7 @@ Produce the conventions file as a Markdown file with the following format:
 
 ```markdown
 ---
+type: conventions
 title: Conventions
 scope: <project name or scope>
 date: <YYYY-MM-DD>

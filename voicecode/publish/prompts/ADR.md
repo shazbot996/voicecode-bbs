@@ -73,4 +73,4 @@ Links to other ADRs, specs, or documents that informed or are affected by this d
 - **Keep it concise.** ADRs are reference documents, not narratives. Aim for 1–2 pages. Engineers should be able to read one in under 5 minutes.
 - **Stay neutral in tone.** Present trade-offs honestly. Avoid advocacy language — the decision section states the choice; the alternatives section shows the reasoning.
 - Write the document as a single Markdown file. Use `##` for top-level sections.
-- Start the document with a YAML frontmatter block containing title, status, date, and decision summary.
+- Start the document with a YAML frontmatter block containing type (always `adr`), title, status, date, and decision summary.

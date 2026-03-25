@@ -50,6 +50,7 @@ Produce the constraints file as a Markdown file with the following format:
 
 ```markdown
 ---
+type: constraints
 title: Constraints
 scope: <project name or scope>
 date: <YYYY-MM-DD>

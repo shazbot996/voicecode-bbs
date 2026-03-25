@@ -71,4 +71,4 @@ For each significant component or module:
 - **Keep it maintainable.** Write at the right level of abstraction — enough detail to be useful, not so much that it goes stale immediately.
 - **Focus on "why" not just "what".** The code already shows what; the architecture doc should explain why things are structured this way.
 - Write the document as a single Markdown file. Use `##` for top-level sections and `###` for subsections.
-- Start the document with a YAML frontmatter block containing title, scope, and date.
+- Start the document with a YAML frontmatter block containing type (always `arch`), title, scope, and date.

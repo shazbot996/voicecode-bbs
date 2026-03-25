@@ -56,3 +56,4 @@ Not every project needs every section. Omit sections that don't apply and add pr
 - **Link to deeper docs.** Don't duplicate content that lives in `docs/`. Point readers there for architecture, specs, and conventions.
 - **Maintain the project's voice.** If the existing README has a particular tone or style, preserve it unless asked to change it.
 - **Output the complete file.** Always write the full README, not a partial update.
+- Start the document with a YAML frontmatter block containing type (always `readme`), title, scope, and date.

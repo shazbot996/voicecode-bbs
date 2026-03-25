@@ -40,6 +40,7 @@ Produce the glossary as a Markdown file with the following format:
 
 ```markdown
 ---
+type: glossary
 title: Glossary
 scope: <project name or scope>
 date: <YYYY-MM-DD>

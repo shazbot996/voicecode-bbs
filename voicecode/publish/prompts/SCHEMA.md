@@ -43,6 +43,7 @@ Produce the schema file as a Markdown file with the following format:
 
 ```markdown
 ---
+type: schema
 title: Schema
 scope: <project name or scope>
 date: <YYYY-MM-DD>

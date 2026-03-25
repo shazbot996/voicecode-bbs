@@ -68,4 +68,4 @@ Group related steps under sub-headings if the plan is large.
 - **Order matters.** Steps should be in a logical implementation order — foundations first, integration last.
 - **Keep it actionable.** Each step should be something a developer can sit down and do. Avoid vague steps like "implement the feature" — break it down.
 - Write the document as a single Markdown file. Use `##` for top-level sections and `###` for subsections.
-- Start the document with a YAML frontmatter block containing title, spec reference, scope, and date.
+- Start the document with a YAML frontmatter block containing type (always `plan`), title, spec reference, scope, and date.
