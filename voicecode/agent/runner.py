@@ -74,7 +74,7 @@ class RunnerHelper:
 
     def format_tool_input(self, name, inp):
         """Format a tool_use input dict into a concise display string."""
-        if name == "Read":
+        if name in ("Read", "ReadFile"):
             path = inp.get("file_path", "")
             parts = []
             if path:
@@ -84,22 +84,50 @@ class RunnerHelper:
             if inp.get("limit"):
                 parts.append(f"+{inp['limit']}")
             return " ".join(parts) if parts else ""
-        elif name == "Edit":
+        elif name == "ReadManyFiles":
+            paths = inp.get("file_paths", [])
+            if not paths: return ""
+            short_paths = [p.split("/")[-1] if "/" in p else p for p in paths]
+            res = ", ".join(short_paths[:3])
+            if len(short_paths) > 3:
+                res += f" ... (+{len(short_paths)-3})"
+            return res
+        elif name in ("Edit", "EditFile"):
             path = inp.get("file_path", "")
             short = path.split("/")[-1] if "/" in path else path
             old = inp.get("old_string", "")
+            # Gemini EditFile uses 'edits' list
+            edits = inp.get("edits", [])
+            if edits and isinstance(edits, list):
+                # Just show the first edit preview
+                first = edits[0]
+                old = first.get("old_string", first.get("find", ""))
             preview = old[:60].replace("\n", "\\n") + ("..." if len(old) > 60 else "")
             return f"{short}: {preview}" if preview else short
-        elif name == "Write":
+        elif name in ("Write", "WriteFile"):
             path = inp.get("file_path", "")
             return path.split("/")[-1] if "/" in path else path
-        elif name in ("Bash", "Task"):
+        elif name in ("Bash", "Task", "Shell"):
             cmd = inp.get("command", inp.get("prompt", ""))
             return cmd[:80] + ("..." if len(cmd) > 80 else "")
-        elif name in ("Grep", "Glob"):
-            pat = inp.get("pattern", "")
+        elif name in ("Grep", "Glob", "GrepSearch", "FindFiles"):
+            pat = inp.get("pattern", inp.get("query", ""))
             path = inp.get("path", "")
             return f"{pat}" + (f" in {path}" if path else "")
+        elif name == "ListDirectory":
+            path = inp.get("dir_path", "")
+            return path.split("/")[-1] if "/" in path else path
+        elif name in ("WebSearch", "GoogleSearch", "MemorySearch"):
+            q = inp.get("query", "")
+            return q[:80] + ("..." if len(q) > 80 else "")
+        elif name in ("WebFetch", "FetchWebPage"):
+            url = inp.get("url", "")
+            return url
+        elif name == "SaveMemory":
+            k = inp.get("key", "")
+            v = str(inp.get("value", ""))
+            v_short = v[:40] + ("..." if len(v) > 40 else "")
+            return f"{k} = {v_short}"
         elif name == "Agent":
             desc = inp.get("description", "")
             return desc

@@ -65,7 +65,11 @@ class GeminiProvider(CLIProvider):
         return None
 
     def parse_thinking_event(self, event: dict) -> str | None:
-        if event.get("type") != "message" or event.get("role") != "assistant":
+        etype = event.get("type", "")
+        if etype == "thinking":
+            return event.get("thinking", "")
+
+        if etype != "message" or event.get("role") != "assistant":
             return None
         thinking = event.get("thinking", "")
         return thinking if thinking else None
@@ -87,14 +91,15 @@ class GeminiProvider(CLIProvider):
         return None
 
     def parse_context_usage(self, event: dict) -> tuple[int, int] | None:
-        if event.get("type") != "result":
+        etype = event.get("type", "")
+        if etype not in ("result", "usage"):
             return None
-        stats = event.get("stats", {})
+        stats = event.get("stats", event.get("usage", {}))
         total_tokens = stats.get("total_tokens", 0)
         # Gemini CLI stats are flat: total_tokens, input_tokens, output_tokens
         if total_tokens:
-            # Gemini 2.5 Pro context window is 1M tokens
-            ctx_window = 1_000_000
+            # Gemini 1.5 Pro context window is 2M tokens
+            ctx_window = 2_000_000
             return (total_tokens, ctx_window)
         return None
 
