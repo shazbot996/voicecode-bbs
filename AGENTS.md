@@ -14,8 +14,9 @@ Voice-driven CLI interface for interacting with AI agents (Claude, Gemini). Dict
   - `providers/` — AI provider adapters (Claude, Gemini) with base class
   - `stt/` — Speech-to-text (faster-whisper)
   - `tts/` — Text-to-speech engine, voice config, Google Cast
-  - `publish/` — Document publishing agents (ARCH, PLAN, SPEC, GLOSSARY, CONSTRAINTS) with base class and prompt templates
-  - `ui/` — Curses UI: panes, overlays, drawing, colors, animation, input handling
+  - `publish/` — Document publishing agents (9 types) with base class and prompt templates; `maintenance/` subpackage for document upkeep agents; `frontmatter.py` for YAML front matter parsing
+  - `data/` — Built-in reference data (tool library definitions for Claude/Gemini)
+  - `ui/` — Curses UI: panes, overlays, drawing, colors, animation, input handling, publish overlay, settings overlay
 
 ### Audio Pipeline
 
@@ -31,7 +32,7 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 
 ## Tech Stack
 
-- **Python 3.12** — no build system, modular package structure under `voicecode/`
+- **Python 3.12** — modular package structure under `voicecode/`, Makefile for common tasks
 - **faster-whisper** — speech-to-text (models: tiny.en, base.en, small.en, medium.en)
 - **silero-vad** / **torch** (CPU-only) — voice activity detection
 - **sounddevice** / **numpy** — audio capture
@@ -47,9 +48,13 @@ Mic (16kHz mono) → Silero VAD → faster-whisper STT → Review/Dictation Buff
 # Activate venv
 source venv/bin/activate
 
-# Launch the BBS prompt workshop (either works)
+# Launch the BBS prompt workshop (any of these work)
 python voicecode_bbs.py
 python -m voicecode
+make voicecode
+
+# Run smoke tests
+make test
 ```
 
 ## Conventions
@@ -64,8 +69,10 @@ python -m voicecode
 - Session continuity across prompts via `--resume` with session IDs (Claude) or `--resume latest` (Gemini)
 - Mid-recording shortcuts injection merges paths into transcripts using word-level timestamps
 - App expects a working folder (typically repo root) with `prompts/` and `docs/` subfolders
-- **Publish system** — `publish/` contains specialized agents that generate structured docs (ARCH, PLAN, SPEC, GLOSSARY, CONSTRAINTS). Each agent subclasses `PublishAgent` (in `publish/base.py`) and has a prompt template loaded from `publish/prompts/<DOC_TYPE>.md` with `{scope}` and `{dest_folder}` placeholders. GLOSSARY and CONSTRAINTS agents override `build_prompt()` to use a fixed destination (`context/`). The publish overlay (`ui/publish_overlay.py`) is a two-step modal: pick doc type → pick destination folder under `docs/`. The built prompt is sent through the normal agent execution pipeline.
-- No tests or CI currently
+- **Publish system** — `publish/` contains 9 specialized agents that generate structured docs: ADR, ARCH, PLAN, SPEC, GLOSSARY, CONSTRAINTS, CONVENTIONS, SCHEMA, README. Each agent subclasses `PublishAgent` (in `publish/base.py`) and has a prompt template loaded from `publish/prompts/<DOC_TYPE>.md` with `{scope}` and `{dest_folder}` placeholders. GLOSSARY, CONSTRAINTS, CONVENTIONS, SCHEMA, and README agents override `build_prompt()` to use a fixed destination (`context/` or project root). The publish overlay (`ui/publish_overlay.py`) is a two-step modal: pick doc type → pick destination folder under `docs/`. The built prompt is sent through the shared `execute_agent_prompt()` helper.
+- **Maintenance system** — `publish/maintenance/` provides agents that operate on existing documents: Reconcile (check drift), Refresh (update in-place), Coverage (find gaps), plus CTX_DRIFT and CTX_UPDATE for root context files. Each subclasses `MaintenanceAgent` (in `publish/maintenance/base.py`) with prompt templates in `publish/maintenance/prompts/`. Accessible via `M` key in the document reader or from the document actions overlay in the browser. Uses the same `execute_agent_prompt()` pipeline as publish.
+- **Document type styling** — Published documents have YAML front matter with a `type` field parsed by `publish/frontmatter.py`. The browser shows color-coded `[TYPE]` badges and the document reader uses type-based border colors. Root context files (AGENTS.md, CLAUDE.md, GEMINI.md) appear at the top of the Documents tab with `[CONTEXT]` badges.
+- Smoke test suite in `tests/` (pytest); `requirements-dev.txt` has test dependencies; no CI currently
 
 ## BBS App Three-Pane Layout
 
@@ -100,11 +107,12 @@ python -m voicecode
 | U | Undo last dictation entry |
 | C | Clear dictation buffer |
 | Enter | Type text directly into dictation buffer (Enter to submit, ESC to cancel) |
-| Tab | Shortcuts browser (inject strings/paths into dictation; works mid-recording) |
+| Tab | Browser overlay — 4 tabs: Shortcuts, Project Folders, Documents, Tools (works mid-recording) |
 | ←/→ | Browse prompt history |
 | ↑/↓ | Scroll prompt pane |
 | Home | Return to current prompt |
 | PgUp/PgDn | Scroll agent terminal |
+| End | Scroll agent terminal to bottom |
 | O | Settings / voice config |
 | K | Kill running agent |
 | W | New session (clear conversation context) |
@@ -114,6 +122,7 @@ python -m voicecode
 | T | Cycle status bar tip |
 | [/] | Cycle TTS voice |
 | H | Help overlay |
+| ESC | Escape menu (settings, help, about, restart, quit) |
 | A | About / title screen |
 | X | Restart application |
 | Q | Quit |
