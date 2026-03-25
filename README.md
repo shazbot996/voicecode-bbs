@@ -117,11 +117,7 @@ The interface is a full curses TUI styled after 1990s bulletin board systems wit
 
 ---
 
-## DREP Prompt Execution
-
-**Direct, Refine, Execute, Publish** — a prompt execution strategy that should be standard practice for anyone working with AI agents.
-
-We spend far more time managing prompts than we do managing agents. The bottleneck in AI-assisted development isn't the agent — it's getting the right prompt to the agent in the first place. DREP gives you two paths to execution: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**. Execute sends your prompt to claude code for execution directly. **Publish** now has an increasing list of task-specific agents to create and refine specific types of context markdown in an opinionated structure - it's goal is to incorporate precise context generation for application architecture, planning and agent behavior. 
+We spend far more time managing prompts than we do managing agents. The bottleneck in AI-assisted development isn't the agent — it's getting the right prompt to the agent in the first place. Voicecode gives you two paths to execute a dictatation: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**. Execute sends your prompt to claude code for execution directly. **Publish** now has an increasing list of task-specific agents to create and refine specific types of context markdown in an opinionated structure - it's goal is to incorporate precise context generation for application architecture, planning and agent behavior. 
 
 This is the philosophy behind VoiceCode's three-pane layout:
 
@@ -132,7 +128,7 @@ This is the philosophy behind VoiceCode's three-pane layout:
 - **Agent Terminal** (right) — ZMODEM transfer animation, then typewriter-streamed responses with context meter. Activity spinner shows agent status and stall warnings.
 - **Publish Document Window** (modal, fullscreen) — Pressing [P] opens the publish document window that lists available document publishing agents, and lets you execute them from your existing prompt content, either direct or refined.
 
-The DREP model is also why VoiceCode is a retro CLI and not a web app. Everything in this application is keyboard shortcuts — the thing you lose in a modern web UI is often found in the simplicity of a command line interface. When your workflow is about fast iteration between voice and text, every millisecond of friction matters. Curses gives you that speed and simplicity. 
+This model is also why VoiceCode is a retro CLI and not a web app. Everything in this application is keyboard shortcuts — the thing you lose in a modern web UI is often found in the simplicity of a command line interface. When your workflow is about fast iteration between voice and text, every millisecond of friction matters. Curses gives you that speed and simplicity. 
 
 ---
 
@@ -255,6 +251,8 @@ When enabled, every TTS summary is generated as a WAV file and streamed to all s
 
 Press **P** to open the Publish overlay — a two-step modal that generates structured documentation from your codebase using specialized AI agents. The publish workflow closes the loop on the Prompt Refinery: you dictate and refine your thoughts, then publish them as living documentation that agents and teammates can reference on every session. Each publish agent reads actual code and merges your prompt scope into a well-structured markdown file.
 
+We also enforce a standard YAML frontmatter layer for your context documents - this becomes valuable longer term as we look to build automations into the context repository.
+
 **Step 1 — Pick a document type:**
 
 | Type | Agent | Purpose |
@@ -284,6 +282,8 @@ docs/
 The publish agent uses your current prompt as its scope (what to focus on), builds a specialized system prompt for the selected document type, and sends it through the normal agent execution pipeline. The result is a well-structured markdown file written to your chosen `docs/` subfolder.
 
 ### Document Maintenance
+
+The first steps in what could be the most valuable layer eventually! Our document browser maintaining proper YAML frontmatter lets us track these documents with predictable fields. Our first example of this is using that frontmatter to allow directed agents to know what type of context document a given file is, and apply a curated agent for that context document to serve ongoing maintenance. These context surfaces could easily ground numerous context-aware agents for development, maintenance, and interesting cross-cutting enforcement layers. For now, we are mostly fighting drift with the current draft of the app.
 
 Published documents can be maintained via specialized maintenance agents accessible from the document browser. Open **Tab** → **Documents**, select a document, and press **Enter** to see available actions, or open a document in the reader and press **M** for maintenance actions.
 
