@@ -38,7 +38,13 @@ DOC_TYPE_COLORS = {
     "constraints": CP_DOC_BADGE_MAGENTA,
     "conventions": CP_DOC_BADGE_MAGENTA,
     "readme": CP_DOC_BADGE_YELLOW,
+    "root-context": CP_DOC_BADGE_YELLOW,
 }
+
+# Root context files shown at top of Documents tab (order matters)
+ROOT_CONTEXT_PRIMARY = "AGENTS.md"
+ROOT_CONTEXT_SUBS = ["CLAUDE.md", "GEMINI.md"]
+ROOT_CONTEXT_FILES = [ROOT_CONTEXT_PRIMARY] + ROOT_CONTEXT_SUBS
 
 
 class OverlayRenderer:
@@ -340,11 +346,23 @@ class OverlayRenderer:
                 pass
         app._browser_cat_lists[1] = dirs
 
-        # Category 2: Documents (all files recursive from {working_dir}/docs/)
+        # Category 2: Documents — root context files first, then docs/ tree
         docs: list[str] = []
+        app._root_context_set: set[str] = set()
         if app.working_dir:
-            doc_root = Path(app.working_dir).expanduser() / "docs"
             wd_root = Path(app.working_dir).expanduser()
+            # Prepend root context files that exist
+            found_any_rc = False
+            for rc_name in ROOT_CONTEXT_FILES:
+                rc_path = wd_root / rc_name
+                if rc_path.is_file():
+                    docs.append(rc_name)
+                    app._root_context_set.add(rc_name)
+                    found_any_rc = True
+            if found_any_rc:
+                docs.append("---")  # visual separator sentinel
+            # Then add docs/ tree (sorted by mtime, newest first)
+            doc_root = wd_root / "docs"
             if doc_root.is_dir():
                 try:
                     all_files = [f for f in doc_root.rglob("*")
@@ -360,7 +378,12 @@ class OverlayRenderer:
         app._doc_type_cache = {}
         if app.working_dir:
             wd_root = Path(app.working_dir).expanduser()
+            # Mark root context files with special type
+            for rc in app._root_context_set:
+                app._doc_type_cache[rc] = "root-context"
             for rel_path in docs:
+                if rel_path in app._root_context_set:
+                    continue  # already typed
                 try:
                     full = wd_root / rel_path
                     head = full.read_text(encoding="utf-8")[:512]
@@ -471,22 +494,39 @@ class OverlayRenderer:
                         is_sel = (idx == app.folder_slug_cursor)
                         attr = sel_attr if is_sel else bg_attr
                         if cat == 2:
+                            # Separator sentinel — draw thin line, not selectable
+                            if entry == "---":
+                                sep_text = "║" + " " + "─" * (inner_w - 2) + " " + "║"
+                                app.stdscr.addnstr(row_y, overlay_x, sep_text, overlay_w,
+                                                   curses.color_pair(CP_DOC_LIST_BORDER))
+                                continue
                             # Table layout: fixed-width type column + path
                             type_col_w = 13  # fits "[CONSTRAINTS]"
                             doc_type = app._doc_type_cache.get(entry, "") if hasattr(app, '_doc_type_cache') else ""
-                            if doc_type:
+                            is_root_ctx = entry in getattr(app, '_root_context_set', set())
+                            is_sub_ctx = is_root_ctx and entry in ROOT_CONTEXT_SUBS
+
+                            if is_root_ctx:
+                                # Root context files: show with [CONTEXT] badge
+                                badge = "[CONTEXT]"
+                                prefix = "  └ " if is_sub_ctx else " "
+                                badge_padded = badge.ljust(type_col_w)
+                                text = f"{prefix}{badge_padded} {entry}"
+                            elif doc_type:
                                 badge = f"[{doc_type.upper()}]"
+                                badge_padded = badge.ljust(type_col_w)
+                                text = f" {badge_padded} {entry}"
                             else:
                                 badge = ""
-                            badge_padded = badge.ljust(type_col_w)
-                            text = f" {badge_padded} {entry}"
+                                badge_padded = badge.ljust(type_col_w)
+                                text = f" {badge_padded} {entry}"
                             display_w = len(text)
                             padded = text[:inner_w] + " " * max(0, inner_w - display_w)
                             line = "║" + padded + "║"
                             app.stdscr.addnstr(row_y, overlay_x, line, overlay_w, attr)
                             # Overlay badge with type color
                             if badge and not is_sel:
-                                badge_x = overlay_x + 1 + 1  # after ║ + space
+                                badge_x = overlay_x + 1 + len(prefix if is_root_ctx else " ")
                                 badge_cp = DOC_TYPE_COLORS.get(doc_type, CP_HEADER)
                                 badge_attr = curses.color_pair(badge_cp) | curses.A_BOLD
                                 try:

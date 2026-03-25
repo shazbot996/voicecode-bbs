@@ -559,10 +559,19 @@ class InputHandler:
             if ch == curses.KEY_UP:
                 if app.folder_slug_cursor > 0:
                     app.folder_slug_cursor -= 1
+                    # Skip separator sentinels
+                    if (app.folder_slug_list
+                            and app.folder_slug_list[app.folder_slug_cursor] == "---"):
+                        app.folder_slug_cursor = max(0, app.folder_slug_cursor - 1)
                 return
             elif ch == curses.KEY_DOWN:
                 if app.folder_slug_cursor < len(app.folder_slug_list) - 1:
                     app.folder_slug_cursor += 1
+                    # Skip separator sentinels
+                    if (app.folder_slug_list
+                            and app.folder_slug_list[app.folder_slug_cursor] == "---"):
+                        app.folder_slug_cursor = min(
+                            len(app.folder_slug_list) - 1, app.folder_slug_cursor + 1)
                 return
             elif ch == curses.KEY_LEFT:
                 # Switch to previous category

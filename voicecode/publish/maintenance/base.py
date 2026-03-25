@@ -39,3 +39,8 @@ class MaintenanceAgent:
     def applicable_types(self) -> list[str]:
         """Document types this action applies to. Empty list = all types."""
         return []
+
+    @property
+    def excluded_types(self) -> list[str]:
+        """Document types this action should never apply to."""
+        return []
