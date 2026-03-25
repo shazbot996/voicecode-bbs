@@ -133,6 +133,59 @@ def get_publish_agent(doc_type: str):
     return _AGENT_REGISTRY.get(doc_type)
 
 
+def execute_agent_prompt(app, prompt_text: str, label: str):
+    """Feed a prompt into the agent execution pipeline.
+
+    Shared by publish and maintenance workflows.  Sets up the ZMODEM
+    animation, saves to history, and spawns the background agent thread.
+    """
+    import time
+    import threading
+    from voicecode.constants import AgentState
+    from voicecode.ui.colors import CP_XFER
+
+    app.executed_prompt_text = label
+    if app._prompt_pane_original_color is None:
+        app._prompt_pane_original_color = app.prompt_pane.color_pair
+    app.prompt_pane.color_pair = CP_XFER
+    app.browser_view = "active"
+    app.browser_index = -1
+    w = app.stdscr.getmaxyx()[1] // 2
+    app.browser.load_browser_prompt(w)
+
+    # Clear prompt state
+    app.fragments.clear()
+    app.input_handler.clear_buffer_file()
+    app.current_prompt = None
+    app.prompt_version = 0
+    app.prompt_saved = True
+    app.dictation_pane.lines.clear()
+    app.dictation_pane.scroll_offset = 0
+
+    app._last_history_prompt_path = app.execution.save_to_history(prompt_text)
+
+    app.xfer_prompt_text = prompt_text
+    app.xfer_bytes = len(prompt_text.encode())
+    app.xfer_progress = 0.0
+    app.xfer_frame = 0
+    app.xfer_start_time = time.time()
+    app.agent_state = AgentState.DOWNLOADING
+    app.typewriter_queue.clear()
+    app._typewriter_budget = 0.0
+    app._typewriter_last_ts = 0.0
+    app.agent_first_output = False
+    app.agent_last_activity = 0.0
+    app._typewriter_line_color = None
+    app._tts_detect_buf = ''
+    app._tts_in_summary = False
+
+    app.browser.set_agent_welcome(40)
+    app.set_status(f"{label} ...")
+
+    app._agent_cancel.clear()
+    threading.Thread(target=app.runner.run_agent, daemon=True).start()
+
+
 class PublishOverlay:
     """Near-full-screen modal for the Publish workflow.
 
@@ -262,10 +315,6 @@ class PublishOverlay:
 
     def _execute_publish(self):
         """Build the publish prompt and send it through the agent pipeline."""
-        import time
-        import threading
-        from voicecode.constants import AgentState
-
         app = self.app
         doc_type = app.publish_selected_type
         dest_folder = app.publish_selected_folder
@@ -284,50 +333,10 @@ class PublishOverlay:
             scope = "the entire repository (all top-level folders and files)"
 
         prompt_text = agent.build_prompt(scope, dest_folder)
-
-        # Feed into the standard execution pipeline
         dest_label = f"docs/{dest_folder}" if dest_folder else "README.md"
-        app.executed_prompt_text = f"[PUBLISH {doc_type} → {dest_label}]"
-        from voicecode.ui.colors import CP_XFER
-        if app._prompt_pane_original_color is None:
-            app._prompt_pane_original_color = app.prompt_pane.color_pair
-        app.prompt_pane.color_pair = CP_XFER
-        app.browser_view = "active"
-        app.browser_index = -1
-        w = app.stdscr.getmaxyx()[1] // 2
-        app.browser.load_browser_prompt(w)
+        label = f"[PUBLISH {doc_type} → {dest_label}]"
 
-        # Clear prompt state so next dictation starts fresh (matches execute_prompt)
-        app.fragments.clear()
-        app.input_handler.clear_buffer_file()
-        app.current_prompt = None
-        app.prompt_version = 0
-        app.prompt_saved = True
-        app.dictation_pane.lines.clear()
-        app.dictation_pane.scroll_offset = 0
-
-        app._last_history_prompt_path = app.execution.save_to_history(prompt_text)
-
-        app.xfer_prompt_text = prompt_text
-        app.xfer_bytes = len(prompt_text.encode())
-        app.xfer_progress = 0.0
-        app.xfer_frame = 0
-        app.xfer_start_time = time.time()
-        app.agent_state = AgentState.DOWNLOADING
-        app.typewriter_queue.clear()
-        app._typewriter_budget = 0.0
-        app._typewriter_last_ts = 0.0
-        app.agent_first_output = False
-        app.agent_last_activity = 0.0
-        app._typewriter_line_color = None
-        app._tts_detect_buf = ''
-        app._tts_in_summary = False
-
-        app.browser.set_agent_welcome(40)
-        app.set_status(f"Publishing {doc_type} → {dest_label} ...")
-
-        app._agent_cancel.clear()
-        threading.Thread(target=app.runner.run_agent, daemon=True).start()
+        execute_agent_prompt(app, prompt_text, label)
 
     # ── drawing ──────────────────────────────────────────────────
 

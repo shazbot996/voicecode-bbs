@@ -213,6 +213,11 @@ class BBSApp:
         self.doc_edit_save_confirm = False
         self.doc_reader_on_close: object = None  # optional callback when doc reader closes
 
+        # Maintenance overlay state (modal within doc reader)
+        self.show_maint_overlay = False
+        self.maint_cursor = 0
+        self.maint_actions: list[tuple[str, str]] = []  # (action_name, description)
+
         # Shortcut editor overlay state
         self.show_shortcut_editor = False
         self.shortcut_editor_cursor = 0

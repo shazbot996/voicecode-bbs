@@ -810,6 +810,65 @@ class OverlayRenderer:
         except curses.error:
             pass
 
+    def draw_maint_overlay(self):
+        """Draw the maintenance action selection modal over the doc reader."""
+        app = self.app
+        h, w = app.stdscr.getmaxyx()
+
+        actions = app.maint_actions
+        label = app.doc_reader_doc_type.upper() if app.doc_reader_doc_type else "FILE"
+
+        # Dialog sizing
+        max_desc_len = max((len(desc) for _, desc in actions), default=20)
+        dialog_w = max(36, max_desc_len + 10)
+        dialog_h = len(actions) + 4  # border + title + actions + footer
+        dx = (w - dialog_w) // 2
+        dy = (h - dialog_h) // 2
+
+        type_cp = DOC_TYPE_COLORS.get(app.doc_reader_doc_type, CP_HEADER)
+        border_attr = curses.color_pair(type_cp) | curses.A_BOLD
+        text_attr = curses.color_pair(CP_DOC_BODY) | curses.A_BOLD
+        sel_attr = curses.color_pair(CP_DOC_LIST_SEL) | curses.A_BOLD
+        key_attr = curses.color_pair(CP_DOC_HEADING) | curses.A_BOLD
+
+        try:
+            # Top border with title
+            title = f" Maintain: {label} "
+            top_left = "╔═"
+            top_right = "═" * (dialog_w - len(top_left) - len(title) - 1) + "╗"
+            app.stdscr.addstr(dy, dx, top_left, border_attr)
+            app.stdscr.addstr(dy, dx + len(top_left), title, border_attr)
+            app.stdscr.addstr(dy, dx + len(top_left) + len(title), top_right, border_attr)
+
+            # Action rows
+            for i, (name, desc) in enumerate(actions):
+                row_y = dy + 1 + i
+                pointer = "▸" if i == app.maint_cursor else " "
+                line_text = f" {pointer} {desc}"
+                padded = line_text + " " * max(0, dialog_w - 2 - len(line_text))
+                attr = sel_attr if i == app.maint_cursor else text_attr
+                app.stdscr.addstr(row_y, dx, "║", border_attr)
+                app.stdscr.addnstr(row_y, dx + 1, padded, dialog_w - 2, attr)
+                app.stdscr.addstr(row_y, dx + dialog_w - 1, "║", border_attr)
+
+            # Empty separator row
+            sep_y = dy + 1 + len(actions)
+            app.stdscr.addstr(sep_y, dx, "║" + " " * (dialog_w - 2) + "║", border_attr)
+
+            # Footer with help
+            foot_y = dy + 2 + len(actions)
+            options = "[Enter]Select  [ESC]Cancel"
+            app.stdscr.addstr(foot_y, dx, "║", border_attr)
+            centered = options.center(dialog_w - 2)
+            app.stdscr.addnstr(foot_y, dx + 1, centered, dialog_w - 2, key_attr)
+            app.stdscr.addstr(foot_y, dx + dialog_w - 1, "║", border_attr)
+
+            # Bottom border
+            bot = "╚" + "═" * (dialog_w - 2) + "╝"
+            app.stdscr.addnstr(foot_y + 1, dx, bot, dialog_w, border_attr)
+        except curses.error:
+            pass
+
     @staticmethod
     def _wrap_edit_lines(lines, content_w):
         """Build a visual-line map by wrapping logical lines to *content_w*.

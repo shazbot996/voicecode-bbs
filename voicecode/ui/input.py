@@ -28,10 +28,35 @@ class InputHandler:
         app = self.app
         app.show_doc_reader = False
         app.doc_edit_mode = False
+        app.show_maint_overlay = False
         cb = app.doc_reader_on_close
         app.doc_reader_on_close = None
         if callable(cb):
             cb()
+
+    def _execute_maintenance(self, action_name: str):
+        """Build and execute a maintenance agent prompt on the current document."""
+        from voicecode.publish.maintenance import get_maintenance_agent
+        from voicecode.ui.publish_overlay import execute_agent_prompt
+
+        app = self.app
+        agent = get_maintenance_agent(action_name)
+        if not agent:
+            app.set_status(f"Unknown maintenance action: {action_name}")
+            return
+
+        doc_path = app.doc_reader_path
+        doc_content = "\n".join(app.doc_reader_lines)
+        doc_type = app.doc_reader_doc_type or "unknown"
+
+        prompt_text = agent.build_prompt(doc_path, doc_content, doc_type)
+
+        # Close overlays before launching agent
+        app.show_maint_overlay = False
+        self._close_doc_reader()
+
+        label = f"[MAINTAIN {action_name} → {doc_path}]"
+        execute_agent_prompt(app, prompt_text, label)
 
     def read_paste_content(self) -> str:
         """Read characters until the bracketed-paste end sequence ESC[201~."""
@@ -254,6 +279,26 @@ class InputHandler:
 
         # Handle document reader overlay
         if app.show_doc_reader:
+            # ── Maintenance overlay (modal within doc reader) ──
+            if app.show_maint_overlay:
+                if ch in (27,):  # ESC
+                    app.show_maint_overlay = False
+                    app.stdscr.nodelay(True)
+                    app.stdscr.getch()
+                elif ch == curses.KEY_UP:
+                    app.maint_cursor = max(0, app.maint_cursor - 1)
+                elif ch == curses.KEY_DOWN:
+                    app.maint_cursor = min(len(app.maint_actions) - 1, app.maint_cursor + 1)
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    from voicecode.constants import AgentState
+                    if app.agent_state not in (AgentState.IDLE, AgentState.DONE):
+                        app.set_status("Agent is busy. Wait or kill it first.")
+                        app.show_maint_overlay = False
+                    elif app.maint_actions:
+                        action_name, _ = app.maint_actions[app.maint_cursor]
+                        self._execute_maintenance(action_name)
+                return
+
             # ── Save confirmation dialog ──
             if app.doc_edit_save_confirm:
                 if ch in (ord("y"), ord("Y")):
@@ -446,6 +491,16 @@ class InputHandler:
                     app.dictation_pane.add_line(f"[{ts}] {slug}", left_width)
                     app.set_status(f"Inserted: {slug}")
                 self._close_doc_reader()
+            elif ch in (ord("m"), ord("M")):
+                from voicecode.publish.maintenance import get_available_actions
+                doc_type = app.doc_reader_doc_type
+                actions = get_available_actions(doc_type)
+                if actions:
+                    app.maint_actions = actions
+                    app.maint_cursor = 0
+                    app.show_maint_overlay = True
+                else:
+                    app.set_status("No maintenance actions available for this file type.")
             return
 
         # Handle folder slug overlay

@@ -455,6 +455,8 @@ class DrawingHelper:
             app.publish_overlay.draw()
         if app.show_doc_reader:
             app.overlays.draw_doc_reader()
+        if app.show_maint_overlay:
+            app.overlays.draw_maint_overlay()
         if app.show_escape_menu:
             app.overlays.draw_escape_menu()
 
