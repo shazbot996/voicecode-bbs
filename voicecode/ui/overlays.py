@@ -5,19 +5,40 @@ import textwrap
 from pathlib import Path
 
 from version import __version__
+from voicecode.publish.frontmatter import parse_frontmatter
 from voicecode.ui.colors import (
     CP_AGENT,
+    CP_DOC_BADGE_CYAN,
+    CP_DOC_BADGE_GREEN,
+    CP_DOC_BADGE_MAGENTA,
+    CP_DOC_BADGE_YELLOW,
+    CP_DOC_BODY,
+    CP_DOC_DIM,
+    CP_DOC_HEADING,
+    CP_DOC_LIST_BG,
+    CP_DOC_LIST_BORDER,
+    CP_DOC_LIST_SEL,
     CP_HEADER,
     CP_HELP,
     CP_PROMPT,
     CP_RECORDING,
     CP_VOICE,
-    CP_XTREE_BG,
-    CP_XTREE_BORDER,
-    CP_XTREE_SEL,
 )
 from voicecode.data.tools import get_tool_names, get_tool_detail
 from voicecode.settings import load_shortcuts
+
+
+DOC_TYPE_COLORS = {
+    "arch": CP_DOC_BADGE_CYAN,
+    "adr": CP_DOC_BADGE_CYAN,
+    "plan": CP_DOC_BADGE_GREEN,
+    "spec": CP_DOC_BADGE_GREEN,
+    "glossary": CP_DOC_BADGE_MAGENTA,
+    "schema": CP_DOC_BADGE_MAGENTA,
+    "constraints": CP_DOC_BADGE_MAGENTA,
+    "conventions": CP_DOC_BADGE_MAGENTA,
+    "readme": CP_DOC_BADGE_YELLOW,
+}
 
 
 class OverlayRenderer:
@@ -335,6 +356,20 @@ class OverlayRenderer:
                     pass
         app._browser_cat_lists[2] = docs
 
+        # Build front matter type cache for document badges
+        app._doc_type_cache = {}
+        if app.working_dir:
+            wd_root = Path(app.working_dir).expanduser()
+            for rel_path in docs:
+                try:
+                    full = wd_root / rel_path
+                    head = full.read_text(encoding="utf-8")[:512]
+                    fm = parse_frontmatter(head)
+                    if fm.get("type"):
+                        app._doc_type_cache[rel_path] = fm["type"]
+                except (OSError, UnicodeDecodeError):
+                    pass
+
         # Category 3: Tools (provider-aware library)
         app._browser_cat_lists[3] = get_tool_names(app.ai_provider.name)
 
@@ -360,9 +395,10 @@ class OverlayRenderer:
         if overlay_w < 20 or overlay_h < 7:
             return
 
-        bg_attr = curses.color_pair(CP_XTREE_BG)
-        sel_attr = curses.color_pair(CP_XTREE_SEL) | curses.A_BOLD
-        border_attr = curses.color_pair(CP_XTREE_BORDER) | curses.A_BOLD
+        cat = app._browser_category
+        bg_attr = curses.color_pair(CP_DOC_LIST_BG)
+        sel_attr = curses.color_pair(CP_DOC_LIST_SEL) | curses.A_BOLD
+        border_attr = curses.color_pair(CP_DOC_LIST_BORDER) | curses.A_BOLD
 
         inner_w = overlay_w - 2
         inner_h = overlay_h - 6  # border + subtitle + tabs + separator + footer + border
@@ -378,7 +414,6 @@ class OverlayRenderer:
             app.stdscr.addnstr(overlay_y + 1, overlay_x, subtitle_line, overlay_w, border_attr)
 
             # Category tabs row
-            cat = app._browser_category
             tabs = ""
             for i, name in enumerate(app._browser_categories):
                 count = len(app._browser_cat_lists[i])
@@ -403,11 +438,6 @@ class OverlayRenderer:
             elif app.folder_slug_cursor >= app.folder_slug_scroll + inner_h:
                 app.folder_slug_scroll = app.folder_slug_cursor - inner_h + 1
 
-            # Icon per category
-            cat_icons = {0: "⚡", 1: "📁", 2: "📄", 3: "🔧"}
-            cat_icons_sel = {0: "⚡", 1: "📂", 2: "📄", 3: "🔧"}
-            icon_base = cat_icons.get(cat, "·")
-            icon_sel = cat_icons_sel.get(cat, "·")
 
             # List rows
             # Show hint when Documents tab is active but not configured
@@ -422,7 +452,7 @@ class OverlayRenderer:
                     "the Working Directory path.",
                     "Docs are read from docs/ subfolder.",
                 ]
-                hint_attr = curses.color_pair(CP_XTREE_BORDER)
+                hint_attr = curses.color_pair(CP_DOC_LIST_BORDER)
                 for i in range(inner_h):
                     row_y = overlay_y + 4 + i
                     if i < len(hint_lines):
@@ -439,14 +469,36 @@ class OverlayRenderer:
                     if idx < len(app.folder_slug_list):
                         entry = app.folder_slug_list[idx]
                         is_sel = (idx == app.folder_slug_cursor)
-                        icon = icon_sel if is_sel else icon_base
-                        text = f" {icon} {entry}"
-                        # +1 for double-width emoji
-                        display_w = len(text) + 1
-                        padded = text[:inner_w] + " " * max(0, inner_w - display_w)
-                        line = "║" + padded + "║"
                         attr = sel_attr if is_sel else bg_attr
-                        app.stdscr.addnstr(row_y, overlay_x, line, overlay_w, attr)
+                        if cat == 2:
+                            # Table layout: fixed-width type column + path
+                            type_col_w = 13  # fits "[CONSTRAINTS]"
+                            doc_type = app._doc_type_cache.get(entry, "") if hasattr(app, '_doc_type_cache') else ""
+                            if doc_type:
+                                badge = f"[{doc_type.upper()}]"
+                            else:
+                                badge = ""
+                            badge_padded = badge.ljust(type_col_w)
+                            text = f" {badge_padded} {entry}"
+                            display_w = len(text)
+                            padded = text[:inner_w] + " " * max(0, inner_w - display_w)
+                            line = "║" + padded + "║"
+                            app.stdscr.addnstr(row_y, overlay_x, line, overlay_w, attr)
+                            # Overlay badge with type color
+                            if badge and not is_sel:
+                                badge_x = overlay_x + 1 + 1  # after ║ + space
+                                badge_cp = DOC_TYPE_COLORS.get(doc_type, CP_HEADER)
+                                badge_attr = curses.color_pair(badge_cp) | curses.A_BOLD
+                                try:
+                                    app.stdscr.addstr(row_y, badge_x, badge_padded, badge_attr)
+                                except curses.error:
+                                    pass
+                        else:
+                            text = f" {entry}"
+                            display_w = len(text)
+                            padded = text[:inner_w] + " " * max(0, inner_w - display_w)
+                            line = "║" + padded + "║"
+                            app.stdscr.addnstr(row_y, overlay_x, line, overlay_w, attr)
                     else:
                         blank = "║" + " " * inner_w + "║"
                         app.stdscr.addnstr(row_y, overlay_x, blank, overlay_w, bg_attr)
@@ -621,6 +673,8 @@ class OverlayRenderer:
             content = f"[Error reading file: {e}]"
         # Pre-wrap lines will happen at draw time based on available width
         app.doc_reader_lines = content.splitlines()
+        fm = parse_frontmatter(content)
+        app.doc_reader_doc_type = fm.get("type", "")
         app.show_doc_reader = True
 
     def open_tool_detail(self, index: int):
@@ -632,6 +686,7 @@ class OverlayRenderer:
         app.doc_reader_scroll = 0
         app.doc_reader_on_close = None
         app.doc_reader_lines = lines
+        app.doc_reader_doc_type = ""
         app.doc_edit_mode = False
         app.show_doc_reader = True
 
@@ -652,11 +707,12 @@ class OverlayRenderer:
         if box_w < 40 or box_h < 10:
             return
 
-        border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        title_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        body_attr = curses.color_pair(CP_PROMPT) | curses.A_BOLD
-        heading_attr = curses.color_pair(CP_AGENT) | curses.A_BOLD
-        dim_attr = curses.color_pair(CP_HELP)
+        type_cp = DOC_TYPE_COLORS.get(app.doc_reader_doc_type, CP_HEADER)
+        border_attr = curses.color_pair(type_cp) | curses.A_BOLD
+        title_attr = curses.color_pair(type_cp) | curses.A_BOLD
+        body_attr = curses.color_pair(CP_DOC_BODY) | curses.A_BOLD
+        heading_attr = curses.color_pair(CP_DOC_HEADING) | curses.A_BOLD
+        dim_attr = curses.color_pair(CP_DOC_DIM)
 
         inner_w = box_w - 2
         content_w = inner_w - 2  # 1 char padding each side
@@ -698,7 +754,11 @@ class OverlayRenderer:
             app.stdscr.addnstr(box_y, box_x, top, box_w, border_attr)
 
             # Title bar
-            title = f" {app.doc_reader_title} "
+            if app.doc_reader_doc_type:
+                badge = app.doc_reader_doc_type.upper()
+                title = f" [{badge}] {app.doc_reader_title} "
+            else:
+                title = f" {app.doc_reader_title} "
             if len(title) > inner_w - 4:
                 title = title[:inner_w - 7] + "… "
             title_line = "║" + title.center(inner_w) + "║"
@@ -731,7 +791,7 @@ class OverlayRenderer:
             pct = int(app.doc_reader_scroll / max_scroll * 100) if max_scroll > 0 else 100
             scroll_info = f" {pct}% "
             if app.doc_reader_path:
-                help_text = " [↑↓/PgUp/PgDn]Scroll [Enter]Edit [Ins]Inject [ESC/Q]Close "
+                help_text = " [↑↓/PgUp/PgDn]Scroll [M]Maintain [Enter]Edit [Ins]Inject [ESC/Q]Close "
             else:
                 help_text = " [↑↓/PgUp/PgDn]Scroll [Ins]Inject [ESC/Q]Close "
             border_bot = "╚" + "═" * inner_w + "╝"

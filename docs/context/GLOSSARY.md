@@ -1,6 +1,7 @@
 ---
-title: Glossary
-scope: VoiceCode BBS — ~/projects/voicecode
+type: glossary
+title: "Glossary"
+scope: "VoiceCode BBS — ~/projects/voicecode"
 date: 2026-03-22
 ---
 

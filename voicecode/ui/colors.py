@@ -29,6 +29,16 @@ CP_FAV_FILLED = 23
 CP_PUBLISH = 24
 CP_PUBLISH_TITLE = 25
 CP_PUBLISH_HINT = 26
+CP_DOC_BODY = 27
+CP_DOC_HEADING = 28
+CP_DOC_DIM = 29
+CP_DOC_LIST_BG = 30
+CP_DOC_LIST_SEL = 31
+CP_DOC_LIST_BORDER = 32
+CP_DOC_BADGE_CYAN = 33
+CP_DOC_BADGE_GREEN = 34
+CP_DOC_BADGE_MAGENTA = 35
+CP_DOC_BADGE_YELLOW = 36
 
 
 def init_colors(tts_available: bool = False):
@@ -62,6 +72,16 @@ def init_colors(tts_available: bool = False):
     curses.init_pair(CP_PUBLISH, curses.COLOR_MAGENTA, -1)
     curses.init_pair(CP_PUBLISH_TITLE, curses.COLOR_BLACK, curses.COLOR_MAGENTA)
     curses.init_pair(CP_PUBLISH_HINT, curses.COLOR_MAGENTA, bg_blue)
+    curses.init_pair(CP_DOC_BODY, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(CP_DOC_HEADING, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(CP_DOC_DIM, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    curses.init_pair(CP_DOC_LIST_BG, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(CP_DOC_LIST_SEL, curses.COLOR_YELLOW, bg_blue)
+    curses.init_pair(CP_DOC_LIST_BORDER, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(CP_DOC_BADGE_CYAN, curses.COLOR_CYAN, curses.COLOR_BLACK)
+    curses.init_pair(CP_DOC_BADGE_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    curses.init_pair(CP_DOC_BADGE_MAGENTA, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
+    curses.init_pair(CP_DOC_BADGE_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     if tts_available:
         curses.init_pair(CP_TTS, curses.COLOR_WHITE, -1)
     else:

@@ -203,6 +203,7 @@ class BBSApp:
         self.doc_reader_title = ""
         self.doc_reader_lines: list[str] = []
         self.doc_reader_scroll = 0
+        self.doc_reader_doc_type = ""
         # Document editor state (edit mode within reader)
         self.doc_edit_mode = False
         self.doc_edit_lines: list[str] = []

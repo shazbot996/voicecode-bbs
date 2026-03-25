@@ -10,7 +10,7 @@ You will be given a build specification (scope) describing a feature, change, or
 
 ## Destination
 
-The output will be saved to `docs/{dest_folder}PLAN.md`.
+The output will be saved to `docs/{dest_folder}`. Choose a descriptive filename that includes `-PLAN.md` as a suffix. Use lowercase-kebab-case derived from the feature or goal name. Examples: `doc-maintenance-PLAN.md`, `smoke-test-suite-PLAN.md`, `publish-overlay-PLAN.md`. The filename should make the document identifiable at a glance without opening it.
 
 ## Document structure
 

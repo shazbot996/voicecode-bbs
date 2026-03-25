@@ -1,4 +1,5 @@
 ---
+type: plan
 title: "VoiceCode Smoke Test Suite"
 spec_reference: "Conversation-driven — smoke tests for regression safety"
 scope: "Add pytest-based test infrastructure and phased test coverage for all testable modules"

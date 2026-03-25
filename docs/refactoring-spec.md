@@ -1,4 +1,9 @@
-# VoiceCode Refactoring Spec — Multi-File Architecture
+---
+type: spec
+title: "VoiceCode Refactoring Spec — Multi-File Architecture"
+scope: "Full application — ~/projects/voicecode"
+date: 2026-03-19
+---
 
 > **Status:** Draft — for review and discussion before implementation.
 

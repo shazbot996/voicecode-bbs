@@ -1,6 +1,7 @@
 ---
-title: VoiceCode BBS Architecture
-scope: Full application — ~/projects/voicecode
+type: arch
+title: "VoiceCode BBS Architecture"
+scope: "Full application — ~/projects/voicecode"
 date: 2026-03-21
 ---
 

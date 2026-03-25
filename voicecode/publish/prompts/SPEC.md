@@ -10,7 +10,7 @@ Analyze the codebase and the scope described below, then produce a well-structur
 
 ## Destination
 
-The output will be saved to `docs/{dest_folder}SPEC.md`.
+The output will be saved to `docs/{dest_folder}`. Choose a descriptive filename that includes `-SPEC.md` as a suffix. Use lowercase-kebab-case derived from the feature or topic name. Examples: `speech-to-text-SPEC.md`, `doc-maintenance-SPEC.md`, `publish-overlay-SPEC.md`. The filename should make the document identifiable at a glance without opening it.
 
 ## Document structure
 
