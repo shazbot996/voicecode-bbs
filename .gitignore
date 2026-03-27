@@ -30,3 +30,6 @@ settings/
 
 # Prompt history (local session data)
 /prompts/
+
+# Generated documentation
+docs/
