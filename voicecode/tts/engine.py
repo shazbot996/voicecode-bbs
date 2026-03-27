@@ -14,7 +14,7 @@ from voicecode.tts.voices import get_tts_voice_model, get_tts_piper_extra_args, 
 
 # Resolve piper from the same venv as the running interpreter so TTS works
 # even when the venv isn't activated (e.g. invoked via parent Makefile).
-_PIPER_BIN = str(Path(sys.executable).resolve().parent / "piper")
+_PIPER_BIN = str(Path(sys.executable).parent / "piper")
 
 _tts_process = None  # Track running TTS playback for cancellation
 
