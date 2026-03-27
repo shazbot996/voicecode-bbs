@@ -557,7 +557,7 @@ class OverlayRenderer:
                             type_col_w = 13  # fits "[CONSTRAINTS]"
                             doc_type = app._doc_type_cache.get(entry, "") if hasattr(app, '_doc_type_cache') else ""
                             is_root_ctx = entry in getattr(app, '_root_context_set', set())
-                            is_sub_ctx = is_root_ctx and entry in ROOT_CONTEXT_SUBS
+                            is_sub_ctx = is_root_ctx and entry in ROOT_CONTEXT_SUBS and ROOT_CONTEXT_PRIMARY in getattr(app, '_root_context_set', set())
                             is_child_doc = entry in getattr(app, '_doc_child_set', set())
 
                             is_standalone_ctx = is_root_ctx and entry in ROOT_CONTEXT_STANDALONE
