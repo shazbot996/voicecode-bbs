@@ -5,6 +5,7 @@ import time
 import threading
 import subprocess
 
+from voicecode.tts.engine import _PIPER_BIN
 from voicecode.tts.voices import get_tts_voice_model, get_tts_piper_extra_args, TTS_AVAILABLE
 
 CAST_AVAILABLE = False
@@ -67,7 +68,7 @@ def cast_tts_to_devices(text, device_names, ui_queue=None, volume=None):
             fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="vc_cast_")
             os.close(fd)
             extra_args = get_tts_piper_extra_args()
-            piper_cmd = ["piper", "--model", str(voice_model),
+            piper_cmd = [_PIPER_BIN, "--model", str(voice_model),
                          "--output_file", tmp_path] + extra_args
             proc = subprocess.Popen(piper_cmd, stdin=subprocess.PIPE,
                                     stdout=subprocess.DEVNULL,

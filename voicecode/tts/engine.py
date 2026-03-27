@@ -2,13 +2,19 @@
 
 import re
 import subprocess
+import sys
 import threading
+from pathlib import Path
 
 import numpy as np
 
 from voicecode.audio.utils import safe_sd_play
 from voicecode.settings import load_settings
 from voicecode.tts.voices import get_tts_voice_model, get_tts_piper_extra_args, _tts_enabled, TTS_AVAILABLE
+
+# Resolve piper from the same venv as the running interpreter so TTS works
+# even when the venv isn't activated (e.g. invoked via parent Makefile).
+_PIPER_BIN = str(Path(sys.executable).resolve().parent / "piper")
 
 _tts_process = None  # Track running TTS playback for cancellation
 
@@ -47,7 +53,7 @@ def speak_text(text: str, on_done=None):
 
             # Using --output-raw avoids per-sentence WAV headers that cause
             # aplay to stop after the first sentence.
-            piper_cmd = ["piper", "--model", str(voice_model),
+            piper_cmd = [_PIPER_BIN, "--model", str(voice_model),
                          "--output-raw", "--output_file", "/dev/stdout"] + extra_args
             piper_proc = subprocess.Popen(
                 piper_cmd,
