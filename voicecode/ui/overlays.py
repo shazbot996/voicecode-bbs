@@ -2,6 +2,7 @@
 
 import curses
 import textwrap
+from collections import defaultdict
 from pathlib import Path
 
 from version import __version__
@@ -364,14 +365,14 @@ class OverlayRenderer:
                     found_any_rc = True
             if found_any_rc:
                 docs.append("---")  # visual separator sentinel
-            # Then add docs/ tree (sorted alphabetically by relative path)
+            # Collect docs/ tree (sorting deferred until type cache is built)
             doc_root = wd_root / "docs"
             if doc_root.is_dir():
                 try:
                     all_files = [f for f in doc_root.rglob("*")
                                  if f.is_file()
                                  and not any(p.startswith(".") for p in f.relative_to(doc_root).parts)]
-                    for doc_file in sorted(all_files, key=lambda f: str(f.relative_to(wd_root))):
+                    for doc_file in all_files:
                         docs.append(str(doc_file.relative_to(wd_root)))
                 except (PermissionError, OSError):
                     pass
@@ -423,6 +424,40 @@ class OverlayRenderer:
                             pass
                 except (OSError, UnicodeDecodeError):
                     pass
+
+            # Sort non-root docs: typed before untyped, subfolder recency, alpha
+            sep_idx = docs.index("---") if "---" in docs else -1
+            doc_entries = docs[sep_idx + 1:] if sep_idx >= 0 else docs[:]
+            if doc_entries:
+                sf_groups: dict[str, list[str]] = defaultdict(list)
+                for rel in doc_entries:
+                    parts = Path(rel).relative_to("docs").parts
+                    sf_key = parts[0] if len(parts) > 1 else rel
+                    sf_groups[sf_key].append(rel)
+                for sf_key in sf_groups:
+                    sf_groups[sf_key].sort()
+                sf_has_typed: dict[str, bool] = {}
+                sf_max_mtime: dict[str, float] = {}
+                for sf_key, files in sf_groups.items():
+                    sf_has_typed[sf_key] = any(
+                        app._doc_type_cache.get(f) for f in files)
+                    max_mt = 0.0
+                    for f in files:
+                        try:
+                            max_mt = max(max_mt, (wd_root / f).stat().st_mtime)
+                        except OSError:
+                            pass
+                    sf_max_mtime[sf_key] = max_mt
+                sort_key = lambda sf: (-sf_max_mtime[sf], sf)
+                typed_sfs = sorted(
+                    [s for s in sf_groups if sf_has_typed[s]], key=sort_key)
+                untyped_sfs = sorted(
+                    [s for s in sf_groups if not sf_has_typed[s]], key=sort_key)
+                prefix = docs[:sep_idx + 1] if sep_idx >= 0 else []
+                docs = prefix[:]
+                for sf in typed_sfs + untyped_sfs:
+                    docs.extend(sf_groups[sf])
+                app._browser_cat_lists[2] = docs
 
             # Re-order docs so audit children appear right after their parent
             if _child_to_parent:
@@ -503,6 +538,13 @@ class OverlayRenderer:
             tabs_line = "║" + tabs_padded + "║"
             # Highlight active tab
             app.stdscr.addnstr(overlay_y + 2, overlay_x, tabs_line, overlay_w, border_attr)
+            # Draw the brackets around the active category in yellow
+            bracket_attr = curses.color_pair(CP_DOC_BADGE_YELLOW) | curses.A_BOLD
+            bracket_open = tabs_padded.find("[")
+            bracket_close = tabs_padded.find("]")
+            if bracket_open >= 0 and bracket_close >= 0:
+                app.stdscr.addstr(overlay_y + 2, overlay_x + 1 + bracket_open, "[", bracket_attr)
+                app.stdscr.addstr(overlay_y + 2, overlay_x + 1 + bracket_close, "]", bracket_attr)
 
             # Tab separator
             sep = "╠" + "═" * inner_w + "╣"
