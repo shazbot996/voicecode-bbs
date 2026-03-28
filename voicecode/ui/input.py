@@ -604,6 +604,19 @@ class InputHandler:
                         app.folder_slug_cursor = min(
                             len(app.folder_slug_list) - 1, app.folder_slug_cursor + 1)
                 return
+            elif ch == curses.KEY_PPAGE:  # Page Up
+                if app.folder_slug_list:
+                    app.folder_slug_cursor = max(0, app.folder_slug_cursor - 10)
+                    if app.folder_slug_list[app.folder_slug_cursor] == "---":
+                        app.folder_slug_cursor = max(0, app.folder_slug_cursor - 1)
+                return
+            elif ch == curses.KEY_NPAGE:  # Page Down
+                if app.folder_slug_list:
+                    last = len(app.folder_slug_list) - 1
+                    app.folder_slug_cursor = min(last, app.folder_slug_cursor + 10)
+                    if app.folder_slug_list[app.folder_slug_cursor] == "---":
+                        app.folder_slug_cursor = min(last, app.folder_slug_cursor + 1)
+                return
             elif ch == curses.KEY_LEFT:
                 # Switch to previous category
                 app._browser_category = (app._browser_category - 1) % len(app._browser_categories)
