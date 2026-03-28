@@ -136,7 +136,7 @@ class TextPane:
                         line_idx = self.scroll_offset + i
                         line_cp = self.line_colors.get(line_idx, self.color_pair)
                         win.addstr(y + 1 + i, x + 1, " " + line + padding,
-                                   curses.color_pair(line_cp) | curses.A_BOLD)
+                                   curses.color_pair(line_cp))
 
                     else:
                         win.addstr(y + 1 + i, x + 1, " " * max(0, content_width),

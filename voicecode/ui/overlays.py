@@ -18,7 +18,7 @@ from voicecode.ui.colors import (
     CP_DOC_HEADING,
     CP_DOC_LIST_BG,
     CP_DOC_LIST_BORDER,
-    CP_DOC_LIST_SEL,
+    CP_SELECTION,
     CP_HEADER,
     CP_HELP,
     CP_PROMPT,
@@ -276,10 +276,10 @@ class OverlayRenderer:
         start_x = max(2, (w - overlay_w) // 2)
 
         border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        body_attr = curses.color_pair(CP_HELP) | curses.A_BOLD
+        body_attr = curses.color_pair(CP_HELP)
         accent_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
 
-        sel_attr = curses.color_pair(CP_VOICE) | curses.A_BOLD
+        sel_attr = curses.color_pair(CP_SELECTION) | curses.A_BOLD
 
         inner_w = overlay_w - 2
 
@@ -508,7 +508,7 @@ class OverlayRenderer:
 
         cat = app._browser_category
         bg_attr = curses.color_pair(CP_DOC_LIST_BG)
-        sel_attr = curses.color_pair(CP_DOC_LIST_SEL) | curses.A_BOLD
+        sel_attr = curses.color_pair(CP_SELECTION) | curses.A_BOLD
         border_attr = curses.color_pair(CP_DOC_LIST_BORDER) | curses.A_BOLD
 
         inner_w = overlay_w - 2
@@ -695,7 +695,7 @@ class OverlayRenderer:
         border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
         body_attr = curses.color_pair(CP_HELP)
         accent_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        sel_attr = curses.color_pair(CP_RECORDING) | curses.A_BOLD
+        sel_attr = curses.color_pair(CP_SELECTION) | curses.A_BOLD
         val_attr = curses.color_pair(CP_AGENT) | curses.A_BOLD
 
         inner_w = overlay_w - 2
@@ -855,7 +855,7 @@ class OverlayRenderer:
         type_cp = DOC_TYPE_COLORS.get(app.doc_reader_doc_type, CP_HEADER)
         border_attr = curses.color_pair(type_cp) | curses.A_BOLD
         title_attr = curses.color_pair(type_cp) | curses.A_BOLD
-        body_attr = curses.color_pair(CP_DOC_BODY) | curses.A_BOLD
+        body_attr = curses.color_pair(CP_DOC_BODY)
         heading_attr = curses.color_pair(CP_DOC_HEADING) | curses.A_BOLD
         dim_attr = curses.color_pair(CP_DOC_DIM)
 
@@ -972,8 +972,8 @@ class OverlayRenderer:
 
         type_cp = DOC_TYPE_COLORS.get(app.doc_reader_doc_type, CP_HEADER)
         border_attr = curses.color_pair(type_cp) | curses.A_BOLD
-        text_attr = curses.color_pair(CP_DOC_BODY) | curses.A_BOLD
-        sel_attr = curses.color_pair(CP_DOC_LIST_SEL) | curses.A_BOLD
+        text_attr = curses.color_pair(CP_DOC_BODY)
+        sel_attr = curses.color_pair(CP_SELECTION) | curses.A_BOLD
         key_attr = curses.color_pair(CP_DOC_HEADING) | curses.A_BOLD
 
         try:
@@ -1032,8 +1032,8 @@ class OverlayRenderer:
 
         type_cp = DOC_TYPE_COLORS.get(doc_type, CP_HEADER)
         border_attr = curses.color_pair(type_cp) | curses.A_BOLD
-        text_attr = curses.color_pair(CP_DOC_BODY) | curses.A_BOLD
-        sel_attr = curses.color_pair(CP_DOC_LIST_SEL) | curses.A_BOLD
+        text_attr = curses.color_pair(CP_DOC_BODY)
+        sel_attr = curses.color_pair(CP_SELECTION) | curses.A_BOLD
         key_attr = curses.color_pair(CP_DOC_HEADING) | curses.A_BOLD
         dim_attr = curses.color_pair(CP_DOC_BODY)
 
@@ -1095,7 +1095,7 @@ class OverlayRenderer:
         dy = (h - dialog_h) // 2
 
         border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        text_attr = curses.color_pair(CP_PROMPT) | curses.A_BOLD
+        text_attr = curses.color_pair(CP_PROMPT)
         key_attr = curses.color_pair(CP_AGENT) | curses.A_BOLD
 
         try:
@@ -1256,7 +1256,7 @@ class OverlayRenderer:
         dy = box_y + (box_h - dialog_h) // 2
 
         border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        text_attr = curses.color_pair(CP_PROMPT) | curses.A_BOLD
+        text_attr = curses.color_pair(CP_PROMPT)
         key_attr = curses.color_pair(CP_AGENT) | curses.A_BOLD
 
         try:

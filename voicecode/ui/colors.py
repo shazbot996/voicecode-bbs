@@ -2,6 +2,8 @@
 
 import curses
 
+from voicecode.ui.themes import get_theme_dict, ROLE_TO_PAIR, FALLBACK_MAP
+
 # Color pair IDs
 CP_HEADER = 1
 CP_PROMPT = 2
@@ -17,9 +19,7 @@ CP_VOICE = 11
 CP_CTX_GREEN = 12
 CP_CTX_YELLOW = 13
 CP_CTX_RED = 14
-CP_XTREE_BG = 15
-CP_XTREE_SEL = 16
-CP_XTREE_BORDER = 17
+CP_SELECTION = 15  # unified selection highlight (yellow on blue)
 CP_TTS = 18
 CP_SECT_RED = 19
 CP_SUBMENU = 20
@@ -33,56 +33,44 @@ CP_DOC_BODY = 27
 CP_DOC_HEADING = 28
 CP_DOC_DIM = 29
 CP_DOC_LIST_BG = 30
-CP_DOC_LIST_SEL = 31
 CP_DOC_LIST_BORDER = 32
 CP_DOC_BADGE_CYAN = 33
 CP_DOC_BADGE_GREEN = 34
 CP_DOC_BADGE_MAGENTA = 35
 CP_DOC_BADGE_YELLOW = 36
 
+_active_theme: list[str] = ["pcboard"]
 
-def init_colors(tts_available: bool = False):
-    """Initialize curses color pairs."""
+
+def _resolve_color(color_val: int) -> int:
+    """Clamp 256-color values to 16-color fallbacks when needed."""
+    if color_val >= curses.COLORS:
+        return FALLBACK_MAP.get(color_val, curses.COLOR_WHITE)
+    return color_val
+
+
+def init_colors(theme_name: str = "pcboard", tts_available: bool = False):
+    """Initialize curses color pairs from the named theme."""
     curses.start_color()
     curses.use_default_colors()
-    bg_blue = 18 if curses.COLORS >= 256 else curses.COLOR_BLUE
+    theme = get_theme_dict(theme_name)
+    for role, cp_id in ROLE_TO_PAIR.items():
+        cdef = theme[role]
+        curses.init_pair(cp_id, _resolve_color(cdef["fg"]),
+                         _resolve_color(cdef["bg"]))
+    # TTS pair varies by runtime state
+    tts_role = "tts" if tts_available else "tts_unavailable"
+    tts_def = theme[tts_role]
+    curses.init_pair(CP_TTS, _resolve_color(tts_def["fg"]),
+                     _resolve_color(tts_def["bg"]))
+    _active_theme[0] = theme_name
 
-    curses.init_pair(CP_HEADER, curses.COLOR_YELLOW, bg_blue)
-    curses.init_pair(CP_PROMPT, curses.COLOR_WHITE, -1)
-    curses.init_pair(CP_DICTATION, curses.COLOR_CYAN, -1)
-    curses.init_pair(CP_STATUS, curses.COLOR_WHITE, bg_blue)
-    curses.init_pair(CP_HELP, curses.COLOR_YELLOW, bg_blue)
-    curses.init_pair(CP_RECORDING, curses.COLOR_WHITE, curses.COLOR_RED)
-    curses.init_pair(CP_BANNER, curses.COLOR_CYAN, -1)
-    curses.init_pair(CP_ACCENT, curses.COLOR_MAGENTA, -1)
-    curses.init_pair(CP_AGENT, curses.COLOR_GREEN, -1)
-    curses.init_pair(CP_XFER, curses.COLOR_YELLOW, -1)
-    curses.init_pair(CP_VOICE, curses.COLOR_YELLOW, -1)
-    curses.init_pair(CP_CTX_GREEN, curses.COLOR_GREEN, -1)
-    curses.init_pair(CP_CTX_YELLOW, curses.COLOR_YELLOW, -1)
-    curses.init_pair(CP_CTX_RED, curses.COLOR_RED, -1)
-    curses.init_pair(CP_XTREE_BG, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-    curses.init_pair(CP_XTREE_SEL, curses.COLOR_YELLOW, bg_blue)
-    curses.init_pair(CP_XTREE_BORDER, curses.COLOR_WHITE, curses.COLOR_YELLOW)
-    curses.init_pair(CP_SECT_RED, curses.COLOR_RED, bg_blue)
-    curses.init_pair(CP_SUBMENU, curses.COLOR_CYAN, bg_blue)
-    curses.init_pair(CP_SETTINGS_TITLE, curses.COLOR_BLACK, curses.COLOR_YELLOW)
-    curses.init_pair(CP_FAV_EMPTY, 8, -1)
-    curses.init_pair(CP_FAV_FILLED, curses.COLOR_RED, -1)
-    curses.init_pair(CP_PUBLISH, curses.COLOR_MAGENTA, -1)
-    curses.init_pair(CP_PUBLISH_TITLE, curses.COLOR_BLACK, curses.COLOR_MAGENTA)
-    curses.init_pair(CP_PUBLISH_HINT, curses.COLOR_MAGENTA, bg_blue)
-    curses.init_pair(CP_DOC_BODY, curses.COLOR_WHITE, curses.COLOR_BLACK)
-    curses.init_pair(CP_DOC_HEADING, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(CP_DOC_DIM, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(CP_DOC_LIST_BG, curses.COLOR_WHITE, curses.COLOR_BLACK)
-    curses.init_pair(CP_DOC_LIST_SEL, curses.COLOR_YELLOW, bg_blue)
-    curses.init_pair(CP_DOC_LIST_BORDER, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(CP_DOC_BADGE_CYAN, curses.COLOR_CYAN, curses.COLOR_BLACK)
-    curses.init_pair(CP_DOC_BADGE_GREEN, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(CP_DOC_BADGE_MAGENTA, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-    curses.init_pair(CP_DOC_BADGE_YELLOW, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    if tts_available:
-        curses.init_pair(CP_TTS, curses.COLOR_WHITE, -1)
-    else:
-        curses.init_pair(CP_TTS, curses.COLOR_GREEN, -1)
+
+def get_active_theme() -> str:
+    """Return the name of the currently active theme."""
+    return _active_theme[0]
+
+
+def set_active_theme(name: str, tts_available: bool = False):
+    """Switch to a new theme by reinitializing all color pairs."""
+    init_colors(name, tts_available)

@@ -7,8 +7,10 @@ from pathlib import Path
 
 from voicecode.ui.colors import (
     CP_HEADER, CP_HELP, CP_RECORDING, CP_AGENT,
-    CP_SETTINGS_TITLE, CP_SECT_RED, CP_SUBMENU,
+    CP_SETTINGS_TITLE, CP_SECT_RED, CP_SUBMENU, CP_SELECTION,
+    get_active_theme, set_active_theme,
 )
+from voicecode.ui.themes import get_theme_names, THEME_DISPLAY_NAMES
 from voicecode.settings import load_settings, save_settings, persist_setting
 from voicecode.tts.voices import (
     TTS_AVAILABLE, PIPER_VOICES, get_tts_voice_name, get_tts_voice_model,
@@ -75,6 +77,16 @@ class SettingsOverlay:
                 "get": lambda: app.ai_provider.name,
                 "set": None,
                 "action": self.open_ai_models_submenu,
+                "submenu": True,
+            },
+            {
+                "key": "_action_theme_submenu",
+                "label": "Theme",
+                "desc": "Visual theme \u2014 BBS-era color palettes",
+                "options": None,
+                "get": lambda: self._theme_display_name(),
+                "set": None,
+                "action": self.open_theme_submenu,
                 "submenu": True,
             },
         ]
@@ -397,6 +409,75 @@ class SettingsOverlay:
             idx = 0
         new_idx = (idx + direction) % len(options)
         item["set"](options[new_idx])
+
+    # ─── Theme submenu ─────────────────────────────────────────────
+
+    def _theme_display_name(self):
+        """Return the friendly display name for the active theme."""
+        return THEME_DISPLAY_NAMES.get(get_active_theme(), get_active_theme())
+
+    def build_theme_submenu_items(self):
+        """Build the theme selection sub-menu items."""
+        items = []
+        for name in get_theme_names():
+            display = THEME_DISPLAY_NAMES.get(name, name)
+            active = get_active_theme()
+            items.append({
+                "key": f"theme_{name}",
+                "label": display,
+                "desc": "\u2713 Active" if name == active else "",
+                "options": None,
+                "get": lambda n=name: "\u2713" if get_active_theme() == n else "",
+                "set": None,
+                "action": lambda n=name: self._confirm_theme(n),
+                "_theme_id": name,
+            })
+        return items
+
+    def open_theme_submenu(self):
+        """Open the Theme sub-menu."""
+        app = self.app
+        app.theme_submenu_open = True
+        app.theme_submenu_cursor = 0
+        app._settings_scroll_top = 0
+        app._theme_before_preview = get_active_theme()
+        app.theme_submenu_items = self.build_theme_submenu_items()
+        # Position cursor on the currently active theme
+        for i, item in enumerate(app.theme_submenu_items):
+            if item.get("_theme_id") == get_active_theme():
+                app.theme_submenu_cursor = i
+                break
+        app.show_settings_overlay = True
+
+    def _preview_theme_at_cursor(self):
+        """Apply the theme at the current cursor position for live preview."""
+        app = self.app
+        from voicecode.tts.voices import TTS_AVAILABLE
+        if 0 <= app.theme_submenu_cursor < len(app.theme_submenu_items):
+            name = app.theme_submenu_items[app.theme_submenu_cursor]["_theme_id"]
+            set_active_theme(name, TTS_AVAILABLE)
+
+    def _confirm_theme(self, name):
+        """Confirm and persist the selected theme."""
+        app = self.app
+        from voicecode.tts.voices import TTS_AVAILABLE
+        app.theme_name = name
+        set_active_theme(name, TTS_AVAILABLE)
+        persist_setting("theme", name)
+        app._theme_before_preview = None
+        app.theme_submenu_open = False
+        display = THEME_DISPLAY_NAMES.get(name, name)
+        self._set_status(f"Theme set to {display}")
+
+    def _revert_theme(self):
+        """Revert to the theme that was active before opening the submenu."""
+        app = self.app
+        from voicecode.tts.voices import TTS_AVAILABLE
+        if app._theme_before_preview:
+            set_active_theme(app._theme_before_preview, TTS_AVAILABLE)
+            app.theme_name = app._theme_before_preview
+        app._theme_before_preview = None
+        app.theme_submenu_open = False
 
     # ─── TTS submenu open/cycle ─────────────────────────────────────
 
@@ -922,6 +1003,9 @@ class SettingsOverlay:
         elif app.cast_submenu_open:
             items = app.cast_submenu_items
             cursor = app.cast_submenu_cursor
+        elif app.theme_submenu_open:
+            items = app.theme_submenu_items
+            cursor = app.theme_submenu_cursor
         else:
             items = app.settings_items
             cursor = app.settings_cursor
@@ -985,6 +1069,11 @@ class SettingsOverlay:
             render_cursor = app.cast_submenu_cursor
             render_title = " GOOGLE CAST NOTIFICATIONS "
             render_footer = " \u2191\u2193 Navigate  \u2190\u2192 Change  Enter Scan  Esc Close "
+        elif app.theme_submenu_open:
+            render_items = app.theme_submenu_items
+            render_cursor = app.theme_submenu_cursor
+            render_title = " THEME "
+            render_footer = " \u2191\u2193 Preview  Enter Apply  Esc Cancel "
         else:
             render_items = app.settings_items
             render_cursor = app.settings_cursor
@@ -1034,9 +1123,9 @@ class SettingsOverlay:
         start_x = max(2, (w - overlay_w) // 2)
 
         border_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        body_attr = curses.color_pair(CP_HELP) | curses.A_BOLD
+        body_attr = curses.color_pair(CP_HELP)
         accent_attr = curses.color_pair(CP_HEADER) | curses.A_BOLD
-        sel_attr = curses.color_pair(CP_RECORDING) | curses.A_BOLD
+        sel_attr = curses.color_pair(CP_SELECTION) | curses.A_BOLD
         val_attr = curses.color_pair(CP_AGENT) | curses.A_BOLD
 
         inner_w = overlay_w - 2

@@ -5,6 +5,7 @@ import textwrap
 
 from voicecode.ui.colors import (
     CP_PUBLISH, CP_PUBLISH_TITLE, CP_ACCENT, CP_VOICE, CP_AGENT, CP_PROMPT,
+    CP_SELECTION,
 )
 
 
@@ -361,7 +362,7 @@ class PublishOverlay:
         dim = curses.color_pair(CP_ACCENT)
         body = curses.color_pair(CP_PROMPT)  # white for readable body text
         bright = curses.color_pair(CP_AGENT) | curses.A_BOLD
-        sel_attr = curses.A_REVERSE | curses.A_BOLD | curses.color_pair(CP_PUBLISH)
+        sel_attr = curses.color_pair(CP_SELECTION) | curses.A_BOLD
         disabled_attr = curses.color_pair(CP_ACCENT)  # dim for unimplemented
 
         # Clear background

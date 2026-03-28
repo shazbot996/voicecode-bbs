@@ -999,6 +999,29 @@ class InputHandler:
                             item["action"]()
                 return
 
+            # Theme sub-menu navigation
+            if app.theme_submenu_open:
+                if ch in (27,):
+                    app.settings_overlay._revert_theme()
+                    app.stdscr.nodelay(True)
+                    app.stdscr.getch()
+                elif ch in (ord("q"), ord("Q")):
+                    app.settings_overlay._revert_theme()
+                elif ch == curses.KEY_UP:
+                    if app.theme_submenu_items:
+                        app.theme_submenu_cursor = (app.theme_submenu_cursor - 1) % len(app.theme_submenu_items)
+                        app.settings_overlay._preview_theme_at_cursor()
+                elif ch == curses.KEY_DOWN:
+                    if app.theme_submenu_items:
+                        app.theme_submenu_cursor = (app.theme_submenu_cursor + 1) % len(app.theme_submenu_items)
+                        app.settings_overlay._preview_theme_at_cursor()
+                elif ch in (10, 13, curses.KEY_ENTER):
+                    if 0 <= app.theme_submenu_cursor < len(app.theme_submenu_items):
+                        item = app.theme_submenu_items[app.theme_submenu_cursor]
+                        if item.get("action"):
+                            item["action"]()
+                return
+
             if ch in (ord("o"), ord("O"), ord("q"), ord("Q"), 27):
                 app.show_settings_overlay = False
                 app.tts_submenu_open = False
@@ -1006,6 +1029,7 @@ class InputHandler:
                 app.voice_submenu_open = False
                 app.ai_models_submenu_open = False
                 app.cast_submenu_open = False
+                app.theme_submenu_open = False
                 if ch == 27:
                     app.stdscr.nodelay(True)
                     app.stdscr.getch()
@@ -1028,7 +1052,8 @@ class InputHandler:
                         # Non-submenu, non-editable action: close modal then run
                         # but check if we're in a submenu first
                         if any([app.voice_submenu_open, app.tts_submenu_open,
-                                app.test_tools_submenu_open, app.ai_models_submenu_open]):
+                                app.test_tools_submenu_open, app.ai_models_submenu_open,
+                                app.theme_submenu_open]):
                             item["action"]()  # just run it, don't close main modal
                         else:
                             app.show_settings_overlay = False

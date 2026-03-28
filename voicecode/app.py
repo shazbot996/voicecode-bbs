@@ -18,15 +18,14 @@ from voicecode.constants import (
     AgentState, SAMPLE_RATE, VAD_THRESHOLD,
     SILENCE_AFTER_SPEECH_SEC, MIN_SPEECH_DURATION_SEC,
 )
-from voicecode.settings import load_settings, save_settings, load_shortcuts
+from voicecode.settings import load_settings, save_settings, load_shortcuts, persist_setting
 from voicecode.ui.colors import (
     CP_HEADER, CP_PROMPT, CP_DICTATION, CP_STATUS, CP_HELP, CP_RECORDING,
     CP_BANNER, CP_ACCENT, CP_AGENT, CP_XFER, CP_VOICE,
     CP_CTX_GREEN, CP_CTX_YELLOW, CP_CTX_RED,
-    CP_XTREE_BG, CP_XTREE_SEL, CP_XTREE_BORDER,
     CP_TTS, CP_SECT_RED, CP_SUBMENU, CP_SETTINGS_TITLE,
     CP_FAV_EMPTY, CP_FAV_FILLED, CP_PUBLISH, CP_PUBLISH_TITLE,
-    init_colors,
+    init_colors, get_active_theme, set_active_theme,
 )
 from voicecode.ui.panes import TextPane
 from voicecode.ui.drawing import DrawingHelper
@@ -147,10 +146,15 @@ class BBSApp:
 
         # Working directory & derived paths — from persisted settings
         saved = load_settings()
+        self.theme_name = saved.get("theme", "pcboard")
         self.tts_volume_gain = float(saved.get("tts_volume_gain", 1.0))
 
         # Prompts and docs live under the working directory
+        # Default to cwd if not yet configured, and persist so it sticks
         self.working_dir = saved.get("working_dir", "")
+        if not self.working_dir:
+            self.working_dir = os.getcwd()
+            persist_setting("working_dir", self.working_dir)
         self._update_working_dir_paths()
         self.history_prompts: list[Path] = []
         self.favorites_slots: list[str | None] = [None] * 10  # 10 numbered slots (keys 1-9, 0)
@@ -269,6 +273,10 @@ class BBSApp:
         self.cast_submenu_open = False
         self.cast_submenu_cursor = 0
         self.cast_submenu_items = []
+        self.theme_submenu_open = False
+        self.theme_submenu_cursor = 0
+        self.theme_submenu_items = []
+        self._theme_before_preview = None  # for ESC revert
         self._settings_scroll_top = 0  # vertical scroll offset for settings
 
         # Publish overlay state
@@ -440,7 +448,7 @@ class BBSApp:
         self.stdscr = stdscr
         from voicecode.audio.utils import suppress_stderr
         suppress_stderr()
-        init_colors(TTS_AVAILABLE)
+        init_colors(self.theme_name, TTS_AVAILABLE)
         curses.curs_set(0)
         stdscr.nodelay(True)
         stdscr.timeout(16)  # ~60fps for smooth animations
