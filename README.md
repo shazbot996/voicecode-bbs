@@ -17,11 +17,6 @@
 
 **Supports Claude CLI and Gemini CLI. Optional Google Cast output to Nest/Chromecast speakers.**
 
-### Workflow Overview
-
-[![VoiceCode Document Workflow](voicecode-bbs-workflow.png)](voicecode-bbs-workflow.png)
-*Click to view full size — Dictate, Refine, Execute, Publish, Browse, Maintain*
-
 ![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
 
 ---
@@ -101,16 +96,9 @@ The interface is a full curses "TUI" styled after 1990s bulletin board systems w
 
 ## The Prompt Refinery Workflow
 
-```
-  1. DICTATE       2. REFINE        3. ITERATE       4. EXECUTE       5. PUBLISH
- ┌──────────┐   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
- │  Speak   │   │ AI turns │    │ Add more │    │  Prompt  │    │ Publish  │
- │  your    │──►│ fragments│───►│ fragments│───►│  sent to │───►│ docs from│
- │  ideas   │   │ into a   │    │ re-refine│    │  Claude/ │    │ your     │
- │          │   │ prompt   │    │ repeat   │    │  Gemini  │    │ prompts  │
- └──────────┘   └──────────┘    └──────────┘    └──────────┘    └──────────┘
-    [SPACE]         [R]          [SPACE] [R]        [E]              [P]
-```
+[![VoiceCode Document Workflow](voicecode-bbs-workflow.png)](voicecode-bbs-workflow.png)
+*Click to view full size — Dictate, Refine, Execute, Publish, Browse, Maintain*
+
 
 1. **Dictate** — Press SPACE to record. Speak naturally; fragments accumulate in the buffer. Start and stop repeatedly. Undo mistakes.
 2. **Refine** — Press R to have AI synthesize your fragments into a polished prompt.
