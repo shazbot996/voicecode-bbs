@@ -17,6 +17,11 @@
 
 **Supports Claude CLI and Gemini CLI. Optional Google Cast output to Nest/Chromecast speakers.**
 
+### Workflow Overview
+
+[![VoiceCode Document Workflow](voicecode-bbs-workflow.png)](voicecode-bbs-workflow.png)
+*Click to view full size — Dictate, Refine, Execute, Publish, Browse, Maintain*
+
 ![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
 
 ---
