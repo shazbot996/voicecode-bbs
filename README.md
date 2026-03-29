@@ -110,7 +110,7 @@ The interface is a full curses "TUI" styled after 1990s bulletin board systems w
 
 ---
 
-We spend far more time managing prompts than we do managing agents. The bottleneck in AI-assisted development isn't the agent — it's getting the right prompt to the agent in the first place. Voicecode gives you two paths to execute a dictatation: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**. Execute sends your prompt to claude code for execution directly. **Publish** now has an increasing list of task-specific agents to create and refine specific types of context markdown in an opinionated structure - it's goal is to incorporate precise context generation for application architecture, planning and agent behavior. 
+Voicecode gives you two paths to execute a dictatation: **Direct** for clean dictations that need no revision, and **Refine** for complex prompts that benefit from the iterative Prompt Refinery loop. Both paths converge at **Execute**. Execute sends your prompt to claude code for execution directly. **Publish** now has an increasing list of task-specific agents to create and refine specific types of context markdown in an opinionated structure - it's goal is to incorporate precise context generation for application architecture, planning and agent behavior. 
 
 This is the philosophy behind VoiceCode's three-pane layout:
 
@@ -209,7 +209,7 @@ Press **F** to toggle favorites view or add the currently viewed historical prom
 
 ### Session Continuity
 
-Each session gets an ID passed to Claude via `--resume`, so conversation context carries across multiple execute cycles. Press **W** to start a fresh session. The context meter on the agent terminal border shows how much of Claude's context window has been used.
+Each session gets an ID passed to Claude and Gemini CLI via `--resume`, so conversation context carries across multiple execute cycles. Press **W** to start a fresh session. The context meter on the agent terminal border shows how much of Claude's context window has been used.
 
 ### Agent Stall Detection
 
