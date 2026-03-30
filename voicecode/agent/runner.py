@@ -32,8 +32,15 @@ class RunnerHelper:
             if not app._tts_in_summary:
                 idx = app._tts_detect_buf.find('[TTS_SUMMARY]')
                 if idx == -1:
-                    # Flush all but last 13 chars (tag length) in case tag spans chunks
-                    safe = max(0, len(app._tts_detect_buf) - 13)
+                    # Only hold back chars if a '[' exists in the tail that
+                    # could be the start of a partially-received tag.  This
+                    # avoids buffering 13 chars on every chunk, which caused
+                    # visible mid-word freezes during streaming.
+                    bracket = app._tts_detect_buf.rfind('[')
+                    if bracket != -1 and bracket >= len(app._tts_detect_buf) - 13:
+                        safe = bracket
+                    else:
+                        safe = len(app._tts_detect_buf)
                     for ch in app._tts_detect_buf[:safe]:
                         app.ui_queue.put(("typewriter_char", ch))
                     app._tts_detect_buf = app._tts_detect_buf[safe:]
@@ -49,7 +56,11 @@ class RunnerHelper:
             else:
                 idx = app._tts_detect_buf.find('[/TTS_SUMMARY]')
                 if idx == -1:
-                    safe = max(0, len(app._tts_detect_buf) - 14)
+                    bracket = app._tts_detect_buf.rfind('[')
+                    if bracket != -1 and bracket >= len(app._tts_detect_buf) - 14:
+                        safe = bracket
+                    else:
+                        safe = len(app._tts_detect_buf)
                     for ch in app._tts_detect_buf[:safe]:
                         app.ui_queue.put(("typewriter_char", ch))
                     app._tts_detect_buf = app._tts_detect_buf[safe:]
