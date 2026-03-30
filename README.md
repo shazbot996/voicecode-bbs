@@ -17,8 +17,6 @@
 
 **Supports Claude CLI and Gemini CLI. Optional Google Cast output to Nest/Chromecast speakers.**
 
-![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
-
 ---
 
 ## Quick Start
@@ -114,7 +112,7 @@ Voicecode gives you two paths to execute a dictatation: **Direct** for clean dic
 
 This is the philosophy behind VoiceCode's three-pane layout:
 
-![VoiceCode BBS Screenshot](voicecode-bbs-shot.png)
+![VoiceCode Themes](themes.gif)
 
 - **Prompt Browser** (top-left) — View and browse your refined prompts. History entries show both the prompt and agent response in a combined scrollable view. Favorites indicators on the left border.
 - **Dictation Buffer** (bottom-left) — Watch voice fragments accumulate in real-time. This is where the refinement loop lives — dictate, refine, dictate more, refine again.
