@@ -5,6 +5,14 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.1.1] - 2026-04-01
+
+### Added
+- CHANGELOG.md shown in document browser alongside README
+
+### Fixed
+- Publish workflow now uses dictation buffer when new prompt is empty
+
 ## [4.1.0] - 2026-04-01
 
 ### Added
