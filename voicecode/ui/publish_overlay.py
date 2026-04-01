@@ -327,9 +327,12 @@ class PublishOverlay:
 
         # Use current prompt as scope; if prompt window is in initial state,
         # use dictation buffer fragments instead; fall back to default scope.
-        scope = app.browser.get_active_prompt_text() or app.current_prompt
-        if not scope and app.fragments:
+        # Check fragments first so the dictation buffer isn't shadowed by a
+        # stale executed_prompt_text from a previous run.
+        if app.fragments and not app.current_prompt and app.browser_index < 0:
             scope = " ".join(app.fragments)
+        else:
+            scope = app.browser.get_active_prompt_text() or app.current_prompt
         if not scope:
             scope = "the entire repository (all top-level folders and files)"
 

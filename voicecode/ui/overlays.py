@@ -40,6 +40,7 @@ DOC_TYPE_COLORS = {
     "conventions": CP_DOC_BADGE_MAGENTA,
     "readme": CP_DOC_BADGE_YELLOW,
     "root-context": CP_DOC_BADGE_YELLOW,
+    "changelog": CP_DOC_BADGE_YELLOW,
     "drift-report": CP_DOC_BADGE_YELLOW,
     "coverage-report": CP_DOC_BADGE_YELLOW,
 }
@@ -47,7 +48,7 @@ DOC_TYPE_COLORS = {
 # Root context files shown at top of Documents tab (order matters)
 ROOT_CONTEXT_PRIMARY = "AGENTS.md"
 ROOT_CONTEXT_SUBS = ["CLAUDE.md", "GEMINI.md"]
-ROOT_CONTEXT_STANDALONE = ["README.md"]  # root-level items not nested under AGENTS.md
+ROOT_CONTEXT_STANDALONE = ["README.md", "CHANGELOG.md"]  # root-level items not nested under AGENTS.md
 ROOT_CONTEXT_FILES = [ROOT_CONTEXT_PRIMARY] + ROOT_CONTEXT_SUBS + ROOT_CONTEXT_STANDALONE
 
 
@@ -386,7 +387,7 @@ class OverlayRenderer:
             wd_root = Path(app.working_dir).expanduser()
             # Mark root context files with special type
             for rc in app._root_context_set:
-                app._doc_type_cache[rc] = "readme" if rc == "README.md" else "root-context"
+                app._doc_type_cache[rc] = "changelog" if rc == "CHANGELOG.md" else ("readme" if rc == "README.md" else "root-context")
             for rel_path in docs:
                 if rel_path in app._root_context_set:
                     continue  # already typed
