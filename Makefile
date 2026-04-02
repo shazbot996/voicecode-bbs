@@ -5,12 +5,18 @@ VENV := venv
 
 help: ## Show available commands
 	@echo ""
-	@echo "  VoiceCode BBS -- voice-driven AI prompt workshop"
+	@echo "  VoiceCode BBS - Execution & Security"
+	@echo "  ===================================="
+	@echo "  voicecode-sandbox  : [RECOMMENDED] Launches the BBS in a secure Bubblewrap sandbox."
+	@echo "                       Hides your HOME directory (~/.ssh, etc.) from agents."
+	@echo "                       Use this when running agents in --yolo mode."
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
+	@echo "  voicecode          : [UNPROTECTED] Launches the BBS with full system access."
+	@echo "                       Agents can read/write any file your user can access."
 	@echo ""
-	@echo "  First-time setup: make init -> make voicecode"
+	@echo "  Setup & Maintenance"
+	@echo "  -------------------"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -vE '^(voicecode|help)' | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 	@echo ""
 
 check-deps: ## Verify system libraries (PortAudio, aplay) are installed
@@ -55,33 +61,58 @@ init: check-deps ## Create venv, install PyTorch (CPU) and requirements
 	$(VENV)/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
 	$(VENV)/bin/pip install -r requirements.txt
 
-voicecode: ## Launch the BBS voice prompt workshop
+voicecode: ## Launch the BBS voice prompt workshop (Standard/Unprotected)
 	. $(VENV)/bin/activate && python voicecode_bbs.py
 
-init-sub: ## Add a 'make voicecode' shortcut to the parent Makefile
+voicecode-sandbox: ## Launch the BBS voice prompt workshop (Secure Sandbox)
+	../sandbox-launch.sh
+
+init-sub: ## Add secure launch shortcuts and help text to the parent Makefile
 	@SUBDIR=$$(basename "$$PWD"); \
 	PARENT="$$(cd .. && pwd)"; \
 	TAB=$$(printf '\t'); \
 	if [ -f "$$PARENT/Makefile" ]; then \
-		if grep -q '^voicecode:' "$$PARENT/Makefile"; then \
-			echo "  Target 'voicecode' already exists in $$PARENT/Makefile -- skipping."; \
+		if grep -q '^voicecode-sandbox:' "$$PARENT/Makefile"; then \
+			echo "  Target 'voicecode-sandbox' already exists in $$PARENT/Makefile -- skipping."; \
 		else \
 			echo "" >> "$$PARENT/Makefile"; \
-			echo "voicecode: ## Launch VoiceCode BBS" >> "$$PARENT/Makefile"; \
-			echo "$${TAB}. $${SUBDIR}/$(VENV)/bin/activate && python $${SUBDIR}/voicecode_bbs.py" >> "$$PARENT/Makefile"; \
-			echo "  Added 'voicecode' target to $$PARENT/Makefile"; \
+			echo "VENV := venv" >> "$$PARENT/Makefile"; \
+			echo "" >> "$$PARENT/Makefile"; \
+			echo "voicecode: ## Launch VoiceCode BBS (Standard/Unprotected)" >> "$$PARENT/Makefile"; \
+			echo "$${TAB}. $${SUBDIR}/\$$(VENV)/bin/activate && python $${SUBDIR}/voicecode_bbs.py" >> "$$PARENT/Makefile"; \
+			echo "" >> "$$PARENT/Makefile"; \
+			echo "voicecode-sandbox: ## Launch VoiceCode BBS (Secure Sandbox)" >> "$$PARENT/Makefile"; \
+			echo "$${TAB}./sandbox-launch.sh" >> "$$PARENT/Makefile"; \
+			echo "  Added secure launch targets to $$PARENT/Makefile"; \
 		fi; \
 	else \
 		echo '.DEFAULT_GOAL := help' > "$$PARENT/Makefile"; \
+		echo 'VENV := venv' >> "$$PARENT/Makefile"; \
 		echo '' >> "$$PARENT/Makefile"; \
-		echo 'help: ## Show available commands' >> "$$PARENT/Makefile"; \
-		printf '%s\n' "$${TAB}"'@grep -E '"'"'^[a-zA-Z_-]+:.*?## .*$$$$'"'"' $$(MAKEFILE_LIST) | awk '"'"'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$$$1, $$$$2}'"'"'' >> "$$PARENT/Makefile"; \
+		echo 'help: ## Show this help message' >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"  VoiceCode BBS - Execution & Security\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"  ====================================\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"  voicecode-sandbox  : [RECOMMENDED] Launches the BBS in a secure Bubblewrap sandbox.\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"                       Hides your HOME directory (~/.ssh, etc.) from agents.\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"                       Use this when running agents in --yolo mode.\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"  voicecode          : [UNPROTECTED] Launches the BBS with full system access.\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"                       Agents can read/write any file your user can access.\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"  Support & Utilities\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"  -------------------\"\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@grep -E '^[a-zA-Z_-]+:.*?## .*$$$$' \$$(MAKEFILE_LIST) | grep -vE '^(voicecode|help)' | sort | awk 'BEGIN {FS = \":.*?## \"}; {printf \"  %%-18s %%s\\\\n\", $$$$1, $$$$2}'\n" >> "$$PARENT/Makefile"; \
+		printf "$${TAB}@echo \"\"\n" >> "$$PARENT/Makefile"; \
 		echo '' >> "$$PARENT/Makefile"; \
-		echo "voicecode: ## Launch VoiceCode BBS" >> "$$PARENT/Makefile"; \
-		echo "$${TAB}. $${SUBDIR}/$(VENV)/bin/activate && python $${SUBDIR}/voicecode_bbs.py" >> "$$PARENT/Makefile"; \
+		echo "voicecode: ## Launch VoiceCode BBS (Standard/Unprotected)" >> "$$PARENT/Makefile"; \
+		echo "$${TAB}. $${SUBDIR}/\$$(VENV)/bin/activate && python $${SUBDIR}/voicecode_bbs.py" >> "$$PARENT/Makefile"; \
 		echo '' >> "$$PARENT/Makefile"; \
-		echo '.PHONY: help voicecode' >> "$$PARENT/Makefile"; \
-		echo "  Created $$PARENT/Makefile with help and voicecode targets"; \
+		echo "voicecode-sandbox: ## Launch VoiceCode BBS (Secure Sandbox)" >> "$$PARENT/Makefile"; \
+		echo "$${TAB}./sandbox-launch.sh" >> "$$PARENT/Makefile"; \
+		echo '' >> "$$PARENT/Makefile"; \
+		echo '.PHONY: help voicecode voicecode-sandbox' >> "$$PARENT/Makefile"; \
+		echo "  Created $$PARENT/Makefile with secure launch targets and help text"; \
 	fi
 
 test: ## Run the smoke test suite
@@ -90,4 +121,4 @@ test: ## Run the smoke test suite
 clean: ## Delete the venv (re-run 'make init' to recreate)
 	rm -rf $(VENV)
 
-.PHONY: help check-deps init init-sub voicecode test clean
+.PHONY: help check-deps init init-sub voicecode voicecode-sandbox test clean
