@@ -559,6 +559,7 @@ class BBSApp:
                     self.dictation_pane.lines.clear()
                     self.dictation_pane.scroll_offset = 0
                     self.browser.set_dictation_info(left_width)
+                    self.set_status(f"Prompt refined! (v{self.prompt_version})")
                 else:
                     self.set_status(refined_text)
                 self.refining = False

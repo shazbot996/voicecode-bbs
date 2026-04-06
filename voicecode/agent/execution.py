@@ -194,7 +194,6 @@ class ExecutionHelper:
             status_callback=lambda msg: app.ui_queue.put(("status", msg, CP_STATUS)),
             provider=app.ai_provider)
         app.ui_queue.put(("refined", result))
-        app.ui_queue.put(("status", f"Prompt refined! (v{app.prompt_version + 1})", CP_STATUS))
 
     def new_prompt(self):
         """Start a new prompt. If current is unsaved, ask to save first."""
