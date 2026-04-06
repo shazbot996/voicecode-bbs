@@ -545,17 +545,22 @@ class BBSApp:
                 self.dictation_pane.add_line(f"[{ts}] {text}", left_width)
 
             elif msg[0] == "refined":
-                self.current_prompt = msg[1]
-                self.prompt_version += 1
-                self.prompt_saved = False  # track unsaved state
-                self.browser_index = -1
-                self.browser.load_browser_prompt(left_width)
-                # Clear fragments and dictation after refinement
-                self.fragments.clear()
-                self.input_handler.clear_buffer_file()
-                self.dictation_pane.lines.clear()
-                self.dictation_pane.scroll_offset = 0
-                self.browser.set_dictation_info(left_width)
+                refined_text = msg[1]
+                is_error = refined_text.startswith("[Error:")
+                if not is_error:
+                    self.current_prompt = refined_text
+                    self.prompt_version += 1
+                    self.prompt_saved = False  # track unsaved state
+                    self.browser_index = -1
+                    self.browser.load_browser_prompt(left_width)
+                    # Clear fragments and dictation only on success
+                    self.fragments.clear()
+                    self.input_handler.clear_buffer_file()
+                    self.dictation_pane.lines.clear()
+                    self.dictation_pane.scroll_offset = 0
+                    self.browser.set_dictation_info(left_width)
+                else:
+                    self.set_status(refined_text)
                 self.refining = False
 
             elif msg[0] == "agent_state":
