@@ -325,16 +325,21 @@ class PublishOverlay:
             app.set_status(f"No agent for {doc_type} — this shouldn't happen.")
             return
 
-        # Use current prompt as scope; if prompt window is in initial state,
-        # use dictation buffer fragments instead; fall back to default scope.
-        # Check fragments first so the dictation buffer isn't shadowed by a
-        # stale executed_prompt_text from a previous run.
-        if app.fragments and not app.current_prompt and app.browser_index < 0:
+        # Determine user-provided context for the publishing agent.
+        # Priority: 1) new prompt window content, 2) dictation buffer,
+        # 3) historical prompt being browsed.
+        if app.current_prompt:
+            scope = app.current_prompt
+        elif app.fragments:
             scope = " ".join(app.fragments)
+        elif app.browser_index >= 0:
+            scope = app.browser.get_active_prompt_text()
         else:
-            scope = app.browser.get_active_prompt_text() or app.current_prompt
+            scope = None
+
         if not scope:
-            scope = "the entire repository (all top-level folders and files)"
+            app.set_status("No context for publish — dictate, refine, or browse a prompt first.")
+            return
 
         prompt_text = agent.build_prompt(scope, dest_folder)
         dest_label = f"docs/{dest_folder}" if dest_folder else "README.md"
