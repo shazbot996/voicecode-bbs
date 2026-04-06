@@ -31,9 +31,9 @@ class ExecutionHelper:
         w = app.stdscr.getmaxyx()[1] // 2
         app.browser.load_browser_prompt(w)
 
-        # Clear prompt state so next dictation starts fresh
-        app.fragments.clear()
-        app.input_handler.clear_buffer_file()
+        # Clear prompt state so next dictation starts fresh.
+        # Note: fragments and buffer file are preserved until the agent
+        # succeeds — see the "clear_dictation_buffer" UI queue handler.
         app.current_prompt = None
         app.prompt_version = 0
         app.prompt_saved = True
@@ -76,8 +76,8 @@ class ExecutionHelper:
             app.set_status("Agent is busy. Wait or kill it first.")
             return
         prompt_text = " ".join(app.fragments)
-        app.fragments.clear()
-        app.input_handler.clear_buffer_file()
+        # Fragments and buffer file preserved until agent succeeds —
+        # see the "clear_dictation_buffer" UI queue handler.
         app._last_history_prompt_path = self.save_to_history(prompt_text)
         # Show executed prompt in yellow in the prompt browser (persists until new prompt)
         app.executed_prompt_text = prompt_text

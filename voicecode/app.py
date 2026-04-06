@@ -569,6 +569,11 @@ class BBSApp:
                         self.execution.clear_executed_prompt()
                         self.browser.load_browser_prompt(left_width)
 
+            elif msg[0] == "clear_dictation_buffer":
+                # Agent succeeded — now safe to discard the dictation buffer.
+                self.fragments.clear()
+                self.input_handler.clear_buffer_file()
+
             elif msg[0] == "session_id":
                 self.session_id = msg[1]
 

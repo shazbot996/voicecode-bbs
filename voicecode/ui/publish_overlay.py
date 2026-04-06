@@ -154,9 +154,8 @@ def execute_agent_prompt(app, prompt_text: str, label: str):
     w = app.stdscr.getmaxyx()[1] // 2
     app.browser.load_browser_prompt(w)
 
-    # Clear prompt state
-    app.fragments.clear()
-    app.input_handler.clear_buffer_file()
+    # Clear prompt state (fragments and buffer file are preserved until
+    # the agent succeeds — see the "clear_dictation_buffer" UI queue handler).
     app.current_prompt = None
     app.prompt_version = 0
     app.prompt_saved = True

@@ -5,6 +5,12 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.1.2] - 2026-04-06
+
+### Fixed
+- Publish agents now receive historical prompt context when browsing history
+- Dictation buffer preserved until agent confirms success (no longer lost on agent failure)
+
 ## [4.1.1] - 2026-04-02
 
 ### Added

@@ -282,6 +282,7 @@ class RunnerHelper:
             self.flush_tts_detect_buf()
 
             app.ui_queue.put(("agent_state", AgentState.DONE))
+            app.ui_queue.put(("clear_dictation_buffer",))
             app.ui_queue.put(("status", "Agent complete. Ready for next prompt.", CP_STATUS))
 
             # Speak the summary via TTS
