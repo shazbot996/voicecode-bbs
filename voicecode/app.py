@@ -299,6 +299,9 @@ class BBSApp:
         self.silence_timeout = saved.get("silence_timeout", SILENCE_AFTER_SPEECH_SEC)
         self.min_speech_duration = saved.get("min_speech_duration", MIN_SPEECH_DURATION_SEC)
         self.whisper_model = saved.get("whisper_model", "base.en")
+        # Microphone input device — stored by PortAudio device name so it
+        # survives reboots/reorders. None or "" means "use system default".
+        self.input_device_name = saved.get("input_device") or None
 
         # AI provider — detect installed CLIs and restore saved choice
         saved_provider = saved.get("ai_provider", "Claude")

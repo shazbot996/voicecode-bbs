@@ -6,7 +6,7 @@ import numpy as np
 import sounddevice as sd
 
 from voicecode.constants import SAMPLE_RATE, CHANNELS, BLOCK_SIZE
-from voicecode.audio.utils import check_audio_input_device
+from voicecode.audio.utils import check_audio_input_device, resolve_input_device
 from voicecode.stt.whisper import transcribe, transcribe_with_timestamps
 from voicecode.ui.colors import *
 
@@ -17,8 +17,11 @@ class RecordingHelper:
 
     def start_recording(self):
         app = self.app
-        # Pre-flight: check audio input device is available
-        dev_err = check_audio_input_device()
+        # Pre-flight: resolve the configured input device (None = system default
+        # — also the fallback when the saved device has been unplugged) and
+        # check it can capture.
+        device_idx = resolve_input_device(app.input_device_name)
+        dev_err = check_audio_input_device(device=device_idx)
         if dev_err:
             app.set_status(f"Mic error: {dev_err}", CP_RECORDING)
             return
@@ -41,7 +44,8 @@ class RecordingHelper:
         try:
             app._audio_stream = sd.InputStream(
                 samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
-                blocksize=BLOCK_SIZE, callback=self.audio_callback)
+                blocksize=BLOCK_SIZE, callback=self.audio_callback,
+                device=device_idx)
             app._audio_stream.start()
         except (sd.PortAudioError, OSError) as e:
             app.recording = False
@@ -191,7 +195,8 @@ class RecordingHelper:
     def echo_test(self):
         """Record 1 second of audio and play it back immediately."""
         app = self.app
-        dev_err = check_audio_input_device()
+        device_idx = resolve_input_device(app.input_device_name)
+        dev_err = check_audio_input_device(device=device_idx)
         if dev_err:
             app.set_status(f"Echo test failed: {dev_err}", CP_RECORDING)
             return
@@ -201,6 +206,7 @@ class RecordingHelper:
     def do_echo_test(self):
         app = self.app
         frames = []
+        device_idx = resolve_input_device(app.input_device_name)
 
         def callback(indata, frame_count, time_info, status):
             frames.append(indata.copy())
@@ -209,7 +215,7 @@ class RecordingHelper:
         try:
             stream = sd.InputStream(
                 samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
-                blocksize=BLOCK_SIZE, callback=callback)
+                blocksize=BLOCK_SIZE, callback=callback, device=device_idx)
             stream.start()
         except (sd.PortAudioError, OSError) as e:
             app.ui_queue.put(("status",

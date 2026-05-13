@@ -51,10 +51,52 @@ def restore_stderr():
         saved_stderr_fd = None
 
 
-def check_audio_input_device() -> str | None:
-    """Return an error message if no working input device, else None."""
+def list_input_devices() -> list[tuple[int, str]]:
+    """Return [(index, name), ...] for all input-capable devices."""
     try:
-        dev = sd.query_devices(kind="input")
+        devices = sd.query_devices()
+    except (sd.PortAudioError, OSError):
+        return []
+    result: list[tuple[int, str]] = []
+    seen_names: set[str] = set()
+    for i, d in enumerate(devices):
+        if d.get("max_input_channels", 0) < 1:
+            continue
+        name = d.get("name", f"Device {i}")
+        # PortAudio sometimes exposes the same device under multiple host APIs;
+        # de-dupe by name to keep the picker readable.
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+        result.append((i, name))
+    return result
+
+
+def resolve_input_device(name: str | None) -> int | None:
+    """Resolve a persisted device name to a current PortAudio index.
+
+    Returns None when the name is empty/None (meaning system default) OR when
+    the named device is no longer present (so we fall back to the default
+    rather than failing outright).
+    """
+    if not name:
+        return None
+    for idx, dev_name in list_input_devices():
+        if dev_name == name:
+            return idx
+    return None
+
+
+def check_audio_input_device(device: int | None = None) -> str | None:
+    """Return an error message if no working input device, else None.
+
+    When *device* is None, checks the system default input device.
+    """
+    try:
+        if device is not None:
+            dev = sd.query_devices(device, kind="input")
+        else:
+            dev = sd.query_devices(kind="input")
         if dev is None:
             return "No audio input device found."
         if dev.get("max_input_channels", 0) < 1:

@@ -25,6 +25,10 @@ import voicecode.tts.engine as _engine_mod
 from voicecode.stt.whisper import get_whisper_model
 import voicecode.stt.whisper as _whisper_mod
 import voicecode.constants as _constants_mod
+from voicecode.audio.utils import list_input_devices
+
+# Sentinel label shown in the device picker for "use OS default".
+DEFAULT_INPUT_DEVICE_LABEL = "(System default)"
 
 
 class SettingsOverlay:
@@ -229,7 +233,24 @@ class SettingsOverlay:
     def build_voice_submenu_items(self):
         """Build the Voice Settings sub-menu items list."""
         app = self.app
+        # Re-enumerate input devices each time so a freshly-plugged or unplugged
+        # mic shows up the next time the user opens the submenu.
+        device_names = [name for _, name in list_input_devices()]
+        device_options = [DEFAULT_INPUT_DEVICE_LABEL] + device_names
+        # If the persisted device name is missing from the current list (e.g.
+        # the USB dock was removed), keep it as an option so the user can see
+        # what was saved and either re-select it or pick a new one.
+        if app.input_device_name and app.input_device_name not in device_names:
+            device_options.append(f"{app.input_device_name} (unavailable)")
         return [
+            {
+                "key": "input_device",
+                "label": "Microphone Device",
+                "desc": "Audio input device used for dictation and echo test",
+                "options": device_options,
+                "get": self._get_input_device_label,
+                "set": self.set_input_device,
+            },
             {
                 "key": "whisper_model",
                 "label": "Whisper Model",
@@ -263,6 +284,16 @@ class SettingsOverlay:
                 "set": self.set_min_speech,
             },
         ]
+
+    def _get_input_device_label(self):
+        """Return the label that should appear next to 'Microphone Device'."""
+        app = self.app
+        if not app.input_device_name:
+            return DEFAULT_INPUT_DEVICE_LABEL
+        current_names = [name for _, name in list_input_devices()]
+        if app.input_device_name in current_names:
+            return app.input_device_name
+        return f"{app.input_device_name} (unavailable)"
 
     def open_voice_submenu(self):
         """Open the Voice Settings sub-menu."""
@@ -806,6 +837,21 @@ class SettingsOverlay:
         app.min_speech_duration = val
         _constants_mod.MIN_SPEECH_DURATION_SEC = val
         persist_setting("min_speech_duration", val)
+
+    def set_input_device(self, val):
+        """Persist the chosen microphone device name (or None for default)."""
+        app = self.app
+        if val == DEFAULT_INPUT_DEVICE_LABEL:
+            new_name = None
+            display = "system default"
+        else:
+            # Strip the "(unavailable)" suffix if the user re-selected the
+            # saved-but-missing device — we still store its real name.
+            new_name = val.removesuffix(" (unavailable)")
+            display = new_name
+        app.input_device_name = new_name
+        persist_setting("input_device", new_name)
+        self._set_status(f"Microphone device → {display}")
 
     def set_tts_voice(self, val):
         if val in PIPER_VOICES:
