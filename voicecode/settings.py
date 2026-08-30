@@ -43,6 +43,22 @@ def persist_setting(key, val):
     save_settings(s)
 
 
+def drop_settings(*keys):
+    """Remove keys from settings if present.
+
+    Used for migrations -- persist_setting(key, None) would write a null
+    rather than removing the key.
+    """
+    s = load_settings()
+    changed = False
+    for k in keys:
+        if k in s:
+            del s[k]
+            changed = True
+    if changed:
+        save_settings(s)
+
+
 def slug_from_text(text: str, max_words: int = 5) -> str:
     """Derive a short filesystem-safe slug from prompt text."""
     for line in text.split("\n"):

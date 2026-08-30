@@ -18,7 +18,8 @@ from voicecode.constants import (
     AgentState, SAMPLE_RATE, VAD_THRESHOLD,
     SILENCE_AFTER_SPEECH_SEC, MIN_SPEECH_DURATION_SEC,
 )
-from voicecode.settings import load_settings, save_settings, load_shortcuts, persist_setting
+from voicecode.settings import (load_settings, save_settings, load_shortcuts,
+                                persist_setting, drop_settings)
 from voicecode.ui.colors import (
     CP_HEADER, CP_PROMPT, CP_DICTATION, CP_STATUS, CP_HELP, CP_RECORDING,
     CP_BANNER, CP_ACCENT, CP_AGENT, CP_XFER, CP_VOICE,
@@ -42,7 +43,9 @@ from voicecode.audio.capture import RecordingHelper
 from voicecode.audio.vad import get_vad_model
 from voicecode.stt.whisper import get_whisper_model
 from voicecode.tts.voices import TTS_AVAILABLE
-from voicecode.providers import detect_providers, get_provider_by_name
+from voicecode.providers import (detect_providers, get_provider_by_name,
+                                 all_providers)
+from voicecode.providers.base import MODE_BUILD
 from voicecode.providers.claude import ClaudeProvider
 
 
@@ -256,6 +259,7 @@ class BBSApp:
         self.settings_cursor = 0
         self.settings_editing_text = False  # True when inline text editing is active
         self.settings_edit_buffer = ""      # current text being edited
+        self._editing_provider = None       # provider whose command is being edited
         self.settings_edit_cursor = 0       # cursor position within buffer
 
         # Sub-menu state
@@ -305,14 +309,26 @@ class BBSApp:
 
         # AI provider — detect installed CLIs and restore saved choice
         saved_provider = saved.get("ai_provider", "Claude")
+        if saved_provider == "Gemini":
+            # Migration: Gemini CLI support was replaced by Antigravity.
+            saved_provider = "Antigravity"
+            persist_setting("ai_provider", saved_provider)
 
-        # Apply command overrides from settings
-        gemini_cmd = saved.get("gemini_command")
-        g_prov = get_provider_by_name("Gemini")
-        if gemini_cmd and g_prov:
-            g_prov.command_override = gemini_cmd
-        if g_prov and saved.get("gemini_disable_proxy", False):
-            g_prov.disable_proxy = True
+        # Restore per-provider workspace, command override and model.
+        for _p in all_providers():
+            _p.set_workspace_dir(self.working_dir)
+            _key = _p.name.lower()
+            _override = saved.get(f"{_key}_command")
+            if _override:
+                _p.command_override = _override
+            # An explicit "Default" choice persists as null and must be
+            # honoured, so only fall back when the key is absent entirely.
+            if f"{_key}_model" in saved:
+                _p.set_model(saved.get(f"{_key}_model"))
+            else:
+                _p.set_model(_p.DEFAULT_MODEL)
+
+        drop_settings("gemini_command", "gemini_disable_proxy")
 
         # Detect available providers after overrides are applied
         self.available_providers = detect_providers()
@@ -324,6 +340,8 @@ class BBSApp:
 
         # Agent state
         self.agent_state = AgentState.IDLE
+        # Execution mode for the next/current agent run (build or plan).
+        self.agent_run_mode = MODE_BUILD
         self.agent_process = None
         self._agent_cancel = threading.Event()
         self.last_tts_summary = ""

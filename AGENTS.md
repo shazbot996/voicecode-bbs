@@ -1,6 +1,6 @@
 # VoiceCode — Shared Project Context
 
-Voice-driven CLI interface for interacting with AI agents (Claude, Gemini). Dictate prompts, refine them with AI, and execute them — all by voice. Optional Google Cast output to Nest/Chromecast speakers.
+Voice-driven CLI interface for interacting with AI agents (Claude, Antigravity). Dictate prompts, refine them with AI, and execute them — all by voice. Optional Google Cast output to Nest/Chromecast speakers.
 
 ## Architecture
 
@@ -11,11 +11,11 @@ Voice-driven CLI interface for interacting with AI agents (Claude, Gemini). Dict
   - `agent/` — Agent execution, prompt refinement, runner logic
   - `audio/` — Mic capture, VAD, audio utilities
   - `history/` — Prompt/response history browser and favorites
-  - `providers/` — AI provider adapters (Claude, Gemini) with base class
+  - `providers/` — AI provider adapters (Claude, Antigravity) with base class
   - `stt/` — Speech-to-text (faster-whisper)
   - `tts/` — Text-to-speech engine, voice config, Google Cast
   - `publish/` — Document publishing agents (9 types) with base class and prompt templates; `maintenance/` subpackage for document upkeep agents; `frontmatter.py` for YAML front matter parsing
-  - `data/` — Built-in reference data (tool library definitions for Claude/Gemini)
+  - `data/` — Built-in reference data (tool library definitions for Claude/Antigravity)
   - `ui/` — Curses UI: panes, overlays, drawing, colors, animation, input handling, publish overlay, settings overlay
 
 ### Audio Pipeline
@@ -66,13 +66,40 @@ make test
 - Comment lines (`#`) in prompt files are stripped before execution
 - TTS summaries extracted from `[TTS_SUMMARY]...[/TTS_SUMMARY]` blocks in agent responses
 - Thread-safe UI updates via `queue.Queue`
-- Session continuity across prompts via `--resume` with session IDs (Claude) or `--resume latest` (Gemini)
+- Session continuity across prompts via `--resume` with session IDs (Claude) or `--conversation` with conversation IDs (Antigravity)
 - Mid-recording shortcuts injection merges paths into transcripts using word-level timestamps
 - App expects a working folder (typically repo root) with `prompts/` and `docs/` subfolders
 - **Publish system** — `publish/` contains 9 specialized agents that generate structured docs: ADR, ARCH, PLAN, SPEC, GLOSSARY, CONSTRAINTS, CONVENTIONS, SCHEMA, README. Each agent subclasses `PublishAgent` (in `publish/base.py`) and has a prompt template loaded from `publish/prompts/<DOC_TYPE>.md` with `{scope}` and `{dest_folder}` placeholders. GLOSSARY, CONSTRAINTS, CONVENTIONS, SCHEMA, and README agents override `build_prompt()` to use a fixed destination (`context/` or project root). The publish overlay (`ui/publish_overlay.py`) is a two-step modal: pick doc type → pick destination folder under `docs/`. The built prompt is sent through the shared `execute_agent_prompt()` helper.
 - **Maintenance system** — `publish/maintenance/` provides agents that operate on existing documents: Reconcile (check drift), Refresh (update in-place), Coverage (find gaps), plus CTX_DRIFT and CTX_UPDATE for root context files. Each subclasses `MaintenanceAgent` (in `publish/maintenance/base.py`) with prompt templates in `publish/maintenance/prompts/`. Accessible via `M` key in the document reader or from the document actions overlay in the browser. Uses the same `execute_agent_prompt()` pipeline as publish.
-- **Document type styling** — Published documents have YAML front matter with a `type` field parsed by `publish/frontmatter.py`. The browser shows color-coded `[TYPE]` badges and the document reader uses type-based border colors. Root context files (AGENTS.md, CLAUDE.md, GEMINI.md) appear at the top of the Documents tab with `[CONTEXT]` badges.
+- **Document type styling** — Published documents have YAML front matter with a `type` field parsed by `publish/frontmatter.py`. The browser shows color-coded `[TYPE]` badges and the document reader uses type-based border colors. Root context files (AGENTS.md, plus the CLAUDE.md import stub) appear at the top of the Documents tab with `[CONTEXT]` badges.
 - Smoke test suite in `tests/` (pytest); `requirements-dev.txt` has test dependencies; no CI currently
+- **Root context** — `AGENTS.md` is the single maintained root context file, read by both CLIs. `CLAUDE.md` is a one-line `@AGENTS.md` import stub kept only so Claude Code discovers the context; do not let it accumulate content.
+- This is a curses application with background threads — changes to shared state must be thread-safe (use `queue.Queue` for UI updates)
+- Dependencies in `requirements.txt`, virtualenv in `venv/`; smoke tests in `tests/` (run with `make test`)
+
+## Provider Control Surfaces
+
+Both providers are driven through `CLIProvider` (`voicecode/providers/base.py`) and expose the same axes, mapped to each CLI's own flag spelling:
+
+| Axis | Claude (`claude`) | Antigravity (`agy`) |
+|---|---|---|
+| Streaming | `--print --verbose --output-format stream-json` | `--output-format stream-json` + fused `--print=<prompt>` |
+| Skip permissions | `--dangerously-skip-permissions` | `--dangerously-skip-permissions` |
+| Session resume | `--resume <id>` | `--conversation <id>` |
+| Workspace | inherits cwd | `--add-dir <dir>` (**required**) |
+| Model | `--model <alias>` | `--model <id>` |
+| Plan mode | `--permission-mode plan` (**replaces** skip-permissions) | `--mode plan` (combines with skip-permissions) |
+| Build mode | `--dangerously-skip-permissions` | `--mode accept-edits` |
+
+Settings → AI Models exposes, per provider: a **Model** selector (Claude uses family aliases; Antigravity's list is read from `agy models` and cached), an editable **Command** field (the base invocation, so extra flags can be appended), and a read-only **Execution** preview of the full command line.
+
+Three `agy` behaviors are load-bearing and easy to break:
+
+1. `--print` takes an *optional* Go-style value, so a bare `--print` swallows the next token. The prompt must be a single fused `--print=<prompt>` argv element, placed last.
+2. Without `--add-dir`, `agy` uses its own scratch directory as the workspace and silently edits the wrong files while reporting success.
+3. Tool steps are emitted twice (`ACTIVE` then `DONE`); only `ACTIVE` is rendered, or every tool line prints twice.
+
+**Execution modes.** `PublishAgent` and `MaintenanceAgent` carry a `run_mode` (default `MODE_BUILD`) that flows through `execute_agent_prompt()` → `app.agent_run_mode` → `build_execute_cmd()`. Plan mode is **read-only**: it writes nothing to the workspace and still reports success, so an agent whose prompt template ends by saving a file must stay on `MODE_BUILD`. Converting an agent to plan mode means flipping `run_mode` *and* rewriting its prompt to render output into the response.
 
 ## BBS App Three-Pane Layout
 
@@ -118,7 +145,7 @@ make test
 | W | New session (clear conversation context) |
 | P | Publish document (open publish overlay) |
 | Y | Replay TTS summary |
-| M | Toggle AI provider (Claude/Gemini) |
+| M | Toggle AI provider (Claude/Antigravity) |
 | T | Cycle status bar tip |
 | [/] | Cycle TTS voice |
 | H | Help overlay |

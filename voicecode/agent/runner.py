@@ -7,6 +7,7 @@ import subprocess
 import threading
 
 from voicecode.constants import AgentState, TTS_PROMPT_SUFFIX
+from voicecode.providers.base import MODE_PLAN
 from voicecode.ui.colors import *
 from voicecode.tts.engine import extract_tts_summary, speak_text, stop_speaking
 from voicecode.tts.cast import cast_tts_to_devices
@@ -84,9 +85,13 @@ class RunnerHelper:
             app._tts_detect_buf = ''
 
     def format_tool_input(self, name, inp):
-        """Format a tool_use input dict into a concise display string."""
-        if name in ("Read", "ReadFile"):
-            path = inp.get("file_path", "")
+        """Format a tool_use input dict into a concise display string.
+
+        Handles both Claude's PascalCase tools with snake_case params and
+        Antigravity's snake_case tools with PascalCase params.
+        """
+        if name in ("Read", "view_file"):
+            path = inp.get("file_path", "") or inp.get("AbsolutePath", "")
             parts = []
             if path:
                 parts.append(path.split("/")[-1] if "/" in path else path)
@@ -95,53 +100,42 @@ class RunnerHelper:
             if inp.get("limit"):
                 parts.append(f"+{inp['limit']}")
             return " ".join(parts) if parts else ""
-        elif name == "ReadManyFiles":
-            paths = inp.get("file_paths", [])
-            if not paths: return ""
-            short_paths = [p.split("/")[-1] if "/" in p else p for p in paths]
-            res = ", ".join(short_paths[:3])
-            if len(short_paths) > 3:
-                res += f" ... (+{len(short_paths)-3})"
-            return res
-        elif name in ("Edit", "EditFile"):
-            path = inp.get("file_path", "")
+        elif name in ("Edit", "replace_file_content", "multi_replace_file_content",
+                      "sed_file"):
+            path = inp.get("file_path", "") or inp.get("TargetFile", "")
             short = path.split("/")[-1] if "/" in path else path
-            old = inp.get("old_string", "")
-            # Gemini EditFile uses 'edits' list
-            edits = inp.get("edits", [])
-            if edits and isinstance(edits, list):
-                # Just show the first edit preview
-                first = edits[0]
-                old = first.get("old_string", first.get("find", ""))
-            preview = old[:60].replace("\n", "\\n") + ("..." if len(old) > 60 else "")
+            old_str = inp.get("old_string", "")
+            preview = (old_str[:60].replace("\n", "\\n")
+                       + ("..." if len(old_str) > 60 else ""))
             return f"{short}: {preview}" if preview else short
-        elif name in ("Write", "WriteFile"):
-            path = inp.get("file_path", "")
+        elif name in ("Write", "write_to_file"):
+            path = inp.get("file_path", "") or inp.get("TargetFile", "")
             return path.split("/")[-1] if "/" in path else path
-        elif name in ("Bash", "Task", "Shell"):
-            cmd = inp.get("command", inp.get("prompt", ""))
+        elif name in ("Bash", "Task", "run_command", "command_status",
+                      "send_command_input"):
+            cmd = (inp.get("command", "") or inp.get("CommandLine", "")
+                   or inp.get("prompt", ""))
             return cmd[:80] + ("..." if len(cmd) > 80 else "")
-        elif name in ("Grep", "Glob", "GrepSearch", "FindFiles"):
-            pat = inp.get("pattern", inp.get("query", ""))
-            path = inp.get("path", "")
+        elif name in ("Grep", "Glob", "grep_search", "find_by_name"):
+            # grep_search uses Query/SearchPath; find_by_name uses
+            # Pattern/SearchDirectory (verified against the CLI).
+            pat = (inp.get("pattern", "") or inp.get("query", "")
+                   or inp.get("Query", "") or inp.get("Pattern", ""))
+            path = (inp.get("path", "") or inp.get("SearchPath", "")
+                    or inp.get("SearchDirectory", ""))
             return f"{pat}" + (f" in {path}" if path else "")
-        elif name == "ListDirectory":
-            path = inp.get("dir_path", "")
+        elif name in ("ListDirectory", "list_dir"):
+            path = inp.get("dir_path", "") or inp.get("DirectoryPath", "")
             return path.split("/")[-1] if "/" in path else path
-        elif name in ("WebSearch", "GoogleSearch", "MemorySearch"):
-            q = inp.get("query", "")
+        elif name in ("WebSearch", "search_web"):
+            q = inp.get("query", "") or inp.get("Query", "")
             return q[:80] + ("..." if len(q) > 80 else "")
-        elif name in ("WebFetch", "FetchWebPage"):
-            url = inp.get("url", "")
-            return url
-        elif name == "SaveMemory":
-            k = inp.get("key", "")
-            v = str(inp.get("value", ""))
-            v_short = v[:40] + ("..." if len(v) > 40 else "")
-            return f"{k} = {v_short}"
-        elif name == "Agent":
-            desc = inp.get("description", "")
-            return desc
+        elif name in ("WebFetch", "read_url_content"):
+            return inp.get("url", "") or inp.get("Url", "")
+        elif name in ("Agent", "invoke_subagent"):
+            return inp.get("description", "") or inp.get("Name", "")
+        elif name == "manage_task":
+            return str(inp.get("Action", ""))[:80]
         else:
             s = json.dumps(inp)
             return s[:80] + ("..." if len(s) > 80 else "")
@@ -161,6 +155,10 @@ class RunnerHelper:
 
         # BBS-style announcement block before the session header
         model_tag = provider.name.upper()
+        if app.agent_run_mode == MODE_PLAN:
+            # Plan mode is read-only and writes nothing -- that must be
+            # visible in the transcript or the run looks like a failure.
+            model_tag += " / PLAN"
         self.emit_typewriter(f"\n>> REQUEST RECEIVED... ROUTING TO [{model_tag}] <<\n")
         self.emit_typewriter(">> INCOMING TRANSMISSION <<\n\n")
 
@@ -169,7 +167,8 @@ class RunnerHelper:
 
         try:
             prompt_with_tts = app.xfer_prompt_text + TTS_PROMPT_SUFFIX
-            cmd = provider.build_execute_cmd(prompt_with_tts, app.session_id)
+            cmd = provider.build_execute_cmd(prompt_with_tts, app.session_id,
+                                             app.agent_run_mode)
             app.agent_process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
@@ -223,10 +222,7 @@ class RunnerHelper:
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError:
-                    # Non-JSON output (e.g. stderr) — suppress known
-                    # CLI diagnostic banners (e.g. Gemini API-key notice).
-                    if line.startswith("Using GEMINI_API_KEY"):
-                        continue
+                    # Non-JSON output (e.g. stderr) — surface it as-is.
                     self.emit_typewriter(line + "\n")
                     continue
 

@@ -1,5 +1,6 @@
 """Prompt execution — execute, save, history management."""
 
+from voicecode.providers.base import MODE_BUILD
 import datetime
 import time
 import threading
@@ -47,6 +48,9 @@ class ExecutionHelper:
         app.xfer_progress = 0.0
         app.xfer_frame = 0
         app.xfer_start_time = time.time()
+        # Hand-typed prompts always build; never inherit a publish
+        # agent's plan mode from a previous run.
+        app.agent_run_mode = MODE_BUILD
         app.agent_state = AgentState.DOWNLOADING
         app.typewriter_queue.clear()
         app._typewriter_budget = 0.0
@@ -98,6 +102,9 @@ class ExecutionHelper:
         app.xfer_progress = 0.0
         app.xfer_frame = 0
         app.xfer_start_time = time.time()
+        # Hand-typed prompts always build; never inherit a publish
+        # agent's plan mode from a previous run.
+        app.agent_run_mode = MODE_BUILD
         app.agent_state = AgentState.DOWNLOADING
         app.typewriter_queue.clear()
         app._typewriter_budget = 0.0

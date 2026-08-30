@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from voicecode.providers.base import MODE_BUILD
+
 MAINT_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
@@ -18,6 +20,9 @@ class MaintenanceAgent:
     """
 
     action_name: str = ""
+
+    # See PublishAgent.run_mode -- plan mode is read-only.
+    run_mode: str = MODE_BUILD
     description: str = ""  # Short label shown in overlay
 
     @property

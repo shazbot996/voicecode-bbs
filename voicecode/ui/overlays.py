@@ -47,7 +47,9 @@ DOC_TYPE_COLORS = {
 
 # Root context files shown at top of Documents tab (order matters)
 ROOT_CONTEXT_PRIMARY = "AGENTS.md"
-ROOT_CONTEXT_SUBS = ["CLAUDE.md", "GEMINI.md"]
+# AGENTS.md is the single maintained root context file; CLAUDE.md is
+# a one-line @AGENTS.md import stub kept for Claude Code discovery.
+ROOT_CONTEXT_SUBS = ["CLAUDE.md"]
 ROOT_CONTEXT_STANDALONE = ["README.md", "CHANGELOG.md"]  # root-level items not nested under AGENTS.md
 ROOT_CONTEXT_FILES = [ROOT_CONTEXT_PRIMARY] + ROOT_CONTEXT_SUBS + ROOT_CONTEXT_STANDALONE
 
@@ -122,7 +124,7 @@ class OverlayRenderer:
             " ── Voice & AI ────────────────",
             " [/]    Cycle TTS voice",
             " Y      Replay last TTS summary",
-            " M      Toggle Gemini / Claude",
+            " M      Toggle Antigravity / Claude",
             " P      Publish document",
             "",
             " ── System ────────────────────",

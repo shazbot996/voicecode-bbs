@@ -2,12 +2,12 @@ You are a maintenance agent performing an **Update** action — regenerating a r
 
 ## Your task
 
-Rewrite the context file at `{doc_path}` so every fact matches the live code. This file is read by AI coding agents (Claude, Gemini) as their primary orientation to the project, so accuracy is critical.
+Rewrite the context file at `{doc_path}` so every fact matches the live code. This file is read by AI coding agents (Claude, Antigravity) as their primary orientation to the project, so accuracy is critical.
 
 ## Document to update
 
 - **Path:** `{doc_path}`
-- **Role:** Root project context file (read by AI agents via CLAUDE.md / GEMINI.md / AGENTS.md)
+- **Role:** Root project context file. `AGENTS.md` is the single maintained context file, read by both Claude Code and the Antigravity CLI; `CLAUDE.md` is a one-line `@AGENTS.md` import stub.
 
 <document>
 {doc_content}
@@ -33,7 +33,7 @@ Rewrite the context file at `{doc_path}` so every fact matches the live code. Th
 
 6. **Remove obsolete content.** If the document describes code or features that no longer exist, remove those references cleanly. Don't annotate removals — just take them out.
 
-7. **Cross-reference sibling context files.** If this is AGENTS.md, ensure references to CLAUDE.md and GEMINI.md are accurate. If this is CLAUDE.md or GEMINI.md, ensure it complements (not duplicates) AGENTS.md.
+7. **Keep AGENTS.md authoritative.** `AGENTS.md` is the single maintained root context file. `CLAUDE.md` is a one-line `@AGENTS.md` import stub and must not accumulate content — if this is CLAUDE.md, leave it as the stub.
 
 ## Output
 

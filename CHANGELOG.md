@@ -5,6 +5,26 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.2.0] - 2026-08-30
+
+### Added
+- **Antigravity CLI (`agy`) support** — replaces Gemini CLI as the second AI provider, with full parity for streaming, session continuity, tool display, tool-result previews, and context metering
+- **Explicit model selection for both providers** — Claude uses family aliases (`opus`, `sonnet`, `haiku`, `fable`); Antigravity's list is read live from `agy models` (cached, with a static fallback)
+- **Per-provider CLI command override** — an editable base-invocation field (so extra flags can be appended) plus a read-only preview of the full command line VoiceCode will run
+- **Build/plan execution mode** — `PublishAgent` and `MaintenanceAgent` carry a `run_mode` that maps to `--permission-mode plan` (Claude) or `--mode plan` (Antigravity); the routing banner announces plan mode. All agents default to build mode, since plan mode is read-only and every agent writes its output to disk
+- Antigravity tool library (26 entries) in the Tools browser tab
+
+### Changed
+- Header ribbon now shows provider **and** model as `Model:<Provider>:<Model>` (e.g. `Model:Claude:Opus 5`), degrading gracefully on narrow terminals
+- `AGENTS.md` is now the single maintained root context file; `CLAUDE.md` is reduced to a one-line `@AGENTS.md` import stub
+- `M` toggles Antigravity / Claude
+- Command overrides are parsed with `shlex` (quoted paths now work), and `--version` probes use the binary only
+- Claude's context meter falls back to a shared 1M-token constant when the CLI reports no `contextWindow`
+
+### Removed
+- Gemini CLI provider, `GEMINI.md`, the `GEMINI_TOOLS` library, and the `gemini_disable_proxy` proxy workaround
+- `gemini_command` / `gemini_disable_proxy` settings keys — dropped automatically on load; a saved `ai_provider` of `Gemini` migrates to `Antigravity`
+
 ## [4.1.2] - 2026-04-06
 
 ### Fixed

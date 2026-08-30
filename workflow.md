@@ -16,7 +16,6 @@ folders alongside your root context files:
 repo-root/
   AGENTS.md                    ← shared project context (root context)
   CLAUDE.md                    ← Claude-specific instructions (root context)
-  GEMINI.md                    ← Gemini-specific instructions (root context)
   README.md                    ← project entry point (root context)
   prompts/
     history/                   ← auto-saved prompt/response pairs
@@ -35,7 +34,7 @@ repo-root/
 ```
 
 **Two tiers of context:**
-- **Root context** — AGENTS.md, CLAUDE.md, GEMINI.md, README.md. These are
+- **Root context** — AGENTS.md, CLAUDE.md, README.md. These are
   always loaded by the AI agent and act as project maps. Shown at the top of
   the Documents tab with `[CONTEXT]` badges.
 - **docs/** — Published documents with YAML frontmatter. Browsable in the
@@ -161,7 +160,7 @@ lists all published docs in `docs/` with color-coded type badges:
 - Magenta: GLOSSARY, SCHEMA, CONSTRAINTS, CONVENTIONS
 - Yellow: README, root-context, drift/coverage reports
 
-Root context files (AGENTS.md, CLAUDE.md, GEMINI.md, README.md) appear at the
+Root context files (AGENTS.md, CLAUDE.md, README.md) appear at the
 top of the list.
 
 Press Enter on any document to open the **Document Reader** — a full-screen

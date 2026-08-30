@@ -1,5 +1,6 @@
 """Publish overlay — document type and destination folder selection."""
 
+from voicecode.providers.base import MODE_BUILD
 import curses
 import textwrap
 
@@ -134,11 +135,15 @@ def get_publish_agent(doc_type: str):
     return _AGENT_REGISTRY.get(doc_type)
 
 
-def execute_agent_prompt(app, prompt_text: str, label: str):
+def execute_agent_prompt(app, prompt_text: str, label: str,
+                         run_mode: str = MODE_BUILD):
     """Feed a prompt into the agent execution pipeline.
 
     Shared by publish and maintenance workflows.  Sets up the ZMODEM
     animation, saves to history, and spawns the background agent thread.
+
+    ``run_mode`` comes from the agent's ``run_mode`` attribute and selects
+    build vs plan mode on the active provider.
     """
     import time
     import threading
@@ -169,6 +174,7 @@ def execute_agent_prompt(app, prompt_text: str, label: str):
     app.xfer_progress = 0.0
     app.xfer_frame = 0
     app.xfer_start_time = time.time()
+    app.agent_run_mode = run_mode
     app.agent_state = AgentState.DOWNLOADING
     app.typewriter_queue.clear()
     app._typewriter_budget = 0.0
@@ -344,7 +350,7 @@ class PublishOverlay:
         dest_label = f"docs/{dest_folder}" if dest_folder else "README.md"
         label = f"[PUBLISH {doc_type} → {dest_label}]"
 
-        execute_agent_prompt(app, prompt_text, label)
+        execute_agent_prompt(app, prompt_text, label, agent.run_mode)
 
     # ── drawing ──────────────────────────────────────────────────
 

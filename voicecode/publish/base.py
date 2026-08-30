@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from voicecode.providers.base import MODE_BUILD
+
 # Directory containing prompt template files (one per agent)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -20,6 +22,12 @@ class PublishAgent:
 
     # Subclasses must set this
     doc_type: str = ""
+
+    # Execution mode for this agent. Plan mode is READ-ONLY, so any
+    # agent that writes its output to disk must stay on MODE_BUILD.
+    # Flipping this also requires rewriting the prompt template to
+    # render its output into the response instead of saving a file.
+    run_mode: str = MODE_BUILD
 
     @property
     def prompt_path(self) -> Path:

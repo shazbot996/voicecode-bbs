@@ -7,7 +7,7 @@ Compare the context file below against the current state of the codebase. Identi
 ## Document under review
 
 - **Path:** `{doc_path}`
-- **Role:** Root project context file (read by AI agents via CLAUDE.md / GEMINI.md / AGENTS.md)
+- **Role:** Root project context file. `AGENTS.md` is the single maintained context file, read by both Claude Code and the Antigravity CLI; `CLAUDE.md` is a one-line `@AGENTS.md` import stub.
 
 <document>
 {doc_content}
@@ -21,7 +21,7 @@ Compare the context file below against the current state of the codebase. Identi
 
 3. **Compare systematically.** For each section, fact, file path, class name, module reference, or behavioral claim in the document, check whether it still matches reality.
 
-4. **Check cross-references.** If this file references CLAUDE.md, GEMINI.md, or AGENTS.md, verify those references are still accurate and the linked files exist.
+4. **Check cross-references.** If this file references CLAUDE.md or AGENTS.md, verify those references are still accurate and the linked files exist.
 
 5. **Produce the drift report** with the sections described below.
 

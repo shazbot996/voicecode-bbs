@@ -1,18 +1,49 @@
 """Claude CLI provider for VoiceCode BBS."""
 
-from voicecode.providers.base import CLIProvider
+from voicecode.providers.base import (
+    CLIProvider, DEFAULT_CONTEXT_WINDOW, MODE_BUILD, MODE_PLAN,
+)
 
 
 class ClaudeProvider(CLIProvider):
     name = "Claude"
     binary = "claude"
 
-    def build_refine_cmd(self, prompt: str) -> list[str]:
-        return self._get_base_cmd() + ["--print", "-p", prompt]
+    # `--model` accepts a family alias (resolves to the latest model in that
+    # family) or a full id. Aliases are used deliberately so a new generation
+    # does not strand the user on an old model; the labels are cosmetic and
+    # need a refresh when a new generation ships.
+    MODELS = [
+        (None, "Default"),
+        ("opus", "Opus 5"),
+        ("sonnet", "Sonnet 5"),
+        ("haiku", "Haiku 4.5"),
+        ("fable", "Fable 5"),
+    ]
+    DEFAULT_MODEL = "opus"
 
-    def build_execute_cmd(self, prompt: str, session_id: str | None = None) -> list[str]:
+    def _model_flags(self) -> list[str]:
+        return ["--model", self.model] if self.model else []
+
+    def _mode_flags(self, run_mode: str) -> list[str]:
+        # Plan mode is read-only and MUST replace --dangerously-skip-permissions
+        # rather than joining it. Verified: passing both is accepted without
+        # error but the init event reports permissionMode=bypassPermissions,
+        # i.e. plan mode is silently ignored.
+        if run_mode == MODE_PLAN:
+            return ["--permission-mode", "plan"]
+        return ["--dangerously-skip-permissions"]
+
+    def build_refine_cmd(self, prompt: str) -> list[str]:
+        return (self._get_base_cmd() + self._model_flags()
+                + ["--print", "-p", prompt])
+
+    def build_execute_cmd(self, prompt: str, session_id: str | None = None,
+                          run_mode: str = MODE_BUILD) -> list[str]:
         cmd = self._get_base_cmd() + ["--print", "--verbose", "--output-format",
-               "stream-json", "--dangerously-skip-permissions"]
+                                      "stream-json"]
+        cmd += self._mode_flags(run_mode)
+        cmd += self._model_flags()
         if session_id:
             cmd += ["--resume", session_id]
         cmd += ["-p", prompt]
@@ -74,7 +105,7 @@ class ClaudeProvider(CLIProvider):
             return None
         model_usage = event.get("modelUsage", {})
         for _model, usage_data in model_usage.items():
-            ctx_window = usage_data.get("contextWindow", 0)
+            ctx_window = usage_data.get("contextWindow") or DEFAULT_CONTEXT_WINDOW
             input_t = usage_data.get("inputTokens", 0)
             output_t = usage_data.get("outputTokens", 0)
             cache_read = usage_data.get("cacheReadInputTokens", 0)

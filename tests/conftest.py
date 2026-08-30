@@ -2,7 +2,7 @@
 
 import pytest
 from voicecode.providers.claude import ClaudeProvider
-from voicecode.providers.gemini import GeminiProvider
+from voicecode.providers.antigravity import AntigravityProvider
 
 
 @pytest.fixture
@@ -11,5 +11,5 @@ def claude():
 
 
 @pytest.fixture
-def gemini():
-    return GeminiProvider()
+def antigravity():
+    return AntigravityProvider()

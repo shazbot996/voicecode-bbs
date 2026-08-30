@@ -10,7 +10,7 @@ Curate and maintain `README.md` so it serves two audiences: **human learners** w
 
 ## Destination
 
-The README is always saved to `README.md` at the **project root** (next to CLAUDE.md, requirements.txt, etc.). There is only one README per project.
+The README is always saved to `README.md` at the **project root** (next to AGENTS.md, requirements.txt, etc.). There is only one README per project.
 
 ## Behavior
 

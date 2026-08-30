@@ -3,7 +3,7 @@
 from unittest.mock import patch
 from voicecode.providers.base import CLIProvider
 from voicecode.providers.claude import ClaudeProvider
-from voicecode.providers.gemini import GeminiProvider
+from voicecode.providers.antigravity import AntigravityProvider
 from voicecode.providers import get_provider_by_name
 
 
@@ -12,9 +12,14 @@ class TestGetBaseCmd:
         p = ClaudeProvider()
         assert p._get_base_cmd() == ["claude"]
 
-    def test_gemini_binary(self):
-        p = GeminiProvider()
-        assert p._get_base_cmd() == ["gemini"]
+    def test_antigravity_binary(self):
+        p = AntigravityProvider()
+        assert p._get_base_cmd() == ["agy"]
+
+    def test_command_override_respects_quoting(self):
+        p = ClaudeProvider()
+        p.command_override = '"/opt/my tools/claude" --effort high'
+        assert p._get_base_cmd() == ["/opt/my tools/claude", "--effort", "high"]
 
     def test_command_override(self):
         p = ClaudeProvider()
@@ -65,12 +70,39 @@ class TestGetProviderByName:
         assert get_provider_by_name("Claude") is not None
         assert get_provider_by_name("CLAUDE") is not None
 
-    def test_gemini_lookup(self):
-        assert get_provider_by_name("gemini") is not None
+    def test_antigravity_lookup(self):
+        assert get_provider_by_name("antigravity") is not None
 
     def test_unknown_returns_none(self):
         assert get_provider_by_name("openai") is None
 
     def test_returns_correct_type(self):
         assert isinstance(get_provider_by_name("claude"), ClaudeProvider)
-        assert isinstance(get_provider_by_name("gemini"), GeminiProvider)
+        assert isinstance(get_provider_by_name("antigravity"), AntigravityProvider)
+
+
+class TestVersionUsesBinaryOnly:
+    def test_extra_flags_not_passed_to_version(self):
+        p = ClaudeProvider()
+        p.command_override = "claude --effort high"
+        mock_result = type("Result", (), {"returncode": 0, "stdout": "1.2.3\n"})()
+        with patch("subprocess.run", return_value=mock_result) as m:
+            assert p.get_version() == "1.2.3"
+        assert m.call_args[0][0] == ["claude", "--version"]
+
+
+class TestModelLabel:
+    def test_label_for_selected_model(self):
+        p = ClaudeProvider()
+        p.set_model("opus")
+        assert p.model_label() == "Opus 5"
+
+    def test_label_defaults_when_unset(self):
+        p = ClaudeProvider()
+        p.set_model(None)
+        assert p.model_label() == "Default"
+
+    def test_unknown_model_falls_back_to_id(self):
+        p = ClaudeProvider()
+        p.set_model("some-future-model")
+        assert p.model_label() == "some-future-model"

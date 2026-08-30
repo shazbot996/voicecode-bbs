@@ -2,10 +2,15 @@
 
 from voicecode.providers.base import CLIProvider
 from voicecode.providers.claude import ClaudeProvider
-from voicecode.providers.gemini import GeminiProvider
+from voicecode.providers.antigravity import AntigravityProvider
 
-# Singleton instances so command_override and other state persist.
-_PROVIDERS: list[CLIProvider] = [ClaudeProvider(), GeminiProvider()]
+# Singleton instances so command_override, model and workspace_dir persist.
+_PROVIDERS: list[CLIProvider] = [ClaudeProvider(), AntigravityProvider()]
+
+
+def all_providers() -> list[CLIProvider]:
+    """Return every known provider, installed or not."""
+    return list(_PROVIDERS)
 
 
 def detect_providers() -> list[CLIProvider]:

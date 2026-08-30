@@ -29,7 +29,7 @@ If the user's prompt asks to add, edit, or remove specific terms, intelligently 
 
 If (and only if) the user explicitly requests auto-generation or a full scan, analyze the codebase to identify and define key terms. To do this effectively:
 
-1. **Read context files first** — check for existing documentation in `docs/context/` (especially `ARCH.md`, `CONVENTIONS.md`, `BRIEF.md`), `CLAUDE.md`, `AGENTS.md`, and `README.md` at the repository root.
+1. **Read context files first** — check for existing documentation in `docs/context/` (especially `ARCH.md`, `CONVENTIONS.md`, `BRIEF.md`), `AGENTS.md` and `README.md` at the repository root.
 2. **Scan the codebase** — look at module names, class names, important constants, configuration keys, CLI commands, and domain-specific patterns.
 3. **Identify domain terms** — focus on terms that would confuse a new team member or an AI agent reading the code for the first time.
 4. **Merge with existing** — if a glossary already exists, preserve manually-added terms and update auto-generated ones.

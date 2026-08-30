@@ -2,6 +2,8 @@
 
 import pytest
 from voicecode.providers.claude import ClaudeProvider
+from voicecode.providers.base import (DEFAULT_CONTEXT_WINDOW,
+                                      MODE_BUILD, MODE_PLAN)
 
 
 @pytest.fixture
@@ -198,3 +200,58 @@ class TestBuildExecuteCmd:
         cmd = cp.build_execute_cmd("test")
         assert cmd[0] == "/usr/local/bin/claude"
         assert "--model" in cmd
+
+
+# -- model selection --
+
+class TestModelFlag:
+    def test_execute_includes_model(self, cp):
+        cp.set_model("opus")
+        cmd = cp.build_execute_cmd("go")
+        assert cmd[cmd.index("--model") + 1] == "opus"
+
+    def test_refine_includes_model(self, cp):
+        cp.set_model("haiku")
+        cmd = cp.build_refine_cmd("tidy this")
+        assert cmd[cmd.index("--model") + 1] == "haiku"
+
+    def test_omitted_when_default(self, cp):
+        cp.set_model(None)
+        assert "--model" not in cp.build_execute_cmd("go")
+        assert "--model" not in cp.build_refine_cmd("go")
+
+
+# -- execution mode --
+
+class TestModeFlags:
+    def test_build_mode_skips_permissions(self, cp):
+        cmd = cp.build_execute_cmd("go", None, MODE_BUILD)
+        assert "--dangerously-skip-permissions" in cmd
+        assert "--permission-mode" not in cmd
+
+    def test_plan_mode_replaces_skip_permissions(self, cp):
+        """Verified against the CLI: passing both is accepted but the init
+        event reports permissionMode=bypassPermissions, i.e. plan mode is
+        silently ignored. They must be mutually exclusive."""
+        cmd = cp.build_execute_cmd("go", None, MODE_PLAN)
+        assert cmd[cmd.index("--permission-mode") + 1] == "plan"
+        assert "--dangerously-skip-permissions" not in cmd
+
+    def test_defaults_to_build(self, cp):
+        assert "--dangerously-skip-permissions" in cp.build_execute_cmd("go")
+
+
+# -- context window fallback --
+
+class TestContextWindowFallback:
+    def test_uses_reported_window(self, cp):
+        ev = {"type": "result", "modelUsage": {"claude-opus-5": {
+            "inputTokens": 10, "outputTokens": 5, "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0, "contextWindow": 200_000}}}
+        assert cp.parse_context_usage(ev) == (15, 200_000)
+
+    def test_falls_back_when_window_missing(self, cp):
+        ev = {"type": "result", "modelUsage": {"claude-opus-5": {
+            "inputTokens": 10, "outputTokens": 5, "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0}}}
+        assert cp.parse_context_usage(ev) == (15, DEFAULT_CONTEXT_WINDOW)

@@ -1,7 +1,7 @@
 """Built-in tool definitions for the Tools browser tab.
 
-Provides separate tool libraries for Claude Code and Gemini CLI,
-selected at runtime based on the active provider.
+Provides separate tool libraries for Claude Code and the Antigravity
+CLI, selected at runtime based on the active provider.
 """
 
 # Each tool entry has:
@@ -363,320 +363,387 @@ Tools are configured in .claude/settings.json.
 ]
 
 
-# ─── Gemini CLI tools ─────────────────────────────────────────────
+# ─── Antigravity CLI tools ─────────────────────────────────────────
 
-GEMINI_TOOLS: list[dict] = [
-    # ── Files ──────────────────────────────────────────────────
+ANTIGRAVITY_TOOLS: list[dict] = [
+    # ── Files ──────────────────────────────────────────────
     {
-        "name": "ReadFile",
-        "category": "Files",
-        "summary": "Read file contents by path",
+        "name": 'view_file',
+        "category": 'Files',
+        "summary": 'Read file contents by absolute path',
         "detail": """\
-# ReadFile — Read file contents
+# view_file — Read file contents by absolute path
 
-Reads a file from the local filesystem and returns its contents.
+Reads a file from the workspace and returns its contents.
 
 ## Parameters
-  file_path       (required) Path to the file to read
-  should_read_all (optional) Read entire file without truncation
-
-## Prompt syntax
-
-  Read the file src/main.py
-
-  Show me the contents of config.yaml
-
-  Read the entire README.md without truncation
+  AbsolutePath    (required) Absolute path to the file
 
 ## Notes
-- Supports text files, images, and common document formats
-- Large files are truncated by default; use should_read_all to override
-- Paths can be absolute or relative to working directory
+- Paths must be absolute; relative paths are not resolved
+- The file must be inside a directory passed via --add-dir
 """,
     },
     {
-        "name": "ReadManyFiles",
-        "category": "Files",
-        "summary": "Read multiple files at once",
+        "name": 'write_to_file',
+        "category": 'Files',
+        "summary": 'Create a new file with given contents',
         "detail": """\
-# ReadManyFiles — Read multiple files at once
+# write_to_file — Create a new file with given contents
 
-Reads several files in a single operation.
+Creates a new file, or overwrites an existing one.
 
 ## Parameters
-  file_paths   (required) List of file paths to read
-
-## Prompt syntax
-
-  Read src/app.py and src/utils.py
-
-  Show me all three config files: dev.yaml, staging.yaml, prod.yaml
+  TargetFile      (required) Absolute path to write
+  CodeContent     File body
 
 ## Notes
-- More efficient than reading files one at a time
-- Same truncation behavior as ReadFile
+- Emits no `output` on the DONE step, so no result preview is shown
+- Blocked in plan mode (--mode plan)
 """,
     },
     {
-        "name": "WriteFile",
-        "category": "Files",
-        "summary": "Create or overwrite a file",
+        "name": 'replace_file_content',
+        "category": 'Files',
+        "summary": 'Replace a span of text within one file',
         "detail": """\
-# WriteFile — Create or overwrite a file
+# replace_file_content — Replace a span of text within one file
 
-Writes content to a file, creating directories as needed.
+Performs a targeted find-and-replace inside a single file.
 
 ## Parameters
-  file_path    (required) Path to write to
-  content      (required) The full file content
-
-## Prompt syntax
-
-  Create a new file src/utils/logger.py with a Logger class
-
-  Write a .gitignore that excludes node_modules and .env
+  TargetFile      (required) Absolute path to edit
 
 ## Notes
-- Creates parent directories if they don't exist
-- Prefer EditFile for modifying existing files
+- The Antigravity equivalent of Claude's Edit tool
+- Blocked in plan mode (--mode plan)
 """,
     },
     {
-        "name": "EditFile",
-        "category": "Files",
-        "summary": "Apply targeted edits to a file",
+        "name": 'multi_replace_file_content',
+        "category": 'Files',
+        "summary": 'Replace text across multiple files',
         "detail": """\
-# EditFile — Apply targeted edits to a file
+# multi_replace_file_content — Replace text across multiple files
 
-Modifies specific parts of a file using find-and-replace
-or line-range operations.
+Applies several find-and-replace edits, potentially spanning files.
 
 ## Parameters
-  file_path    (required) Path to the file to edit
-  edits        (required) List of edit operations
-
-## Prompt syntax
-
-  In src/app.py, rename the variable old_name to new_name
-
-  Replace the import statement in utils.py
-
-  Update the database URL in config.py
+  TargetFile      (required) Absolute path to edit
 
 ## Notes
-- Supports multiple edits in a single operation
-- More efficient than WriteFile for small changes
-- File should be read first to understand current content
-""",
-    },
-    # ── Search ─────────────────────────────────────────────────
-    {
-        "name": "GrepSearch",
-        "category": "Search",
-        "summary": "Search file contents with regex",
-        "detail": """\
-# GrepSearch — Search file contents
-
-Searches file contents using regex patterns.
-
-## Parameters
-  query         (required) Regex pattern to search for
-  path          (optional) Directory or file to search in
-  include       (optional) File pattern filter (e.g. "*.py")
-  case_sensitive (optional) Case sensitive search (default true)
-
-## Prompt syntax
-
-  Search for all uses of "database_url" in the project
-
-  Find all TODO comments in Python files
-
-  Search for the function definition of process_data
-
-## Notes
-- Returns matching lines with file paths and line numbers
-- Use include to narrow search to specific file types
-- Supports full regex syntax
+- Batched form of replace_file_content
 """,
     },
     {
-        "name": "FindFiles",
-        "category": "Search",
-        "summary": "Find files by name pattern",
+        "name": 'sed_file',
+        "category": 'Files',
+        "summary": 'Stream-edit a file with sed-style expressions',
         "detail": """\
-# FindFiles — Find files by name or path pattern
+# sed_file — Stream-edit a file with sed-style expressions
 
-Searches for files matching a name or glob pattern.
-
-## Parameters
-  pattern      (required) File name or glob pattern
-  path         (optional) Directory to search in
-
-## Prompt syntax
-
-  Find all Python files in the src directory
-
-  List all test files matching test_*.py
-
-  Find all YAML config files in the project
+Applies sed-style transformations to a file in place.
 
 ## Notes
-- Searches file names and paths, not file contents
-- Supports glob patterns: *, **, ?
-- Use GrepSearch to search inside files
+- Useful for bulk line edits where a literal find/replace is awkward
 """,
     },
     {
-        "name": "ListDirectory",
-        "category": "Search",
-        "summary": "List directory contents",
+        "name": 'notebook_edit',
+        "category": 'Files',
+        "summary": 'Edit a Jupyter notebook cell',
         "detail": """\
-# ListDirectory — List directory contents
+# notebook_edit — Edit a Jupyter notebook cell
 
-Lists files and subdirectories at a given path.
-
-## Parameters
-  dir_path     (required) Directory path to list
-
-## Prompt syntax
-
-  List the contents of the src directory
-
-  Show me what's in the project root
-
-  What files are in src/components/?
+Modifies a cell within a .ipynb notebook.
 
 ## Notes
-- Shows files and directories at the specified level
-- Does not recurse into subdirectories
-- Use FindFiles for recursive file discovery
+- Paired with notebook_execution for running cells
+""",
+    },
+    # ── Search ──────────────────────────────────────────────
+    {
+        "name": 'list_dir',
+        "category": 'Search',
+        "summary": 'List the contents of a directory',
+        "detail": """\
+# list_dir — List the contents of a directory
+
+Lists files and subdirectories at a path.
+
+## Parameters
+  DirectoryPath   (required) Absolute path to list
+
+## Notes
+- Returns a newline-separated listing as the DONE step output
+""",
+    },
+    {
+        "name": 'find_by_name',
+        "category": 'Search',
+        "summary": 'Find files by name or glob pattern',
+        "detail": """\
+# find_by_name — Find files by name or glob pattern
+
+Locates files matching a name or glob.
+
+## Parameters
+  Pattern         (required) Filename or glob to match
+  SearchDirectory Directory to search under
+
+## Notes
+- Note the parameter names differ from grep_search (Query/SearchPath)
+""",
+    },
+    {
+        "name": 'grep_search',
+        "category": 'Search',
+        "summary": 'Search file contents by regex',
+        "detail": """\
+# grep_search — Search file contents by regex
+
+Searches file contents for a pattern.
+
+## Parameters
+  Query           (required) Pattern to search for
+  SearchPath      Directory or file to search
+
+## Notes
+- The Antigravity equivalent of Claude's Grep tool
 """,
     },
     # ── Execution ──────────────────────────────────────────────
     {
-        "name": "Shell",
-        "category": "Execution",
-        "summary": "Run shell commands",
+        "name": 'run_command',
+        "category": 'Execution',
+        "summary": 'Run a shell command',
         "detail": """\
-# Shell — Execute shell commands
+# run_command — Run a shell command
 
-Runs a shell command and returns stdout/stderr.
+Executes a shell command in the workspace.
 
 ## Parameters
-  command      (required) The shell command to run
-
-## Prompt syntax
-
-  Run the test suite with pytest
-
-  Install the requests package with pip
-
-  Run git log --oneline -10 to show recent commits
-
-  Build the project and show any errors
+  CommandLine     (required) The command to run
 
 ## Notes
-- Working directory persists across calls
-- Use for system commands that need shell execution
-- Prefer dedicated tools (ReadFile, GrepSearch) when available
-""",
-    },
-    # ── Web ────────────────────────────────────────────────────
-    {
-        "name": "GoogleSearch",
-        "category": "Web",
-        "summary": "Search Google for information",
-        "detail": """\
-# GoogleSearch — Search Google
-
-Performs a Google search and returns results.
-
-## Prompt syntax
-
-  Search for the latest Python 3.13 release notes
-
-  Look up the documentation for the asyncio.TaskGroup API
-
-  Find examples of implementing OAuth2 with FastAPI
-
-## Notes
-- Powered by Google Search
-- Results include titles, URLs, and snippets
-- Follow up with FetchWebPage to read specific pages
+- Long-running commands are polled with command_status
+- Auto-approved when --dangerously-skip-permissions is set
 """,
     },
     {
-        "name": "FetchWebPage",
-        "category": "Web",
-        "summary": "Fetch and read a web page",
+        "name": 'command_status',
+        "category": 'Execution',
+        "summary": 'Check on a running command',
         "detail": """\
-# FetchWebPage — Fetch a web page
+# command_status — Check on a running command
 
-Downloads and reads the content of a specific URL.
-
-## Parameters
-  url          (required) The URL to fetch
-
-## Prompt syntax
-
-  Fetch the contents of https://docs.python.org/3/library/asyncio.html
-
-  Read this page and summarize the API:
-  https://example.com/api/docs
+Polls a command started by run_command.
 
 ## Notes
-- Returns page content as text
-- Works with documentation, API references, etc.
-- Use GoogleSearch first to find relevant URLs
-""",
-    },
-    # ── Memory & Context ──────────────────────────────────────
-    {
-        "name": "SaveMemory",
-        "category": "Memory",
-        "summary": "Save information for future sessions",
-        "detail": """\
-# SaveMemory — Save information for future sessions
-
-Stores a key-value memory that persists across conversations.
-
-## Parameters
-  key          (required) Memory key/name
-  value        (required) Information to remember
-
-## Prompt syntax
-
-  Remember that this project uses PostgreSQL 15
-
-  Save that the deploy command is ./scripts/deploy.sh
-
-## Notes
-- Memories persist across Gemini CLI sessions
-- Use for project conventions, preferences, and context
-- Memories are stored in ~/.gemini/memory/
+- Used for commands that outlive a single tool call
 """,
     },
     {
-        "name": "MemorySearch",
-        "category": "Memory",
-        "summary": "Search saved memories",
+        "name": 'send_command_input',
+        "category": 'Execution',
+        "summary": 'Send stdin to a running command',
         "detail": """\
-# MemorySearch — Search saved memories
+# send_command_input — Send stdin to a running command
 
-Retrieves previously saved memories matching a query.
-
-## Parameters
-  query        (required) Search query for memories
-
-## Prompt syntax
-
-  What do you remember about the deploy process?
-
-  Search your memory for database configuration
+Writes input to an in-flight command's stdin.
 
 ## Notes
-- Searches across all saved key-value memories
-- Returns matching memories with their keys and values
+- Pairs with run_command / command_status for interactive processes
+""",
+    },
+    # ── Web ──────────────────────────────────────────────
+    {
+        "name": 'read_url_content',
+        "category": 'Web',
+        "summary": 'Fetch and read a web page',
+        "detail": """\
+# read_url_content — Fetch and read a web page
+
+Retrieves a URL and returns its readable content.
+
+## Notes
+- The Antigravity equivalent of Claude's WebFetch
+""",
+    },
+    {
+        "name": 'search_web',
+        "category": 'Web',
+        "summary": 'Search the web',
+        "detail": """\
+# search_web — Search the web
+
+Runs a web search and returns results.
+
+## Notes
+- The Antigravity equivalent of Claude's WebSearch
+""",
+    },
+    {
+        "name": 'browser_* (browser automation)',
+        "category": 'Web',
+        "summary": 'Drive a real browser (25 tools)',
+        "detail": """\
+# browser_* (browser automation) — Drive a real browser (25 tools)
+
+A family of ~25 browser-automation tools for driving a real browser.
+
+## Members
+  Navigation      open_browser_url, browser_refresh_page, list_browser_pages
+  Reading         read_browser_page, browser_get_dom, browser_scroll_dom
+  Input           browser_click_element, browser_input, browser_press_key,
+                  browser_select_option, browser_scroll, browser_drag_pixel_to_pixel,
+                  browser_mouse_down, browser_mouse_up, browser_move_mouse,
+                  click_browser_pixel
+  Inspection      capture_browser_screenshot, capture_browser_console_logs,
+                  browser_get_network_request, browser_list_network_requests
+  Scripting       execute_browser_javascript, browser_resize_window, browser_subagent
+
+## Notes
+- No Claude Code equivalent; unique to Antigravity
+""",
+    },
+    # ── AI ──────────────────────────────────────────────
+    {
+        "name": 'invoke_subagent',
+        "category": 'AI',
+        "summary": 'Delegate work to a subagent',
+        "detail": """\
+# invoke_subagent — Delegate work to a subagent
+
+Runs a defined subagent on a scoped task.
+
+## Notes
+- Paired with define_subagent / manage_subagents
+- Roughly equivalent to Claude's Task/Agent tool
+""",
+    },
+    {
+        "name": 'define_subagent',
+        "category": 'AI',
+        "summary": 'Define a reusable subagent',
+        "detail": """\
+# define_subagent — Define a reusable subagent
+
+Creates a subagent definition that invoke_subagent can call.
+""",
+    },
+    {
+        "name": 'manage_subagents',
+        "category": 'AI',
+        "summary": 'List and manage defined subagents',
+        "detail": """\
+# manage_subagents — List and manage defined subagents
+
+Inspects, updates, or removes subagent definitions.
+""",
+    },
+    {
+        "name": 'manage_task',
+        "category": 'AI',
+        "summary": 'Track multi-step task state',
+        "detail": """\
+# manage_task — Track multi-step task state
+
+Creates and updates the agent's task list.
+
+## Parameters
+  Action          The operation to perform
+
+## Notes
+- Roughly equivalent to Claude's TodoWrite
+""",
+    },
+    {
+        "name": 'call_mcp_tool',
+        "category": 'AI',
+        "summary": 'Invoke a tool from an MCP server',
+        "detail": """\
+# call_mcp_tool — Invoke a tool from an MCP server
+
+Calls a tool exposed by a connected MCP server.
+
+## Notes
+- Servers are configured with `agy mcp add`
+- See modelcontextprotocol.io for the full spec
+""",
+    },
+    {
+        "name": 'generate_image',
+        "category": 'AI',
+        "summary": 'Generate an image from a prompt',
+        "detail": """\
+# generate_image — Generate an image from a prompt
+
+Produces an image from a text description.
+""",
+    },
+    {
+        "name": 'ask_question',
+        "category": 'AI',
+        "summary": 'Ask the user a clarifying question',
+        "detail": """\
+# ask_question — Ask the user a clarifying question
+
+Requests input from the user mid-run.
+
+## Notes
+- In --print mode there is no interactive user, so this generally resolves
+  automatically rather than blocking
+""",
+    },
+    {
+        "name": 'ask_permission',
+        "category": 'AI',
+        "summary": 'Request permission for an action',
+        "detail": """\
+# ask_permission — Request permission for an action
+
+Asks the user to approve a tool call.
+
+## Notes
+- Bypassed entirely when --dangerously-skip-permissions is set,
+  which VoiceCode always passes
+""",
+    },
+    {
+        "name": 'read_resource',
+        "category": 'AI',
+        "summary": 'Read a named resource',
+        "detail": """\
+# read_resource — Read a named resource
+
+Reads a resource exposed by the runtime or an MCP server.
+
+## Notes
+- Paired with list_resources
+""",
+    },
+    {
+        "name": 'schedule',
+        "category": 'AI',
+        "summary": 'Schedule future work',
+        "detail": """\
+# schedule — Schedule future work
+
+Registers work to run at a later time.
+""",
+    },
+    {
+        "name": 'wait',
+        "category": 'AI',
+        "summary": 'Pause before continuing',
+        "detail": """\
+# wait — Pause before continuing
+
+Waits before the next step.
+
+## Notes
+- wait_5_seconds is a fixed-duration variant
 """,
     },
 ]
@@ -686,7 +753,7 @@ Retrieves previously saved memories matching a query.
 
 _LIBRARIES: dict[str, list[dict]] = {
     "Claude": CLAUDE_TOOLS,
-    "Gemini": GEMINI_TOOLS,
+    "Antigravity": ANTIGRAVITY_TOOLS,
 }
 
 

@@ -79,8 +79,14 @@ class DrawingHelper:
         now = datetime.datetime.now().strftime("%H:%M:%S")
         sysop = f"SysOp: {os.getenv('USER', '?')}"
         voice_tag = f"Voice: {get_tts_voice_name()}"
-        model_tag = f"Model: {app.ai_provider.name}"
+        model_tag = f"Model:{app.ai_provider.name}:{app.ai_provider.model_label()}"
         right = f"{model_tag}  {voice_tag}  {sysop}  {now} "
+        # Degrade gracefully on narrow terminals rather than letting addnstr
+        # clip the clock off the right edge (the app allows down to 60 cols).
+        if len(header) + len(right) > w:
+            right = f"Model:{app.ai_provider.name}  {voice_tag}  {now} "
+        if len(header) + len(right) > w:
+            right = f"{app.ai_provider.name}  {now} "
         header_line = header + " " * max(0, w - len(header) - len(right)) + right
         try:
             app.stdscr.addnstr(0, 0, header_line, w,

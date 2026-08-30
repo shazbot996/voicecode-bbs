@@ -1,6 +1,7 @@
 """Settings overlay — modal settings panel with submenus."""
 
 import curses
+import shlex
 import shutil
 import threading
 from pathlib import Path
@@ -76,7 +77,7 @@ class SettingsOverlay:
             {
                 "key": "_action_ai_models_submenu",
                 "label": "AI Models",
-                "desc": "Select AI provider (Claude, Gemini, etc.)",
+                "desc": "Provider, model, and CLI command for Claude and Antigravity",
                 "options": None,
                 "get": lambda: app.ai_provider.name,
                 "set": None,
@@ -324,7 +325,7 @@ class SettingsOverlay:
     def build_ai_models_submenu_items(self):
         """Build the AI Models sub-menu items list."""
         app = self.app
-        from voicecode.providers import detect_providers, get_provider_by_name
+        from voicecode.providers import all_providers, detect_providers
 
         all_provider_names = [p.name for p in detect_providers()]
         items = []
@@ -338,36 +339,43 @@ class SettingsOverlay:
                 "set": self.set_ai_provider,
             })
 
-        # Custom command for Gemini
-        gemini_provider = get_provider_by_name("Gemini")
-        if gemini_provider:
+        # Per-provider model, command override, and execution preview.
+        # NOTE: every lambda captures the provider via a default argument --
+        # without that, late binding makes every row report the last provider.
+        for p in all_providers():
+            labels = [lbl for _mid, lbl in p.list_models()]
             items.append({
-                "key": "gemini_command",
-                "label": "Gemini CLI Command",
-                "desc": "Custom command/path for Gemini CLI",
+                "key": f"{p.name.lower()}_model",
+                "label": f"{p.name} Model",
+                "desc": f"Model served by the {p.name} CLI",
+                "options": labels,
+                "get": (lambda pr=p: pr.model_label()),
+                "set": (lambda v, pr=p: self.set_provider_model(pr, v)),
+            })
+            items.append({
+                "key": f"{p.name.lower()}_command",
+                "label": f"{p.name} Command",
+                "desc": "Base invocation \u2014 append extra flags here if needed",
                 "options": None,
-                "get": lambda: gemini_provider.command_override or gemini_provider.binary,
+                "get": (lambda pr=p: pr.base_command_string()),
                 "set": None,
                 "editable": True,
-                "action": self.start_editing_gemini_command,
+                "action": (lambda pr=p: self.start_editing_provider_command(pr)),
             })
-
-        # Gemini disable proxy toggle
-        if gemini_provider:
             items.append({
-                "key": "gemini_disable_proxy",
-                "label": "Gemini Disable Proxy",
-                "desc": "Strip proxy env vars for Gemini CLI",
-                "options": ["On", "Off"],
-                "get": lambda: "On" if gemini_provider.disable_proxy else "Off",
-                "set": self._set_gemini_disable_proxy,
+                "key": f"_info_{p.name.lower()}_exec",
+                "label": f"{p.name} Execution",
+                "desc": "Full command line VoiceCode will run (read-only)",
+                "options": None,
+                "get": (lambda pr=p: pr.describe_execute_cmd()),
+                "set": None,
             })
 
         # Show provider info for all known providers
         for p in detect_providers():
             if p.is_installed():
                 ver = p.get_version() or "unknown"
-                base_cmd = p._get_base_cmd()[0]
+                base_cmd = p._binary_path()
                 path = shutil.which(base_cmd) or base_cmd
                 items.append({
                     "key": f"_info_{p.name.lower()}",
@@ -405,17 +413,17 @@ class SettingsOverlay:
             app.runner.clear_session()
             self._set_status(f"AI provider switched to {name}.")
 
-    def _set_gemini_disable_proxy(self, value):
-        """Toggle Gemini proxy disable (strips proxy env vars)."""
-        from voicecode.providers import get_provider_by_name
-
-        gemini_provider = get_provider_by_name("Gemini")
-        if gemini_provider:
-            enabled = value == "On"
-            gemini_provider.disable_proxy = enabled
-            persist_setting("gemini_disable_proxy", enabled)
-            state = "enabled" if enabled else "disabled"
-            self._set_status(f"Gemini proxy disable {state}.")
+    def set_provider_model(self, provider, label):
+        """Set a provider's model from its display label."""
+        for mid, lbl in provider.list_models():
+            if lbl == label:
+                provider.set_model(mid)
+                # Persist the model ID, not the label, so a CLI release that
+                # renames a label does not orphan the setting.
+                persist_setting(f"{provider.name.lower()}_model", mid)
+                self._set_status(f"{provider.name} model \u2192 {label}")
+                return
+        self._set_status(f"Unknown model '{label}' for {provider.name}.")
 
     def open_ai_models_submenu(self):
         """Open the AI Models sub-menu."""
@@ -957,8 +965,8 @@ class SettingsOverlay:
             return
         if item["key"] == "working_dir":
             self.commit_working_dir()
-        elif item["key"] == "gemini_command":
-            self.commit_gemini_command()
+        elif item["key"].endswith("_command"):
+            self.commit_provider_command()
         elif item["key"] == "_action_cast_broadcast_test":
             self.commit_cast_broadcast_test()
 
@@ -989,6 +997,11 @@ class SettingsOverlay:
         app.working_dir = new_path
         self.update_working_dir_paths()
         persist_setting("working_dir", new_path)
+        # Push to providers so a mid-session change takes effect without a
+        # restart (Antigravity passes it as --add-dir).
+        from voicecode.providers import all_providers
+        for prov in all_providers():
+            prov.set_workspace_dir(new_path)
         app.browser.scan_history_prompts()
         app.settings_editing_text = False
         if new_path:
@@ -996,34 +1009,42 @@ class SettingsOverlay:
         else:
             self._set_status("Working directory cleared.")
 
-    def start_editing_gemini_command(self):
-        """Enter inline text editing mode for the gemini command string."""
-        from voicecode.providers import get_provider_by_name
-
+    def start_editing_provider_command(self, provider):
+        """Enter inline text editing mode for a provider's command string."""
         app = self.app
         app.settings_editing_text = True
-        g_prov = get_provider_by_name("Gemini")
-        app.settings_edit_buffer = g_prov.command_override or g_prov.binary
+        app.settings_edit_buffer = provider.base_command_string()
         app.settings_edit_cursor = len(app.settings_edit_buffer)
+        app._editing_provider = provider
         app.show_settings_overlay = True
 
-    def commit_gemini_command(self):
-        """Apply the edited gemini command string."""
-        from voicecode.providers import get_provider_by_name
-
+    def commit_provider_command(self):
+        """Apply the edited command string for the provider being edited."""
         app = self.app
-        new_cmd = app.settings_edit_buffer.strip()
-        g_prov = get_provider_by_name("Gemini")
-        if g_prov:
-            if new_cmd == g_prov.binary or not new_cmd:
-                g_prov.command_override = None
-                persist_setting("gemini_command", None)
-                self._set_status("Gemini command reset to default.")
-            else:
-                g_prov.command_override = new_cmd
-                persist_setting("gemini_command", new_cmd)
-                self._set_status(f"Gemini command \u2192 {new_cmd}")
+        provider = getattr(app, "_editing_provider", None)
         app.settings_editing_text = False
+        if not provider:
+            return
+        new_cmd = app.settings_edit_buffer.strip()
+        key = f"{provider.name.lower()}_command"
+        if not new_cmd or new_cmd == provider.binary:
+            provider.command_override = None
+            persist_setting(key, None)
+            self._set_status(f"{provider.name} command reset to default.")
+        else:
+            try:
+                shlex.split(new_cmd)   # reject unbalanced quotes early
+            except ValueError as e:
+                self._set_status(f"Invalid command string: {e}")
+                return
+            provider.command_override = new_cmd
+            persist_setting(key, new_cmd)
+            self._set_status(f"{provider.name} command \u2192 {new_cmd}")
+        app._editing_provider = None
+        # The Execution preview row is computed at menu-build time, so rebuild
+        # it or it shows a stale command until the submenu is reopened.
+        if app.ai_models_submenu_open:
+            app.ai_models_submenu_items = self.build_ai_models_submenu_items()
 
     # ─── Cursor / selection helpers ─────────────────────────────────
 

@@ -11,11 +11,11 @@
 
 > *"GREETINGS PROFESSOR FALKEN."*
 >
-> A retro BBS-style voice-driven prompt workshop for AI agents (Claude, Gemini).
+> A retro BBS-style voice-driven prompt workshop for AI agents (Claude, Antigravity).
 > Dictate prompts, refine them with AI, and execute them in a novel dictation and refinement workflow that builds its own prompt history.
 > Built for local development environments with ALSA-compatible hardware for audio input/output - not built for cloud dev environments.
 
-**Supports Claude CLI and Gemini CLI. Optional Google Cast output to Nest/Chromecast speakers.**
+**Supports Claude CLI and Antigravity CLI. Optional Google Cast output to Nest/Chromecast speakers.**
 
 ---
 
@@ -26,7 +26,7 @@
 - **Python 3.12+**
 - **Linux** with ALSA (for TTS playback via `aplay`)
 - A working **microphone**
-- [**Claude CLI**](https://docs.anthropic.com/en/docs/claude-cli) and/or [**Gemini CLI**](https://github.com/google-gemini/gemini-cli) installed and authenticated
+- [**Claude CLI**](https://docs.anthropic.com/en/docs/claude-cli) and/or **Antigravity CLI** (`agy`) installed and authenticated
 
 ### Install
 
@@ -82,7 +82,7 @@ All paths are configurable via the in-app settings menu (**O** key).
 
 ## What Is This?
 
-VoiceCode is a voice-first prompt and context refinery for working with AI agents. It's a terminal UI wrapper for Claude CLI and Gemini CLI, intended to feed prompts more smoothly from your brain, and curate a local development environment's markdown context to better ground agent execution. The difference between vibe coding and surgical gen-ai development starts with context discipline. At the same time, there is a profound need to write as much of a developer's own precise context as possible to focus the builds and control the outcomes when you finally execute a plan. You get better outcomes with specificity. In other words, typing boatloads of long form prompts by hand, and it takes a lot of time. If you are short-cutting this, then you aren't really controlling what you are making.
+VoiceCode is a voice-first prompt and context refinery for working with AI agents. It's a terminal UI wrapper for Claude CLI and Antigravity CLI, intended to feed prompts more smoothly from your brain, and curate a local development environment's markdown context to better ground agent execution. The difference between vibe coding and surgical gen-ai development starts with context discipline. At the same time, there is a profound need to write as much of a developer's own precise context as possible to focus the builds and control the outcomes when you finally execute a plan. You get better outcomes with specificity. In other words, typing boatloads of long form prompts by hand, and it takes a lot of time. If you are short-cutting this, then you aren't really controlling what you are making.
 
 So I built an voice dictation system, vibe coded with and refined until it really felt to be accelerating the process. It's an ongoing experiment in context generation for a prompt library intended to be managed within the repo it is building. Embedded in a deployment's repository, it has a built-in context publication and drift management system that I think could become a useful layer in more consistent constraint, conventions, and document drift to let your agents rely less on the built-in agent cli memory.  We still fall back on that layer, but independence of state and context control is better when you control. 
 
@@ -146,7 +146,7 @@ This model is also why VoiceCode is a retro CLI and not a web app. Everything in
 | `1`-`9`, `0` | Quick-load favorites 1-10 |
 | `[` `]` | Cycle TTS voice |
 | `Y` | Replay TTS summary |
-| `M` | Toggle AI provider (Gemini / Claude) |
+| `M` | Toggle AI provider (Antigravity / Claude) |
 | `P` | Publish document (open publish overlay) |
 | `K` | Kill running agent |
 | `W` | New session (clear conversation context) |
@@ -207,7 +207,7 @@ Press **F** to toggle favorites view or add the currently viewed historical prom
 
 ### Session Continuity
 
-Each session gets an ID passed to Claude and Gemini CLI via `--resume`, so conversation context carries across multiple execute cycles. Press **W** to start a fresh session. The context meter on the agent terminal border shows how much of Claude's context window has been used.
+Each session gets an ID passed back to the CLI on the next turn — `--resume` for Claude, `--conversation` for Antigravity — so conversation context carries across multiple execute cycles. Press **W** to start a fresh session. The context meter on the agent terminal border shows how much of the context window has been used; Claude reports its real window, while Antigravity is metered against a 1M-token assumption.
 
 ### Agent Stall Detection
 
@@ -219,8 +219,8 @@ Press **Tab** to open the shortcuts browser — a navigable overlay with four ca
 
 - **Shortcuts** — user-defined strings from `settings/shortcuts.txt`
 - **Project Folders** — top-level and nested folders from your working directory
-- **Documents** — root context files (AGENTS.md, CLAUDE.md, GEMINI.md, README.md) plus markdown files from your `docs/` folder, with color-coded type badges. Select a document and press **Enter** to open the document actions overlay (view, maintenance actions) or **Ins** to inject the path into the dictation buffer. Press **Del** to delete a file (with confirmation).
-- **Tools** — available tools for the active AI provider (Claude or Gemini)
+- **Documents** — root context files (AGENTS.md, CLAUDE.md, README.md) plus markdown files from your `docs/` folder, with color-coded type badges. Select a document and press **Enter** to open the document actions overlay (view, maintenance actions) or **Ins** to inject the path into the dictation buffer. Press **Del** to delete a file (with confirmation).
+- **Tools** — available tools for the active AI provider (Claude or Antigravity)
 
 This works **mid-recording**: the shortcut is timestamped and merged into the final transcript at the correct position using Whisper's word-level timestamps.
 
@@ -283,7 +283,7 @@ Published documents can be maintained via specialized maintenance agents accessi
 | **Reconcile** | Reconcile Agent | Checks a document for drift against the current codebase and produces a drift-report. |
 | **Refresh** | Refresh Agent | Rewrites a document in-place so every fact matches the live code. |
 | **Coverage** | Coverage Agent | Scans for gaps between a document and the codebase, producing a coverage-report. Available for ARCH, GLOSSARY, SCHEMA, CONSTRAINTS, and CONVENTIONS docs. |
-| **Drift Check** | CTX_DRIFT Agent | Finds stale sections in root context files (AGENTS.md, CLAUDE.md, GEMINI.md). |
+| **Drift Check** | CTX_DRIFT Agent | Finds stale sections in root context files (AGENTS.md, CLAUDE.md). |
 | **Update** | CTX_UPDATE Agent | Regenerates a root context file from the current codebase. |
 
 Drift-reports and coverage-reports appear as child documents nested under their parent in the browser and are view-only.
@@ -295,7 +295,7 @@ Settings are persisted to `settings/settings.json` (project-local) and can be ch
 - **Paths** — Prompt library, working directory, documents directory
 - **Voice** — Whisper model size, VAD sensitivity, silence timeout, min speech duration
 - **TTS** — Enable/disable, volume gain, voice selection, voice downloads
-- **AI** — Provider selection (Claude/Gemini), Gemini CLI command override
+- **AI** — Provider selection (Claude/Antigravity), per-provider model selection, and a per-provider CLI command override with a read-only preview of the full command line
 - **Cast** — Enable, volume, device selection, mute local TTS
 - **Test Tools** — Echo test, TTS test sound, Cast broadcast test
 
@@ -312,15 +312,19 @@ Settings are persisted to `settings/settings.json` (project-local) and can be ch
 | Audio Capture | sounddevice + NumPy |
 | Cast Output | [PyChromecast](https://github.com/home-assistant-libs/pychromecast) (optional) |
 | Terminal UI | Python curses |
-| AI Backend | Claude CLI, Gemini CLI |
+| AI Backend | Claude CLI, Antigravity CLI |
 
 ---
 
 ## Agent Support
 
 **Supported agents:**
-- **Claude CLI** (`claude` command) — runs with --dangerously-skip-permissions since we don't run in interactive mode - session continuity via `--resume`
-- **Gemini CLI** (`gemini` command) — runs with `--yolo` flag since we don't run in interactive mode
+- **Claude CLI** (`claude` command) — runs with `--dangerously-skip-permissions` since we don't run in interactive mode; session continuity via `--resume`
+- **Antigravity CLI** (`agy` command) — runs with `--dangerously-skip-permissions --add-dir <working dir> --mode accept-edits --output-format stream-json --print=<prompt>`; session continuity via `--conversation`
+
+**Model selection.** Both providers expose an explicit model picker in Settings → AI Models. Claude uses family aliases (`opus`, `sonnet`, `haiku`, `fable`); Antigravity's list is read live from `agy models`. The header ribbon shows the active pair as `Model:<Provider>:<Model>`, e.g. `Model:Claude:Opus 5`.
+
+**Command override.** Each provider has an editable Command field holding its base invocation, so extra flags can be appended (e.g. `claude --effort high`). An adjacent read-only Execution row previews the full command line VoiceCode will run. Clearing the field restores the default.
 
 ---
 

@@ -84,7 +84,7 @@ class InputHandler:
         self._close_doc_reader()
 
         label = f"[MAINTAIN {action_name} → {doc_path}]"
-        execute_agent_prompt(app, prompt_text, label)
+        execute_agent_prompt(app, prompt_text, label, agent.run_mode)
 
     def read_paste_content(self) -> str:
         """Read characters until the bracketed-paste end sequence ESC[201~."""
@@ -1407,17 +1407,17 @@ class InputHandler:
             app.set_status("Tip cycled.")
 
         elif ch == ord("m") or ch == ord("M"):
-            # Toggle AI provider between Gemini and Claude
-            gemini = get_provider_by_name("Gemini")
+            # Toggle AI provider between Antigravity and Claude
+            antigravity = get_provider_by_name("Antigravity")
             claude = get_provider_by_name("Claude")
-            if (gemini and gemini.is_installed()
+            if (antigravity and antigravity.is_installed()
                     and claude and claude.is_installed()):
                 if app.ai_provider.name == "Claude":
-                    app.settings_overlay.set_ai_provider("Gemini")
+                    app.settings_overlay.set_ai_provider("Antigravity")
                 else:
                     app.settings_overlay.set_ai_provider("Claude")
             else:
-                app.set_status("Both Gemini and Claude must be installed to toggle.")
+                app.set_status("Both Antigravity and Claude must be installed to toggle.")
 
         elif ch == 27:
             # ESC key -- could be menu, arrow key, or bracketed paste start
