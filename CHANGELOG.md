@@ -5,6 +5,13 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.2.1] - 2026-08-30
+
+### Fixed
+- **Shell output no longer corrupts the curses UI** — `agy` runs shell commands on a PTY, so `run_command` output arrives CRLF-terminated and tab-indented. Curses executed those bytes as cursor movement (`\r` jumps to column 0 of the physical row, `\t` overshoots the pane border), painting tool output over the left-hand panes. All agent-pane text now passes through `sanitize_text()`, which strips ANSI CSI/OSC sequences and carriage returns, expands tabs, and drops remaining control characters
+- **TTS summary extraction is no longer confused by quoted markers** — `extract_tts_summary()` now returns the *last* non-empty `[TTS_SUMMARY]` block rather than the first, so an agent echoing the instruction back (or quoting this repo's own source) can't win over the real summary
+- Summary extraction falls back to the accumulated stream deltas when the provider's result event carries an abridged response
+
 ## [4.2.0] - 2026-08-30
 
 ### Added

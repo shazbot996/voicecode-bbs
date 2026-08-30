@@ -69,7 +69,13 @@ class CLIProvider:
 
         Subclasses can override to modify env.
         """
-        return os.environ.copy()
+        env = os.environ.copy()
+        # Ensure commands are non-interactive to prevent terminal corruption
+        env["TERM"] = "dumb"
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env["GIT_EDITOR"] = "true"
+        env["EDITOR"] = "true"
+        return env
 
     # ─── Workspace ──────────────────────────────────────────────────
 

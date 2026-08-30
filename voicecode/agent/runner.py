@@ -1,6 +1,7 @@
 """Agent execution — stream processing, event parsing, stall detection."""
 
 import json
+import re
 import time
 import select
 import subprocess
@@ -13,6 +14,49 @@ from voicecode.tts.engine import extract_tts_summary, speak_text, stop_speaking
 from voicecode.tts.cast import cast_tts_to_devices
 
 
+# Everything the agent pane displays passes through sanitize_text().  Tool
+# output reaches us verbatim -- `agy` runs shell commands on a PTY, so
+# run_command results arrive CRLF-terminated and tab-indented (git status,
+# git diff, ls -l ...) -- and curses interprets those bytes as cursor
+# movement rather than drawing them:
+#   \r  returns the cursor to column 0 of the physical screen row, so the
+#       next characters paint over the left-hand panes ("output rendered
+#       outside the agent terminal").
+#   \t  advances to the next 8-column tab stop, overshooting the pane's
+#       right border and wrapping onto the following screen row.
+#   ESC sequences and other control codes render as multi-column caret
+#       escapes (^[), which also overflow the pane's character-based clip.
+# The pane wraps by character count, so anything that occupies more columns
+# than it has characters breaks the layout.
+
+# ANSI CSI/Fe escape sequences (colors, cursor moves, mode switches).
+ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+# OSC sequences (e.g. terminal title: ESC ] 0 ; text BEL/ST), which the CSI
+# pattern above only clips the two-byte introducer of.
+ANSI_OSC = re.compile(r'\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)?')
+
+# Tab stops are terminal state we cannot track from a streamed chunk, so
+# tabs become a fixed indent instead.
+TAB_WIDTH = 4
+
+
+def sanitize_text(text: str) -> str:
+    """Strip terminal control codes so agent output cannot corrupt the curses UI.
+
+    Removes ANSI escape sequences and carriage returns, expands tabs to
+    spaces, and drops any remaining non-printable characters.  Newlines are
+    the only control character preserved -- the pane treats them as line
+    breaks rather than passing them to curses.
+    """
+    if not text:
+        return text
+    text = ANSI_OSC.sub('', text)
+    text = ANSI_ESCAPE.sub('', text)
+    text = text.replace('\r', '')
+    text = text.replace('\t', ' ' * TAB_WIDTH)
+    return "".join(ch for ch in text if ch.isprintable() or ch == '\n')
+
+
 class RunnerHelper:
     def __init__(self, app):
         self.app = app
@@ -23,6 +67,7 @@ class RunnerHelper:
         Detects [TTS_SUMMARY] / [/TTS_SUMMARY] markers and switches
         typewriter color to white for the TTS summary block.
         """
+        text = sanitize_text(text)
         app = self.app
         app._tts_detect_buf = getattr(app, '_tts_detect_buf', '')
         app._tts_in_summary = getattr(app, '_tts_in_summary', False)
@@ -281,9 +326,13 @@ class RunnerHelper:
             app.ui_queue.put(("clear_dictation_buffer",))
             app.ui_queue.put(("status", "Agent complete. Ready for next prompt.", CP_STATUS))
 
-            # Speak the summary via TTS
-            full_response = result_text or "".join(response_text_parts)
-            summary = extract_tts_summary(full_response)
+            # Speak the summary via TTS.  Check the result event first, then
+            # the accumulated stream deltas: the two are normally identical,
+            # but a provider whose result event carries an abridged response
+            # would otherwise lose a summary that did stream through.
+            streamed_response = "".join(response_text_parts)
+            summary = (extract_tts_summary(result_text)
+                       or extract_tts_summary(streamed_response))
             if summary:
                 app.last_tts_summary = summary
                 app.execution.save_response_to_history(summary)

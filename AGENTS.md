@@ -98,6 +98,7 @@ Three `agy` behaviors are load-bearing and easy to break:
 1. `--print` takes an *optional* Go-style value, so a bare `--print` swallows the next token. The prompt must be a single fused `--print=<prompt>` argv element, placed last.
 2. Without `--add-dir`, `agy` uses its own scratch directory as the workspace and silently edits the wrong files while reporting success.
 3. Tool steps are emitted twice (`ACTIVE` then `DONE`); only `ACTIVE` is rendered, or every tool line prints twice.
+4. `run_command` output comes back off a PTY, so it is CRLF-terminated and tab-indented. Curses treats `\r` as "jump to column 0 of the physical row" and `\t` as "advance to the next 8-column stop", so raw tool output paints over the left-hand panes and past the right border. Everything bound for the agent pane must go through `sanitize_text()` in `agent/runner.py` — `emit_typewriter()` is the single choke point. Setting `TERM=dumb` does not prevent this; the PTY line endings arrive either way.
 
 **Execution modes.** `PublishAgent` and `MaintenanceAgent` carry a `run_mode` (default `MODE_BUILD`) that flows through `execute_agent_prompt()` → `app.agent_run_mode` → `build_execute_cmd()`. Plan mode is **read-only**: it writes nothing to the workspace and still reports success, so an agent whose prompt template ends by saving a file must stay on `MODE_BUILD`. Converting an agent to plan mode means flipping `run_mode` *and* rewriting its prompt to render output into the response.
 

@@ -20,10 +20,21 @@ _tts_process = None  # Track running TTS playback for cancellation
 
 
 def extract_tts_summary(text: str) -> str:
-    """Extract the [TTS_SUMMARY] block from agent response text."""
-    match = re.search(r'\[TTS_SUMMARY\]\s*(.*?)\s*\[/TTS_SUMMARY\]', text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
+    """Extract the [TTS_SUMMARY] block from agent response text.
+
+    The summary is requested at the very end of the response, so the LAST
+    complete block wins.  Earlier blocks are usually the agent quoting the
+    instruction back, or -- when the task is about this codebase -- the
+    markers appearing in quoted source.  Empty blocks are skipped for the
+    same reason.
+    """
+    if not text:
+        return ""
+    matches = re.findall(r'\[TTS_SUMMARY\]\s*(.*?)\s*\[/TTS_SUMMARY\]', text,
+                         re.DOTALL)
+    for candidate in reversed(matches):
+        if candidate.strip():
+            return candidate.strip()
     return ""
 
 
