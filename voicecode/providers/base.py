@@ -59,7 +59,8 @@ class CLIProvider:
     def get_version(self) -> str | None:
         try:
             result = subprocess.run([self._binary_path(), "--version"],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, text=True, timeout=10,
+                                    stdin=subprocess.DEVNULL)
             return result.stdout.strip() if result.returncode == 0 else None
         except Exception:
             return None

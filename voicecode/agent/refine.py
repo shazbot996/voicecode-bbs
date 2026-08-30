@@ -40,8 +40,12 @@ def refine_with_llm(fragments: list[str], current_prompt: str | None,
 
     try:
         cmd = provider.build_refine_cmd(meta_prompt)
+        # stdin=DEVNULL: capture_output only redirects stdout/stderr, so
+        # without this the CLI inherits the curses app's TTY and any prompt
+        # (auth, trust-folder) steals keystrokes from the UI until timeout.
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120, env=provider.get_env())
+            cmd, capture_output=True, text=True, timeout=120,
+            stdin=subprocess.DEVNULL, env=provider.get_env())
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
         else:

@@ -49,7 +49,8 @@ class AntigravityProvider(CLIProvider):
         models: list[tuple[str | None, str]] | None = [(None, "Default")]
         try:
             r = subprocess.run([self._binary_path(), "models"],
-                               capture_output=True, text=True, timeout=10)
+                               capture_output=True, text=True, timeout=10,
+                               stdin=subprocess.DEVNULL)
             for line in r.stdout.splitlines():
                 # Skips the "Fetching available models..." preamble line.
                 if "\t" not in line:
