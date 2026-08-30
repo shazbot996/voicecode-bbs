@@ -43,7 +43,7 @@ class RecordingHelper:
 
         try:
             app._audio_stream = sd.InputStream(
-                samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
+                samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="int16",
                 blocksize=BLOCK_SIZE, callback=self.audio_callback,
                 device=device_idx)
             app._audio_stream.start()
@@ -65,7 +65,8 @@ class RecordingHelper:
                                f"Audio: {status}",
                                CP_RECORDING))
         with app.audio_lock:
-            app.audio_frames.append(indata[:, 0].copy())
+            # ALSA hw devices deliver native int16 PCM; normalize to float32 [-1.0, 1.0] for VAD/Whisper
+            app.audio_frames.append((indata[:, 0].astype(np.float32) / 32768.0).copy())
 
     def live_transcribe_loop(self):
         """Periodically transcribe accumulated audio while recording."""
@@ -209,12 +210,12 @@ class RecordingHelper:
         device_idx = resolve_input_device(app.input_device_name)
 
         def callback(indata, frame_count, time_info, status):
-            frames.append(indata.copy())
+            frames.append((indata[:, 0].astype(np.float32) / 32768.0).copy())
 
         # Record 1 second
         try:
             stream = sd.InputStream(
-                samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="float32",
+                samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="int16",
                 blocksize=BLOCK_SIZE, callback=callback, device=device_idx)
             stream.start()
         except (sd.PortAudioError, OSError) as e:
@@ -243,15 +244,12 @@ class RecordingHelper:
                            f"Echo test: playing back (peak={peak:.3f}, rms={rms:.4f})...",
                            CP_STATUS))
 
-        # Play it back at the default output device
+        # Play it back at the default output device if available
         try:
             sd.play(audio, samplerate=SAMPLE_RATE)
             sd.wait()
-        except (sd.PortAudioError, OSError) as e:
-            app.ui_queue.put(("status",
-                               f"Echo test: playback failed — {e}",
-                               CP_RECORDING))
-            return
+        except (sd.PortAudioError, OSError):
+            pass  # Non-fatal if output device is not present
 
         app.ui_queue.put(("status",
                            f"Echo test done. Peak={peak:.3f} RMS={rms:.4f} "

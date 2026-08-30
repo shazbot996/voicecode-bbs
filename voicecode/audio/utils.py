@@ -51,6 +51,13 @@ def restore_stderr():
         saved_stderr_fd = None
 
 
+# Virtual/alias PCM names exposed by ALSA that duplicate system routing
+_ALSA_IGNORED_ALIASES = {
+    "default", "sysdefault", "pipewire", "pulse",
+    "dmix", "dsnoop", "samplerate", "speex", "lavrate",
+}
+
+
 def list_input_devices() -> list[tuple[int, str]]:
     """Return [(index, name), ...] for all input-capable devices."""
     try:
@@ -62,7 +69,10 @@ def list_input_devices() -> list[tuple[int, str]]:
     for i, d in enumerate(devices):
         if d.get("max_input_channels", 0) < 1:
             continue
-        name = d.get("name", f"Device {i}")
+        name = d.get("name", f"Device {i}").strip()
+        # Filter out redundant ALSA pseudo-device aliases
+        if name.lower() in _ALSA_IGNORED_ALIASES:
+            continue
         # PortAudio sometimes exposes the same device under multiple host APIs;
         # de-dupe by name to keep the picker readable.
         if name in seen_names:

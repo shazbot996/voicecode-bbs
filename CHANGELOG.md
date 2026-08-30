@@ -5,6 +5,13 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.2.2] - 2026-08-30
+
+### Fixed
+- **ALSA hardware microphone capture** — Request native `int16` PCM audio from ALSA hardware devices and normalize to `float32` in Python, fixing silent zero-buffer recording on devices that fail to convert float32 directly
+- **Microphone picker de-duplication** — Filter out virtual ALSA pseudo-device aliases (`default`, `sysdefault`, `pipewire`, `pulse`, etc.) to keep the device selection list clean
+- **Echo test error handling** — Gracefully handle missing or inaccessible audio output devices during mic echo tests
+
 ## [4.2.1] - 2026-08-30
 
 ### Fixed
