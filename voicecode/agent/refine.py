@@ -45,7 +45,8 @@ def refine_with_llm(fragments: list[str], current_prompt: str | None,
         # (auth, trust-folder) steals keystrokes from the UI until timeout.
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=120,
-            stdin=subprocess.DEVNULL, env=provider.get_env())
+            stdin=subprocess.DEVNULL, env=provider.get_env(),
+            cwd=provider.resolved_workspace_dir())
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
         else:

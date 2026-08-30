@@ -86,7 +86,7 @@ Both providers are driven through `CLIProvider` (`voicecode/providers/base.py`) 
 | Streaming | `--print --verbose --output-format stream-json` | `--output-format stream-json` + fused `--print=<prompt>` |
 | Skip permissions | `--dangerously-skip-permissions` | `--dangerously-skip-permissions` |
 | Session resume | `--resume <id>` | `--conversation <id>` |
-| Workspace | inherits cwd | `--add-dir <dir>` (**required**) |
+| Workspace | subprocess `cwd` (**only** grounding it gets) | `--add-dir <dir>` (**required**) + `cwd` |
 | Model | `--model <alias>` | `--model <id>` |
 | Plan mode | `--permission-mode plan` (**replaces** skip-permissions) | `--mode plan` (combines with skip-permissions) |
 | Build mode | `--dangerously-skip-permissions` | `--mode accept-edits` |

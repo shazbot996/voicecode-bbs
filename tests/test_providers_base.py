@@ -106,3 +106,47 @@ class TestModelLabel:
         p = ClaudeProvider()
         p.set_model("some-future-model")
         assert p.model_label() == "some-future-model"
+
+
+class TestResolvedWorkspaceDir:
+    """The subprocess cwd -- the only thing grounding Claude in a project,
+    and what each CLI resolves its permission settings relative to."""
+
+    def test_unset_returns_none(self):
+        p = ClaudeProvider()
+        assert p.resolved_workspace_dir() is None
+
+    def test_empty_string_returns_none(self):
+        p = ClaudeProvider()
+        p.set_workspace_dir("")
+        assert p.resolved_workspace_dir() is None
+
+    def test_existing_dir(self, tmp_path):
+        p = ClaudeProvider()
+        p.set_workspace_dir(str(tmp_path))
+        assert p.resolved_workspace_dir() == str(tmp_path)
+
+    def test_missing_dir_returns_none(self, tmp_path):
+        # Falls back to inheriting our cwd rather than failing to spawn.
+        p = ClaudeProvider()
+        p.set_workspace_dir(str(tmp_path / "does-not-exist"))
+        assert p.resolved_workspace_dir() is None
+
+    def test_file_is_not_a_workspace(self, tmp_path):
+        f = tmp_path / "notadir.txt"
+        f.write_text("x")
+        p = ClaudeProvider()
+        p.set_workspace_dir(str(f))
+        assert p.resolved_workspace_dir() is None
+
+    def test_tilde_expanded(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        (tmp_path / "proj").mkdir()
+        p = ClaudeProvider()
+        p.set_workspace_dir("~/proj")
+        assert p.resolved_workspace_dir() == str(tmp_path / "proj")
+
+    def test_applies_to_antigravity_too(self, tmp_path):
+        p = AntigravityProvider()
+        p.set_workspace_dir(str(tmp_path))
+        assert p.resolved_workspace_dir() == str(tmp_path)

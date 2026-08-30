@@ -222,6 +222,7 @@ class RunnerHelper:
                 text=True,
                 bufsize=1,
                 env=provider.get_env(),
+                cwd=provider.resolved_workspace_dir(),
                 start_new_session=True,
             )
 

@@ -4,6 +4,7 @@ import os
 import shlex
 import shutil
 import subprocess
+from pathlib import Path
 
 # Shared across providers (one constant for both -- see the migration plan).
 # Claude reports a real contextWindow in modelUsage and uses this only as a
@@ -83,6 +84,22 @@ class CLIProvider:
     def set_workspace_dir(self, path: str | None):
         """Set the directory the agent should be grounded in."""
         self.workspace_dir = path
+
+    def resolved_workspace_dir(self) -> str | None:
+        """The workspace as an existing absolute path, or None.
+
+        Passed as the subprocess `cwd`. Load-bearing for two reasons: it is
+        the only thing that grounds Claude in the configured project (unlike
+        `agy` it gets no --add-dir), and each CLI resolves its own settings
+        files -- including the user's permission deny rules -- relative to
+        the working directory, so a stale cwd silently applies the wrong
+        project's rules. Returns None for an unset or missing directory so
+        the subprocess inherits ours instead of failing to spawn.
+        """
+        if not self.workspace_dir:
+            return None
+        path = Path(self.workspace_dir).expanduser()
+        return str(path) if path.is_dir() else None
 
     # ─── Model selection ────────────────────────────────────────────
 
