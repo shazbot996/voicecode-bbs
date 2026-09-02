@@ -5,6 +5,19 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.2.3] - 2026-09-02
+
+### Added
+- **Resilient TTS summary extraction and fallback** — Added `extract_fallback_summary()` to recover readable spoken summaries when `[TTS_SUMMARY]` tags are unclosed or missing, and `clean_spoken_text()` to strip markdown syntax and control sequences for natural voice playback
+- **Natural spoken error readouts** — Added `format_error_readout()` providing clear spoken explanations when sessions end early due to container timeouts, API rate limits, missing CLI tools, connection errors, or process aborts
+- **Provider error event parsing** — Added `parse_error_event()` across `CLIProvider`, `ClaudeProvider`, and `AntigravityProvider` to extract structured error details from stream events, step failures, and result payloads
+
+### Changed
+- **Antigravity session timeout tolerance** — Automatically append `--print-timeout 1h` to Antigravity CLI invocations unless overridden, preventing premature 5-minute print-mode timeouts on long-running tasks
+- **Session recovery on failure** — Automatically clear invalid or expired conversation IDs when resumed sessions fail
+- **Dictation buffer safety** — Preserve dictation buffer contents when an agent run encounters an error or ends prematurely
+- **Agent terminal exit code reporting** — Display process exit code in agent terminal footer on non-zero exit and highlight TTS summaries in white text
+
 ## [4.2.2] - 2026-08-30
 
 ### Fixed
