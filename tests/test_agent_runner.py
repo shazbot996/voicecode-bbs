@@ -76,3 +76,93 @@ def test_sanitize_text_leaves_no_control_chars_at_all():
     raw = "\x1b[2J\x1b[H\rcol0\ttab\x00nul\x0bvt\n"
     clean = sanitize_text(raw)
     assert all(ch == "\n" or ch.isprintable() for ch in clean)
+
+
+def test_speak_summary_saves_and_speaks():
+    from unittest.mock import MagicMock, patch
+    from voicecode.agent.runner import RunnerHelper
+
+    mock_app = MagicMock()
+    mock_app.cast_enabled = False
+    runner = RunnerHelper(mock_app)
+
+    with patch("voicecode.agent.runner.speak_text") as mock_speak, \
+         patch("voicecode.agent.runner.stop_speaking") as mock_stop:
+        runner.speak_summary("The test summary", is_error=False)
+
+        assert mock_app.last_tts_summary == "The test summary"
+        mock_app.execution.save_response_to_history.assert_called_once_with("The test summary", is_error=False)
+        mock_stop.assert_called_once()
+        mock_speak.assert_called_once()
+
+
+def test_emit_typewriter_sets_tts_summary_emitted_and_color():
+    import queue
+    from unittest.mock import MagicMock
+    from voicecode.agent.runner import RunnerHelper
+    from voicecode.ui.colors import CP_TTS
+
+    mock_app = MagicMock()
+    mock_app.ui_queue = queue.Queue()
+    mock_app._tts_detect_buf = ""
+    mock_app._tts_in_summary = False
+    mock_app._tts_summary_emitted = False
+
+    runner = RunnerHelper(mock_app)
+    runner.emit_typewriter("Hello [TTS_SUMMARY]this is summary[/TTS_SUMMARY] goodbye")
+
+    assert mock_app._tts_summary_emitted is True
+
+    items = []
+    while not mock_app.ui_queue.empty():
+        items.append(mock_app.ui_queue.get())
+
+    # Check color switched to CP_TTS and back to None
+    assert ("typewriter_color", CP_TTS) in items
+    assert ("typewriter_color", None) in items
+
+
+def test_emit_readback_summary_emits_white_text_when_not_already_streamed():
+    import queue
+    from unittest.mock import MagicMock
+    from voicecode.agent.runner import RunnerHelper
+    from voicecode.ui.colors import CP_TTS
+
+    mock_app = MagicMock()
+    mock_app.ui_queue = queue.Queue()
+    mock_app._tts_detect_buf = ""
+    mock_app._tts_in_summary = False
+    mock_app._tts_summary_emitted = False
+
+    runner = RunnerHelper(mock_app)
+    runner.emit_readback_summary("Final readback summary text.")
+
+    assert mock_app._tts_summary_emitted is True
+
+    items = []
+    while not mock_app.ui_queue.empty():
+        items.append(mock_app.ui_queue.get())
+
+    # Should set color to CP_TTS, stream characters, and reset to None
+    assert ("typewriter_color", CP_TTS) in items
+    chars = "".join([val for kind, val in items if kind == "typewriter_char"])
+    assert "Final readback summary text." in chars
+    assert ("typewriter_color", None) in items
+
+
+def test_emit_readback_summary_skips_when_already_streamed():
+    import queue
+    from unittest.mock import MagicMock
+    from voicecode.agent.runner import RunnerHelper
+
+    mock_app = MagicMock()
+    mock_app.ui_queue = queue.Queue()
+    mock_app._tts_detect_buf = ""
+    mock_app._tts_in_summary = False
+    mock_app._tts_summary_emitted = True
+
+    runner = RunnerHelper(mock_app)
+    runner.emit_readback_summary("Already emitted summary.")
+
+    assert mock_app.ui_queue.empty()
+

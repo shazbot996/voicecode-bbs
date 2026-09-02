@@ -72,6 +72,8 @@ class AntigravityProvider(CLIProvider):
         # the workspace with both flags present), so it is kept in both modes
         # to keep read tools auto-approved.
         flags = ["--dangerously-skip-permissions"]
+        if not any(arg.startswith("--print-timeout") for arg in self._get_base_cmd()):
+            flags += ["--print-timeout", "1h"]
         if self.workspace_dir:
             # Without --add-dir, `agy` uses its own scratch directory as the
             # workspace and silently edits the wrong files while reporting
@@ -115,8 +117,12 @@ class AntigravityProvider(CLIProvider):
 
     def parse_init_event(self, event: dict) -> str | None:
         if event.get("event") == "init":
-            # conversation_id sits at the TOP level, not inside "init".
-            sid = event.get("conversation_id")
+            # conversation_id sits at the TOP level, or inside "init".
+            sid = event.get("conversation_id") or (event.get("init") or {}).get("conversation_id")
+            return sid if isinstance(sid, str) and sid else None
+        if event.get("event") == "result":
+            res = event.get("result") or {}
+            sid = res.get("conversation_id") or event.get("conversation_id")
             return sid if isinstance(sid, str) and sid else None
         return None
 
@@ -147,6 +153,9 @@ class AntigravityProvider(CLIProvider):
         step = self._step(event)
         if not step or step.get("step_type") != "tool":
             return None
+        if step.get("state") == "ERROR":
+            err = step.get("error") or (step.get("tool_info") or {}).get("error") or "Tool failed"
+            return f"ERROR: {err}"
         if step.get("state") != "DONE":
             return None
         # `output` is absent/None for some tools (e.g. write_to_file).
@@ -183,5 +192,40 @@ class AntigravityProvider(CLIProvider):
             # RUN completed, not whether the task succeeded (a task the agent
             # explicitly failed still reported "SUCCESS"), so it carries no
             # error signal worth surfacing.
-            return (event.get("result") or {}).get("response", "")
+            res = event.get("result") or {}
+            resp = res.get("response")
+            if resp is not None:
+                return resp
+            return res.get("error") or res.get("message") or ""
+        return None
+
+    def parse_error_event(self, event: dict) -> str | None:
+        """Extract an error message from an Antigravity event, or None."""
+        # Top-level error event
+        if event.get("event") == "error" or event.get("type") == "error":
+            err = event.get("error")
+            if isinstance(err, dict):
+                msg = err.get("message") or err.get("error") or str(err)
+                return msg if msg else None
+            elif isinstance(err, str) and err:
+                return err
+            msg = event.get("message")
+            if isinstance(msg, str) and msg:
+                return msg
+
+        # step_update with error state
+        step = self._step(event)
+        if step:
+            if step.get("state") == "ERROR":
+                err = step.get("error") or step.get("error_message") or (step.get("tool_info") or {}).get("error")
+                if err:
+                    return str(err)
+
+        # result event with ERROR status
+        if event.get("event") == "result":
+            res = event.get("result") or {}
+            if res.get("status") == "ERROR":
+                err = res.get("error") or res.get("message") or res.get("response")
+                if err:
+                    return str(err)
         return None

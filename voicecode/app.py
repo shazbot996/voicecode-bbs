@@ -369,6 +369,9 @@ class BBSApp:
         self.agent_first_output = False      # tracks if agent has produced any output
         self.agent_last_activity = 0.0       # time.time() of last output from agent
         self.agent_welcome_shown = False     # True after initial welcome art displayed
+        self._tts_detect_buf = ""
+        self._tts_in_summary = False
+        self._tts_summary_emitted = False
 
         # Pending source pane tracking (yellow border while agent processes)
         self._agent_source_pane = None       # which pane sent the prompt

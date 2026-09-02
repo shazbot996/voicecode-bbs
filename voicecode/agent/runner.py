@@ -10,7 +10,8 @@ import threading
 from voicecode.constants import AgentState, TTS_PROMPT_SUFFIX
 from voicecode.providers.base import MODE_PLAN
 from voicecode.ui.colors import *
-from voicecode.tts.engine import extract_tts_summary, speak_text, stop_speaking
+from voicecode.tts.engine import (extract_tts_summary, extract_fallback_summary,
+                               format_error_readout, speak_text, stop_speaking)
 from voicecode.tts.cast import cast_tts_to_devices
 
 
@@ -98,6 +99,7 @@ class RunnerHelper:
                     # Skip the tag itself, emit color change
                     app._tts_detect_buf = app._tts_detect_buf[idx + 13:]
                     app._tts_in_summary = True
+                    app._tts_summary_emitted = True
                     app.ui_queue.put(("typewriter_color", CP_TTS))
             else:
                 idx = app._tts_detect_buf.find('[/TTS_SUMMARY]')
@@ -128,6 +130,23 @@ class RunnerHelper:
             for ch in buf:
                 app.ui_queue.put(("typewriter_char", ch))
             app._tts_detect_buf = ''
+        if getattr(app, '_tts_in_summary', False):
+            app._tts_in_summary = False
+            app.ui_queue.put(("typewriter_color", None))
+
+    def emit_readback_summary(self, summary: str):
+        """Emit final summary readback in white text if not already streamed."""
+        app = self.app
+        if not summary:
+            return
+        if not getattr(app, '_tts_summary_emitted', False):
+            self.flush_tts_detect_buf()
+            app.ui_queue.put(("typewriter_color", CP_TTS))
+            text = f"\n\n{summary}\n"
+            for ch in sanitize_text(text):
+                app.ui_queue.put(("typewriter_char", ch))
+            app.ui_queue.put(("typewriter_color", None))
+            app._tts_summary_emitted = True
 
     def format_tool_input(self, name, inp):
         """Format a tool_use input dict into a concise display string.
@@ -210,6 +229,12 @@ class RunnerHelper:
         # Add the "incoming transmission" header via typewriter
         self.emit_typewriter("═══ INCOMING TRANSMISSION ═══\n\n")
 
+        last_error_message = ""
+        captured_stderr_lines = []
+        result_text = ""
+        response_text_parts = []
+        exit_code = 0
+
         try:
             prompt_with_tts = app.xfer_prompt_text + TTS_PROMPT_SUFFIX
             cmd = provider.build_execute_cmd(prompt_with_tts, app.session_id,
@@ -226,8 +251,6 @@ class RunnerHelper:
                 start_new_session=True,
             )
 
-            result_text = ""
-            response_text_parts = []
             stdout_fd = app.agent_process.stdout.fileno()
             app.agent_last_activity = time.time()
             stall_warned = False
@@ -268,9 +291,20 @@ class RunnerHelper:
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError:
-                    # Non-JSON output (e.g. stderr) — surface it as-is.
+                    # Non-JSON output (e.g. stderr) — surface it as-is and capture potential error
+                    captured_stderr_lines.append(line)
+                    if any(err_word in line.lower() for err_word in (
+                        "error", "fatal", "exception", "timeout", "timed out", "fail"
+                    )):
+                        last_error_message = line
                     self.emit_typewriter(line + "\n")
                     continue
+
+                # Parse error events from provider
+                err = provider.parse_error_event(event)
+                if err:
+                    last_error_message = err
+                    self.emit_typewriter(f"\n⚠ ERROR: {err}\n")
 
                 # Capture session_id from init event
                 sid = provider.parse_init_event(event)
@@ -303,6 +337,11 @@ class RunnerHelper:
                 result_check = provider.is_result_event(event)
                 if result_check is not None:
                     result_text = result_check
+                    # If this is a successful result event, clear any intermediate error message
+                    if (event.get("result") or {}).get("status") == "SUCCESS" or (
+                        event.get("type") == "result" and not event.get("is_error")
+                    ):
+                        last_error_message = ""
                     # Extract context usage
                     ctx = provider.parse_context_usage(event)
                     if ctx:
@@ -314,58 +353,108 @@ class RunnerHelper:
 
             if app.agent_process:
                 app.agent_process.wait()
+                exit_code = app.agent_process.returncode or 0
 
             # Flush any remaining TTS detection buffer
             self.flush_tts_detect_buf()
 
+            streamed_response = "".join(response_text_parts)
+            # If nothing was streamed but result_text contains a response,
+            # emit it now so the agent pane has the complete output.
+            if not streamed_response.strip() and result_text.strip():
+                self.emit_typewriter(result_text)
+                self.flush_tts_detect_buf()
+                streamed_response = result_text
+
+            # Determine spoken summary and status
+            summary = (extract_tts_summary(result_text)
+                       or extract_tts_summary(streamed_response))
+            is_error = False
+
+            # Check if session failed and should be cleared
+            err_lower = (last_error_message or "").lower()
+            if any(k in err_lower for k in [
+                "conversation not found", "session not found", "invalid conversation",
+                "conversation expired", "session expired", "cannot resume", "unknown conversation",
+            ]):
+                app.session_id = None
+
+            if not summary:
+                # If non-zero exit code or terminal error without response
+                if exit_code != 0 or (last_error_message and not streamed_response.strip()):
+                    is_error = True
+                    error_detail = last_error_message or " ".join(captured_stderr_lines[-3:])
+                    summary = format_error_readout(error_detail, provider.name, exit_code)
+                    app.ui_queue.put(("status", f"Agent ended prematurely: {summary[:50]}...", CP_STATUS))
+                else:
+                    # Exit code 0, try fallback summary from response text
+                    fallback = extract_fallback_summary(result_text or streamed_response)
+                    if fallback:
+                        summary = fallback
+                        app.ui_queue.put(("status", "Agent complete. Ready for next prompt.", CP_STATUS))
+                    else:
+                        is_error = True
+                        summary = f"The {provider.name} agent finished execution but returned no response."
+                        app.ui_queue.put(("status", "Agent complete (no response).", CP_STATUS))
+            else:
+                if exit_code != 0 and not streamed_response.strip():
+                    is_error = True
+                    error_detail = last_error_message or " ".join(captured_stderr_lines[-3:])
+                    summary = format_error_readout(error_detail, provider.name, exit_code)
+                    app.ui_queue.put(("status", f"Agent ended prematurely: {summary[:50]}...", CP_STATUS))
+                else:
+                    app.ui_queue.put(("status", "Agent complete. Ready for next prompt.", CP_STATUS))
+
+            # Emit final readback summary in white text (CP_TTS) if not already displayed
+            self.emit_readback_summary(summary)
+
             # End marker — reset color to default for the transmission footer
             app.ui_queue.put(("typewriter_color", None))
-            self.emit_typewriter("\n\n═══ END TRANSMISSION ═══\n")
+            if exit_code != 0:
+                self.emit_typewriter(f"\n\n═══ PROCESS EXITED (CODE {exit_code}) ═══\n")
+            else:
+                self.emit_typewriter("\n\n═══ END TRANSMISSION ═══\n")
             self.flush_tts_detect_buf()
 
             app.ui_queue.put(("agent_state", AgentState.DONE))
-            app.ui_queue.put(("clear_dictation_buffer",))
-            app.ui_queue.put(("status", "Agent complete. Ready for next prompt.", CP_STATUS))
+            if not is_error:
+                app.ui_queue.put(("clear_dictation_buffer",))
 
-            # Speak the summary via TTS.  Check the result event first, then
-            # the accumulated stream deltas: the two are normally identical,
-            # but a provider whose result event carries an abridged response
-            # would otherwise lose a summary that did stream through.
-            streamed_response = "".join(response_text_parts)
-            summary = (extract_tts_summary(result_text)
-                       or extract_tts_summary(streamed_response))
-            if summary:
-                app.last_tts_summary = summary
-                app.execution.save_response_to_history(summary)
-                stop_speaking()
-                mute_local = (app.cast_enabled and app.cast_mute_local_tts
-                              and app.cast_selected_devices)
-                if not mute_local:
-                    speak_text(summary, on_done=lambda: app.ui_queue.put(
-                        ("status", "Ready for next prompt.", CP_STATUS)))
-                    app.ui_queue.put(("status", "Speaking summary...", CP_STATUS))
-
-                # Cast to Google Cast / Nest speakers if enabled
-                if app.cast_enabled and app.cast_selected_devices:
-                    cast_tts_to_devices(summary,
-                                        app.cast_selected_devices,
-                                        ui_queue=app.ui_queue,
-                                        volume=app.cast_volume)
-            else:
-                app.execution.save_response_to_history("(no TTS summary returned)", is_error=True)
+            self.speak_summary(summary, is_error=is_error)
 
         except FileNotFoundError:
             if not app._agent_cancel.is_set():
-                app.execution.save_response_to_history(
-                    f"ERROR: '{provider.binary}' CLI not found", is_error=True)
+                err_summary = f"Error: The {provider.name} command line tool was not found on your system."
                 app.ui_queue.put(("agent_state", AgentState.DONE))
                 app.ui_queue.put(("status", f"Error: '{provider.binary}' CLI not found!", CP_STATUS))
+                self.speak_summary(err_summary, is_error=True, status_text="CLI not found.")
         except Exception as e:
             if not app._agent_cancel.is_set():
-                app.execution.save_response_to_history(
-                    f"ERROR: {e}", is_error=True)
+                err_summary = format_error_readout(str(e), provider.name)
                 app.ui_queue.put(("agent_state", AgentState.DONE))
                 app.ui_queue.put(("status", f"Agent error: {e}", CP_STATUS))
+                self.speak_summary(err_summary, is_error=True, status_text="Agent error.")
+
+    def speak_summary(self, summary: str, is_error: bool = False,
+                      status_text: str = "Ready for next prompt."):
+        """Save summary to history, update state, and speak via TTS and Cast."""
+        app = self.app
+        app.last_tts_summary = summary
+        app.execution.save_response_to_history(summary, is_error=is_error)
+        stop_speaking()
+        mute_local = (app.cast_enabled and app.cast_mute_local_tts
+                      and app.cast_selected_devices)
+        if not mute_local:
+            speak_text(summary, on_done=lambda: app.ui_queue.put(
+                ("status", status_text, CP_STATUS)))
+            app.ui_queue.put(("status", "Speaking summary...", CP_STATUS))
+
+        # Cast to Google Cast / Nest speakers if enabled
+        if app.cast_enabled and app.cast_selected_devices:
+            cast_tts_to_devices(summary,
+                                app.cast_selected_devices,
+                                ui_queue=app.ui_queue,
+                                volume=app.cast_volume)
 
     def kill_agent(self, sync=False):
         app = self.app

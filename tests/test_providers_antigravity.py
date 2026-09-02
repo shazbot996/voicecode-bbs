@@ -18,6 +18,8 @@ class TestBuildRefineCmd:
         cmd = antigravity.build_refine_cmd("hello")
         assert cmd[0] == "agy"
         assert "--dangerously-skip-permissions" in cmd
+        assert "--print-timeout" in cmd
+        assert cmd[cmd.index("--print-timeout") + 1] == "1h"
         assert cmd[-1] == "--print=hello"
 
     def test_no_stream_json(self, antigravity):
@@ -44,6 +46,17 @@ class TestBuildExecuteCmd:
     def test_stream_json(self, antigravity):
         cmd = antigravity.build_execute_cmd("do it")
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+
+    def test_print_timeout_added(self, antigravity):
+        cmd = antigravity.build_execute_cmd("do it")
+        assert "--print-timeout" in cmd
+        assert cmd[cmd.index("--print-timeout") + 1] == "1h"
+
+    def test_print_timeout_not_duplicated_with_override(self, antigravity):
+        antigravity.command_override = "agy --print-timeout 30m"
+        cmd = antigravity.build_execute_cmd("do it")
+        assert cmd.count("--print-timeout") == 1
+        assert cmd[cmd.index("--print-timeout") + 1] == "30m"
 
     def test_prompt_is_fused_and_last(self, antigravity):
         """Regression test for the Go-flag quirk.
@@ -156,9 +169,15 @@ class TestParseInitEvent:
     def test_reads_top_level_conversation_id(self, antigravity):
         assert antigravity.parse_init_event(INIT) == "5a17-abc"
 
-    def test_ignores_other_events(self, antigravity):
+    def test_reads_nested_init_conversation_id(self, antigravity):
+        ev = {"event": "init", "init": {"conversation_id": "nested-123"}}
+        assert antigravity.parse_init_event(ev) == "nested-123"
+
+    def test_reads_result_conversation_id(self, antigravity):
+        assert antigravity.parse_init_event(RESULT) == "5a17-abc"
+
+    def test_ignores_text_events(self, antigravity):
         assert antigravity.parse_init_event(TEXT) is None
-        assert antigravity.parse_init_event(RESULT) is None
 
     def test_missing_id(self, antigravity):
         assert antigravity.parse_init_event({"event": "init", "init": {}}) is None
@@ -262,6 +281,29 @@ class TestIsResultEvent:
     def test_none_for_other_events(self, antigravity):
         assert antigravity.is_result_event(TEXT) is None
         assert antigravity.is_result_event(INIT) is None
+
+
+class TestParseErrorEvent:
+    def test_top_level_error_string(self, antigravity):
+        ev = {"event": "error", "error": "Container timed out"}
+        assert antigravity.parse_error_event(ev) == "Container timed out"
+
+    def test_top_level_error_dict(self, antigravity):
+        ev = {"event": "error", "error": {"message": "Resource exhausted", "code": 429}}
+        assert antigravity.parse_error_event(ev) == "Resource exhausted"
+
+    def test_step_error_state(self, antigravity):
+        ev = {"event": "step_update", "step_update": {"step_type": "tool", "state": "ERROR", "error": "Execution failed"}}
+        assert antigravity.parse_error_event(ev) == "Execution failed"
+
+    def test_result_error_status(self, antigravity):
+        ev = {"event": "result", "result": {"status": "ERROR", "error": "Task timeout expired"}}
+        assert antigravity.parse_error_event(ev) == "Task timeout expired"
+
+    def test_none_for_normal_event(self, antigravity):
+        assert antigravity.parse_error_event(TEXT) is None
+        assert antigravity.parse_error_event(INIT) is None
+        assert antigravity.parse_error_event(RESULT) is None
 
 
 class TestGetEnv:

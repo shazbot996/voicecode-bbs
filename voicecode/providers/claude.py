@@ -118,3 +118,18 @@ class ClaudeProvider(CLIProvider):
         if event.get("type") == "result":
             return event.get("result", "")
         return None
+
+    def parse_error_event(self, event: dict) -> str | None:
+        """Extract an error message from a Claude event, or None."""
+        if event.get("type") == "error":
+            err = event.get("error", {})
+            if isinstance(err, dict):
+                return err.get("message") or err.get("error") or str(err)
+            elif isinstance(err, str) and err:
+                return err
+            msg = event.get("message")
+            if isinstance(msg, str) and msg:
+                return msg
+        if event.get("type") == "result" and event.get("is_error"):
+            return event.get("result") or event.get("error") or "Execution failed"
+        return None

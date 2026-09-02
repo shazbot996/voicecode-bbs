@@ -60,6 +60,7 @@ class ExecutionHelper:
         app._typewriter_line_color = None
         app._tts_detect_buf = ''
         app._tts_in_summary = False
+        app._tts_summary_emitted = False
 
         # Reset agent pane with welcome text (visible until output arrives)
         app.browser.set_agent_welcome(40)
@@ -114,6 +115,7 @@ class ExecutionHelper:
         app._typewriter_line_color = None
         app._tts_detect_buf = ''
         app._tts_in_summary = False
+        app._tts_summary_emitted = False
         app.browser.set_agent_welcome(40)
         app._agent_cancel.clear()
         threading.Thread(target=app.runner.run_agent, daemon=True).start()

@@ -184,6 +184,7 @@ def execute_agent_prompt(app, prompt_text: str, label: str,
     app._typewriter_line_color = None
     app._tts_detect_buf = ''
     app._tts_in_summary = False
+    app._tts_summary_emitted = False
 
     app.browser.set_agent_welcome(40)
     app.set_status(f"{label} ...")

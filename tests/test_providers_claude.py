@@ -255,3 +255,23 @@ class TestContextWindowFallback:
             "inputTokens": 10, "outputTokens": 5, "cacheReadInputTokens": 0,
             "cacheCreationInputTokens": 0}}}
         assert cp.parse_context_usage(ev) == (15, DEFAULT_CONTEXT_WINDOW)
+
+
+# -- parse_error_event --
+
+class TestParseErrorEvent:
+    def test_error_type_with_dict(self, cp):
+        ev = {"type": "error", "error": {"message": "Credit balance too low"}}
+        assert cp.parse_error_event(ev) == "Credit balance too low"
+
+    def test_error_type_with_string(self, cp):
+        ev = {"type": "error", "error": "Overloaded"}
+        assert cp.parse_error_event(ev) == "Overloaded"
+
+    def test_result_with_is_error(self, cp):
+        ev = {"type": "result", "is_error": True, "result": "Process crashed"}
+        assert cp.parse_error_event(ev) == "Process crashed"
+
+    def test_returns_none_for_normal_result(self, cp):
+        ev = {"type": "result", "result": "All good"}
+        assert cp.parse_error_event(ev) is None

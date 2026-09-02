@@ -28,7 +28,10 @@ Keep it concise (1-3 sentences). Wrap it exactly like this:
 
 [TTS_SUMMARY]
 Your plain text summary here.
-[/TTS_SUMMARY]"""
+[/TTS_SUMMARY]
+
+Even if the task cannot be fully completed, ends early, or encounters an error,
+always provide a concluding [TTS_SUMMARY] block explaining the outcome or reason."""
 
 # ─── UI ──────────────────────────────────────────────────────────
 BANNER = f"""

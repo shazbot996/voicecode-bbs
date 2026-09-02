@@ -154,3 +154,7 @@ class CLIProvider:
 
     def is_result_event(self, event: dict) -> str | None:
         return None
+
+    def parse_error_event(self, event: dict) -> str | None:
+        """Extract an error message from an error event, or None."""
+        return None

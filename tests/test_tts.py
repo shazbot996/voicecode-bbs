@@ -1,6 +1,5 @@
-"""Tests for TTS utility functions."""
-
-from voicecode.tts.engine import extract_tts_summary
+from voicecode.tts.engine import (extract_tts_summary, clean_spoken_text,
+                               extract_fallback_summary, format_error_readout)
 
 
 class TestExtractTtsSummary:
@@ -57,3 +56,82 @@ class TestExtractTtsSummary:
 
     def test_none_safe(self):
         assert extract_tts_summary("") == ""
+
+
+class TestCleanSpokenText:
+    def test_strips_markdown_formatting(self):
+        raw = "## Header\nThis is **bold** and *italic* with `inline code` and [a link](https://example.com)."
+        clean = clean_spoken_text(raw)
+        assert "##" not in clean
+        assert "**" not in clean
+        assert "*" not in clean
+        assert "`" not in clean
+        assert "https://" not in clean
+        assert "Header This is bold and italic with inline code and a link." in clean
+
+    def test_strips_code_blocks(self):
+        raw = "Here is the fix:\n```python\ndef foo():\n    return 42\n```\nIt is all done."
+        clean = clean_spoken_text(raw)
+        assert "def foo" not in clean
+        assert clean == "Here is the fix: It is all done."
+
+    def test_strips_ansi_codes(self):
+        raw = "\x1b[32mSuccess!\x1b[0m All tests passed."
+        clean = clean_spoken_text(raw)
+        assert clean == "Success! All tests passed."
+
+    def test_empty_and_whitespace(self):
+        assert clean_spoken_text("") == ""
+        assert clean_spoken_text("   \n\t  ") == ""
+
+
+class TestExtractFallbackSummary:
+    def test_extracts_from_unclosed_tts_tag(self):
+        text = "I analyzed the repo.\n[TTS_SUMMARY]\nI resolved the container issue by updating timeout configs."
+        summary = extract_fallback_summary(text)
+        assert "I resolved the container issue by updating timeout configs." in summary
+
+    def test_extracts_from_plain_markdown_response(self):
+        text = ("# Completed\n"
+                "I examined the problem and fixed the audio device configuration. "
+                "Tests are now passing cleanly. You can run the workshop now.")
+        summary = extract_fallback_summary(text)
+        assert "I examined the problem and fixed the audio device configuration." in summary
+        assert "Tests are now passing cleanly." in summary
+
+    def test_empty_input(self):
+        assert extract_fallback_summary("") == ""
+
+
+class TestFormatErrorReadout:
+    def test_container_timeout(self):
+        msg = format_error_readout("Task failed: container timed out after 300s", "Antigravity")
+        assert "execution container timed out" in msg
+
+    def test_timeout_waiting_for_response(self):
+        msg = format_error_readout("ERROR: timeout waiting for response", "Antigravity")
+        assert "execution container timed out" in msg
+
+    def test_exit_code_124_is_timeout(self):
+        msg = format_error_readout("", "Antigravity", exit_code=124)
+        assert "execution container timed out" in msg
+
+    def test_rate_limit(self):
+        msg = format_error_readout("Rate limit exceeded 429", "Antigravity")
+        assert "rate limit" in msg or "quota" in msg
+
+    def test_cli_not_found(self):
+        msg = format_error_readout("agy: command not found", "Antigravity")
+        assert "command line tool was not found" in msg
+
+    def test_memory_limit_137(self):
+        msg = format_error_readout("", "Antigravity", exit_code=137)
+        assert "memory" in msg
+
+    def test_generic_exit_code(self):
+        msg = format_error_readout("", "Antigravity", exit_code=1)
+        assert "exit code 1" in msg
+
+    def test_specific_error_message(self):
+        msg = format_error_readout("Error: database locked by another process", "Antigravity")
+        assert "database locked by another process" in msg
