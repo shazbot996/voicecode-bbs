@@ -5,6 +5,15 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.3.1] - 2026-09-08
+
+### Added
+- **Explicit prompt-to-artifact provenance tracking** — Automatically captures workspace file writes and edits from agent tool executions (`write_to_file`, `replace_file_content`, `Write`, `Edit`, `sed_file`, etc.) and records `# Artifacts:` headers in both prompt and response history records
+- **Prompt lineage visualizer with generated files section** — Renders an `ARTIFACTS / GENERATED FILES (N)` section and header badge in the Prompt Browser pane with color-coded document type tags
+- **Bidirectional document origin navigation** — Scans document frontmatter (`prompt:`, `origin-prompt:`) and prompt history to build a live relationship index, adding an `Origin Prompt` action in the document actions modal to jump directly back to the originating prompt in the Prompt Browser
+- **Document reader origin badge** — Displays `[PROMPT: NNN_slug]` in the document viewer title bar when viewing documents generated from prompt history
+- **Frontmatter & metadata stripping for re-execution** — Cleanly strips leading comment headers (`# ...`) and YAML frontmatter (`--- ... ---`) when re-executing prompts from history to prevent metadata leaking into agent prompts
+
 ## [4.3.0] - 2026-09-08
 
 ### Added

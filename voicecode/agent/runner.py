@@ -6,6 +6,7 @@ import time
 import select
 import subprocess
 import threading
+from pathlib import Path
 
 from voicecode.constants import AgentState, TTS_PROMPT_SUFFIX
 from voicecode.providers.base import MODE_PLAN
@@ -208,6 +209,48 @@ class RunnerHelper:
             s = json.dumps(inp)
             return s[:80] + ("..." if len(s) > 80 else "")
 
+    def _normalize_artifact_path(self, target: str) -> str:
+        """Normalize a tool target path to be relative to the workspace."""
+        if not target:
+            return ""
+        app = self.app
+        try:
+            p = Path(target)
+            wd = app.working_dir or (
+                app.ai_provider.resolved_workspace_dir()
+                if hasattr(app, "ai_provider") and hasattr(app.ai_provider, "resolved_workspace_dir")
+                else None
+            )
+            if not wd:
+                return str(p)
+
+            wd_unresolved = Path(wd).expanduser()
+            p_exp = p.expanduser()
+            if not p_exp.is_absolute():
+                return str(p)
+
+            if p_exp == wd_unresolved:
+                return ""
+
+            try:
+                return str(p_exp.relative_to(wd_unresolved))
+            except ValueError:
+                pass
+
+            try:
+                wd_path = wd_unresolved.resolve()
+                p_resolved = p_exp.resolve()
+                if p_resolved == wd_path:
+                    return ""
+                return str(p_resolved.relative_to(wd_path))
+            except Exception:
+                pass
+
+            return str(p)
+        except Exception:
+            return str(target)
+
+
     def run_agent(self):
         """Run AI agent in background, streaming verbose output."""
         app = self.app
@@ -243,6 +286,7 @@ class RunnerHelper:
         captured_stderr_lines = []
         result_text = ""
         response_text_parts = []
+        modified_artifacts: list[str] = []
         exit_code = 0
 
         try:
@@ -331,6 +375,18 @@ class RunnerHelper:
                     for name, inp in tool_uses:
                         detail = self.format_tool_input(name, inp)
                         self.emit_typewriter(f"\n▶ {name}: {detail}\n")
+                        # Track created or modified artifact files
+                        if name in ("Write", "write_to_file", "Edit", "replace_file_content",
+                                    "multi_replace_file_content", "sed_file", "write_file", "edit_file"):
+                            target = (inp.get("file_path") or inp.get("TargetFile")
+                                      or inp.get("AbsolutePath") or inp.get("path")
+                                      or inp.get("target_file") or inp.get("filename"))
+                            if target:
+                                norm = self._normalize_artifact_path(target)
+                                if norm and norm not in modified_artifacts:
+                                    if not norm.startswith("prompts/history") and not norm.startswith("."):
+                                        modified_artifacts.append(norm)
+
 
                 # Thinking
                 thinking = provider.parse_thinking_event(event)
@@ -430,7 +486,7 @@ class RunnerHelper:
             if not is_error:
                 app.ui_queue.put(("clear_dictation_buffer",))
 
-            self.speak_summary(summary, is_error=is_error)
+            self.speak_summary(summary, is_error=is_error, artifacts=modified_artifacts)
 
         except FileNotFoundError:
             if not app._agent_cancel.is_set():
@@ -446,11 +502,17 @@ class RunnerHelper:
                 self.speak_summary(err_summary, is_error=True, status_text="Agent error.")
 
     def speak_summary(self, summary: str, is_error: bool = False,
-                      status_text: str = "Ready for next prompt."):
+                      status_text: str = "Ready for next prompt.",
+                      artifacts: list[str] | None = None):
         """Save summary to history, update state, and speak via TTS and Cast."""
         app = self.app
         app.last_tts_summary = summary
-        app.execution.save_response_to_history(summary, is_error=is_error)
+        if artifacts is not None:
+            app.execution.save_response_to_history(summary, is_error=is_error, artifacts=artifacts)
+            if artifacts:
+                app.execution.record_prompt_artifacts(app._last_history_prompt_path, artifacts)
+        else:
+            app.execution.save_response_to_history(summary, is_error=is_error)
         stop_speaking()
         mute_local = (app.cast_enabled and app.cast_mute_local_tts
                       and app.cast_selected_devices)

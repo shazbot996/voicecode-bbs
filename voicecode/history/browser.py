@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 
 from voicecode.ui.colors import *
+from voicecode.publish.frontmatter import (extract_prompt_metadata,
+                                          strip_prompt_metadata)
 
 
 class BrowserHelper:
@@ -20,6 +22,45 @@ class BrowserHelper:
         if app.browser_view == "favorites":
             return app.favorites.favorites_as_paths()
         return app.history_prompts  # "active" view browses history via left/right
+
+    def extract_prompt_artifacts(self, prompt_path: Path) -> list[str]:
+        """Extract all artifacts associated with a history prompt."""
+        app = self.app
+        artifacts: list[str] = []
+
+        # 1. Check prompt file metadata
+        try:
+            if prompt_path.exists():
+                meta = extract_prompt_metadata(prompt_path.read_text(encoding="utf-8"))
+                for a in meta.get("artifacts", []):
+                    if a and a not in artifacts:
+                        artifacts.append(a)
+        except Exception:
+            pass
+
+        # 2. Check response file metadata
+        response_path = Path(str(prompt_path).replace("_prompt.md", "_response.md"))
+        try:
+            if response_path.exists():
+                resp_meta = extract_prompt_metadata(response_path.read_text(encoding="utf-8"))
+                for a in resp_meta.get("artifacts", []):
+                    if a and a not in artifacts:
+                        artifacts.append(a)
+        except Exception:
+            pass
+
+        # 3. Check document prompt cache for reverse links
+        doc_cache = getattr(app, "_doc_prompt_cache", {})
+        prompt_name = prompt_path.name
+        prompt_stem = prompt_path.stem
+        for doc_rel, origin in doc_cache.items():
+            if not origin:
+                continue
+            if origin == prompt_name or origin == prompt_stem or origin.endswith(prompt_name):
+                if doc_rel not in artifacts:
+                    artifacts.append(doc_rel)
+
+        return artifacts
 
     def load_browser_prompt(self, width: int):
         app = self.app
@@ -50,6 +91,8 @@ class BrowserHelper:
             return
 
         path = prompt_list[app.browser_index]
+        artifacts = self.extract_prompt_artifacts(path) if app.browser_view != "favorites" else []
+
         if app.browser_view == "favorites":
             # Find which slot this favorite is in
             slot_label = "★"
@@ -68,18 +111,27 @@ class BrowserHelper:
                 rel = path
             n = len(prompt_list)
             idx = app.browser_index + 1
-            app.prompt_pane.title = f"[{idx}/{n}] HISTORY: {rel}"
+            art_suffix = f" ({len(artifacts)} artifact{'s' if len(artifacts) != 1 else ''})" if artifacts else ""
+            app.prompt_pane.title = f"[{idx}/{n}] HISTORY: {rel}{art_suffix}"
 
         try:
             content = path.read_text()
         except Exception as e:
             content = f"[Error: {e}]"
 
-        # For history entries, combine prompt and response with ASCII headers
+        # For history entries, combine prompt, artifacts, and response with ASCII headers
         if app.browser_view != "favorites":
             response_path = Path(str(path).replace("_prompt.md", "_response.md"))
             divider_w = max(1, width - 4)
             combined = f"{'=' * divider_w}\n  PROMPT\n{'=' * divider_w}\n\n{content}"
+
+            if artifacts:
+                combined += f"\n\n{'-' * divider_w}\n  ARTIFACTS / GENERATED FILES ({len(artifacts)})\n{'-' * divider_w}\n\n"
+                for art in artifacts:
+                    doc_type = getattr(app, "_doc_type_cache", {}).get(art, "")
+                    badge = f"  [{doc_type.upper()}]" if doc_type else ""
+                    combined += f"  ▸ {art}{badge}\n"
+
             if response_path.exists():
                 try:
                     response_content = response_path.read_text()
@@ -121,9 +173,8 @@ class BrowserHelper:
             path = prompt_list[app.browser_index]
             try:
                 raw = path.read_text()
-                # Strip comment headers
-                lines = [l for l in raw.split("\n") if not l.startswith("#")]
-                return "\n".join(lines).strip()
+                clean = strip_prompt_metadata(raw)
+                return clean if clean else None
             except Exception:
                 return None
         elif app.current_prompt:
@@ -131,3 +182,4 @@ class BrowserHelper:
         elif app.executed_prompt_text:
             return app.executed_prompt_text
         return None
+

@@ -383,6 +383,7 @@ class OverlayRenderer:
 
         # Build front matter type cache for document badges
         app._doc_type_cache = {}
+        app._doc_prompt_cache = {}  # rel_path -> origin prompt filename/path
         app._doc_child_set: set[str] = set()  # entries rendered as nested children
         _child_to_parent: dict[str, str] = {}  # child rel_path -> parent rel_path
         if app.working_dir:
@@ -399,6 +400,11 @@ class OverlayRenderer:
                     fm = parse_frontmatter(head)
                     if fm.get("type"):
                         app._doc_type_cache[rel_path] = fm["type"]
+                    origin_prompt = (fm.get("prompt") or fm.get("origin-prompt")
+                                     or fm.get("origin_prompt") or fm.get("source_prompt")
+                                     or fm.get("source-prompt"))
+                    if origin_prompt:
+                        app._doc_prompt_cache[rel_path] = origin_prompt
                     # Track audit-type docs (e.g. drift-report) for nesting
                     if fm.get("type", "").endswith("-report") and fm.get("source"):
                         try:
@@ -427,6 +433,19 @@ class OverlayRenderer:
                             pass
                 except (OSError, UnicodeDecodeError):
                     pass
+
+            # Reverse-populate from prompt history metadata
+            if hasattr(app, "history_prompts"):
+                from voicecode.publish.frontmatter import extract_prompt_metadata
+                for hp in app.history_prompts:
+                    try:
+                        p_meta = extract_prompt_metadata(hp.read_text(encoding="utf-8")[:1024])
+                        for art in p_meta.get("artifacts", []):
+                            if art and art not in app._doc_prompt_cache:
+                                app._doc_prompt_cache[art] = hp.name
+                    except Exception:
+                        pass
+
 
             # Sort non-root docs: typed before untyped, subfolder recency, alpha
             sep_idx = docs.index("---") if "---" in docs else -1
@@ -902,11 +921,13 @@ class OverlayRenderer:
             app.stdscr.addnstr(box_y, box_x, top, box_w, border_attr)
 
             # Title bar
+            origin = getattr(app, "_doc_prompt_cache", {}).get(app.doc_reader_title, "")
+            origin_badge = f" [PROMPT: {Path(origin).name}]" if origin else ""
             if app.doc_reader_doc_type:
                 badge = app.doc_reader_doc_type.upper()
-                title = f" [{badge}] {app.doc_reader_title} "
+                title = f" [{badge}]{origin_badge} {app.doc_reader_title} "
             else:
-                title = f" {app.doc_reader_title} "
+                title = f"{origin_badge} {app.doc_reader_title} "
             if len(title) > inner_w - 4:
                 title = title[:inner_w - 7] + "… "
             title_line = "║" + title.center(inner_w) + "║"

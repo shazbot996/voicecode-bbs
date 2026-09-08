@@ -145,7 +145,7 @@ class ExecutionHelper:
         app.prompt_saved = True
         app.set_status(f"Saved: {filename}")
 
-    def save_to_history(self, prompt_text) -> Path | None:
+    def save_to_history(self, prompt_text, artifacts: list[str] | None = None) -> Path | None:
         """Auto-save every executed prompt to the history subfolder.
 
         Returns the prompt file path so the response can be written later.
@@ -158,31 +158,86 @@ class ExecutionHelper:
         seq = next_seq(app.history_base)
         slug = slug_from_text(prompt_text)
         filename = app.history_base / f"{seq:03d}_{slug}_prompt.md"
-        with open(filename, "w") as f:
-            f.write(f"# Executed: {now.isoformat()}\n\n")
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(f"# Executed: {now.isoformat()}\n")
+            if artifacts:
+                f.write(f"# Artifacts: {', '.join(artifacts)}\n")
+            f.write("\n")
             f.write(prompt_text)
             f.write("\n")
+        app._last_history_prompt_path = filename
         app.browser.scan_history_prompts()
         return filename
 
-    def save_response_to_history(self, response_text: str, is_error: bool = False):
+    def record_prompt_artifacts(self, prompt_path: Path | str | None, artifacts: list[str]) -> Path | None:
+        """Update a saved prompt file to record generated/modified artifact paths."""
+        if not prompt_path or not artifacts:
+            return None
+        p = Path(prompt_path)
+        if not p.exists():
+            return None
+        try:
+            from voicecode.publish.frontmatter import extract_prompt_metadata, strip_prompt_metadata
+            raw = p.read_text(encoding="utf-8")
+            meta = extract_prompt_metadata(raw)
+            existing_artifacts = meta.get("artifacts", [])
+            if isinstance(existing_artifacts, str):
+                existing_artifacts = [existing_artifacts]
+            combined_artifacts = list(existing_artifacts)
+            for a in artifacts:
+                if a not in combined_artifacts:
+                    combined_artifacts.append(a)
+            if not combined_artifacts:
+                return p
+
+            body = strip_prompt_metadata(raw)
+            executed_ts = meta.get("executed") or datetime.datetime.now().isoformat()
+            version = meta.get("version")
+
+            lines = []
+            if version:
+                lines.append(f"# {version}")
+                if "saved" in meta:
+                    lines.append(f"# Saved: {meta['saved']}")
+                if "fragments" in meta:
+                    lines.append(f"# Fragments: {meta['fragments']}")
+            else:
+                lines.append(f"# Executed: {executed_ts}")
+
+            lines.append(f"# Artifacts: {', '.join(combined_artifacts)}")
+            lines.append("")
+            lines.append(body)
+            lines.append("")
+
+            p.write_text("\n".join(lines), encoding="utf-8")
+            self.app.browser.scan_history_prompts()
+            return p
+        except OSError:
+            return None
+
+    def save_response_to_history(self, response_text: str, is_error: bool = False,
+                                 artifacts: list[str] | None = None) -> Path | None:
         """Write a response file paired with the last saved prompt file."""
         app = self.app
         prompt_path = app._last_history_prompt_path
         if not prompt_path:
-            return
+            return None
         response_path = Path(str(prompt_path).replace("_prompt.md", "_response.md"))
         try:
             now = datetime.datetime.now()
-            with open(response_path, "w") as f:
+            with open(response_path, "w", encoding="utf-8") as f:
                 if is_error:
-                    f.write(f"# Error: {now.isoformat()}\n\n")
+                    f.write(f"# Error: {now.isoformat()}\n")
                 else:
-                    f.write(f"# Response: {now.isoformat()}\n\n")
+                    f.write(f"# Response: {now.isoformat()}\n")
+                if artifacts:
+                    f.write(f"# Artifacts: {', '.join(artifacts)}\n")
+                f.write("\n")
                 f.write(response_text)
                 f.write("\n")
+            return response_path
         except OSError:
-            pass
+            return None
 
     def start_refine(self):
         app = self.app

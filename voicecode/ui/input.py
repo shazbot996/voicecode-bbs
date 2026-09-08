@@ -49,6 +49,11 @@ class InputHandler:
             for action_name, desc in get_available_actions(doc_type):
                 actions.append((action_name, desc))
 
+        origin_prompt = getattr(app, '_doc_prompt_cache', {}).get(rel_path)
+        if origin_prompt:
+            p_name = Path(origin_prompt).name
+            actions.append(("ORIGIN_PROMPT", f"Origin Prompt ({p_name})"))
+
         app.doc_actions_list = actions
         app.doc_actions_cursor = 0  # default to View
         app.doc_actions_path = full_path
@@ -548,6 +553,28 @@ class InputHandler:
                         app.show_doc_actions = False
                         if action_id == "VIEW":
                             app.overlays.open_doc_reader(app.doc_actions_path, app.doc_actions_title)
+                        elif action_id == "ORIGIN_PROMPT":
+                            origin = getattr(app, '_doc_prompt_cache', {}).get(app.doc_actions_title)
+                            if origin:
+                                target_p = None
+                                origin_name = Path(origin).name
+                                for idx, p in enumerate(getattr(app, 'history_prompts', [])):
+                                    if p.name == origin_name or p.stem == Path(origin).stem or str(p).endswith(origin):
+                                        target_p = (idx, p)
+                                        break
+                                if target_p:
+                                    app.show_folder_slug = False
+                                    app.browser_view = "active"
+                                    app.browser_index = target_p[0]
+                                    w = app.stdscr.getmaxyx()[1] // 2
+                                    app.browser.load_browser_prompt(w)
+                                    app.set_status(f"Loaded origin prompt: {target_p[1].name}")
+                                else:
+                                    full_origin = Path(app.history_base) / origin_name
+                                    if full_origin.is_file():
+                                        app.overlays.open_doc_reader(str(full_origin), str(origin_name))
+                                    else:
+                                        app.set_status(f"Origin prompt file not found: {origin}")
                         else:
                             # Execute maintenance action — need to open doc reader first for context
                             if app.agent_state not in (AgentState.IDLE, AgentState.DONE):
