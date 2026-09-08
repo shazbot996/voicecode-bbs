@@ -33,6 +33,11 @@ class TestSetText:
         pane.set_text("new content", width=80)
         assert pane.lines == ["new content"]
 
+    def test_clears_line_colors(self, pane):
+        pane.line_colors = {0: 18, 1: 18}
+        pane.set_text("new content", width=80)
+        assert pane.line_colors == {}
+
 
 # -- add_char_to_last_line --
 

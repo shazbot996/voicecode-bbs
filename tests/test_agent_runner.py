@@ -166,3 +166,52 @@ def test_emit_readback_summary_skips_when_already_streamed():
 
     assert mock_app.ui_queue.empty()
 
+
+def test_emit_typewriter_case_insensitive_tags():
+    import queue
+    from unittest.mock import MagicMock
+    from voicecode.agent.runner import RunnerHelper
+    from voicecode.ui.colors import CP_TTS
+
+    mock_app = MagicMock()
+    mock_app.ui_queue = queue.Queue()
+    mock_app._tts_detect_buf = ""
+    mock_app._tts_in_summary = False
+    mock_app._tts_summary_emitted = False
+
+    runner = RunnerHelper(mock_app)
+    runner.emit_typewriter("Intro [tts_summary]lowercase tag text[/tts_summary] outro")
+
+    assert mock_app._tts_summary_emitted is True
+
+    items = []
+    while not mock_app.ui_queue.empty():
+        items.append(mock_app.ui_queue.get())
+
+    assert ("typewriter_color", CP_TTS) in items
+    assert ("typewriter_color", None) in items
+    chars = "".join([val for kind, val in items if kind == "typewriter_char"])
+    assert "Intro lowercase tag text outro" in chars
+    assert "[tts_summary]" not in chars
+    assert "[/tts_summary]" not in chars
+
+
+def test_kill_agent_resets_tts_state():
+    from unittest.mock import MagicMock
+    from voicecode.agent.runner import RunnerHelper
+
+    mock_app = MagicMock()
+    mock_app._tts_detect_buf = "leftover text"
+    mock_app._tts_in_summary = True
+    mock_app._tts_summary_emitted = True
+    mock_app._typewriter_line_color = 18
+    mock_app.agent_process = None
+
+    runner = RunnerHelper(mock_app)
+    runner.kill_agent(sync=True)
+
+    assert mock_app._tts_detect_buf == ""
+    assert mock_app._tts_in_summary is False
+    assert mock_app._tts_summary_emitted is False
+    assert mock_app._typewriter_line_color is None
+

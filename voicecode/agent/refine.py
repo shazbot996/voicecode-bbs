@@ -1,5 +1,6 @@
 """LLM-based prompt refinement."""
 
+import re
 import subprocess
 
 from voicecode.providers.base import CLIProvider
@@ -11,6 +12,22 @@ REFINE_PROMPT_PATH = PROMPTS_DIR / "REFINE.md"
 
 # Separator between the initial and modify sections in the template file
 _SECTION_SEP = "===MODIFY==="
+
+
+def strip_tts_summary(text: str) -> str:
+    """Remove any [TTS_SUMMARY] blocks or tags from text.
+
+    Refinement runs should not generate or include [TTS_SUMMARY] tags; TTS
+    summaries belong only on agent responses in the agent terminal.
+    """
+    if not text:
+        return ""
+    # Strip complete or unclosed [TTS_SUMMARY] blocks
+    cleaned = re.sub(r'\[TTS_SUMMARY\].*?(?:\[/TTS_SUMMARY\]|$)', '', text,
+                     flags=re.DOTALL | re.IGNORECASE)
+    # Also strip any isolated closing tags
+    cleaned = re.sub(r'\[/TTS_SUMMARY\]', '', cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 
 def _load_refine_prompts() -> tuple[str, str]:
@@ -33,8 +50,9 @@ def refine_with_llm(fragments: list[str], current_prompt: str | None,
     initial_tpl, modify_tpl = _load_refine_prompts()
 
     if current_prompt:
+        clean_current = strip_tts_summary(current_prompt)
         meta_prompt = modify_tpl.format(
-            current_prompt=current_prompt, fragments=fragment_text)
+            current_prompt=clean_current, fragments=fragment_text)
     else:
         meta_prompt = initial_tpl.format(fragments=fragment_text)
 
@@ -48,7 +66,8 @@ def refine_with_llm(fragments: list[str], current_prompt: str | None,
             stdin=subprocess.DEVNULL, env=provider.get_env(),
             cwd=provider.resolved_workspace_dir())
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+            cleaned_output = strip_tts_summary(result.stdout.strip())
+            return cleaned_output if cleaned_output else result.stdout.strip()
         else:
             return f"[Error: {result.stderr.strip() or 'empty response'}]"
     except FileNotFoundError:

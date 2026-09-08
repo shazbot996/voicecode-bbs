@@ -58,13 +58,12 @@ source venv/bin/activate
 python voicecode_bbs.py
 ```
 
-### Run from a parent repo
+### Update
 
-This application is designed to live inside a deployment or monorepo alongside your project code. The `make init-sub` command installs a `voicecode` target into the parent folder's Makefile so you can launch from the repo root:
+To update an existing installation to the latest release while preserving your local settings, shortcuts, prompt history, and documents:
 
 ```bash
-make init-sub   # one-time setup — adds target to ../Makefile
-make voicecode   # run from repo root
+make update
 ```
 
 ### Folder Layout

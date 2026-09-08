@@ -20,6 +20,7 @@ class TextPane:
 
     def set_text(self, text: str, width: int):
         self.lines = []
+        self.line_colors = {}
         for paragraph in text.split("\n"):
             if not paragraph.strip():
                 self.lines.append("")

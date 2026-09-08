@@ -5,7 +5,8 @@ Rules:
 - Organize the prompt logically even if they jumped around.
 - Use clear, direct language.
 - If they mentioned specific files, tools, or technologies, include those.
-- Output ONLY the refined prompt, nothing else. No preamble, no explanation.
+- Do NOT include any [TTS_SUMMARY] tags or spoken summary blocks in the refined prompt.
+- Output ONLY the refined prompt, nothing else. No preamble, no explanation, and no [TTS_SUMMARY] tags.
 
 Speech fragments:
 ---
@@ -33,7 +34,7 @@ New dictation fragments:
 ---
 
 Rules:
-- Output ONLY the updated prompt, nothing else.
+- Output ONLY the updated prompt, nothing else. Do NOT include any [TTS_SUMMARY] tags or spoken summary blocks.
 - Preserve parts of the original that aren't being changed.
 - Be faithful to their intent.
 

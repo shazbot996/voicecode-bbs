@@ -5,18 +5,9 @@ VENV := venv
 
 help: ## Show available commands
 	@echo ""
-	@echo "  VoiceCode BBS - Execution & Security"
-	@echo "  ===================================="
-	@echo "  voicecode-sandbox  : [RECOMMENDED] Launches the BBS in a secure Bubblewrap sandbox."
-	@echo "                       Hides your HOME directory (~/.ssh, etc.) from agents."
-	@echo "                       Use this when running agents in --yolo mode."
-	@echo ""
-	@echo "  voicecode          : [UNPROTECTED] Launches the BBS with full system access."
-	@echo "                       Agents can read/write any file your user can access."
-	@echo ""
-	@echo "  Setup & Maintenance"
-	@echo "  -------------------"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -vE '^(voicecode|help)' | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@echo "  VoiceCode BBS - Available Commands"
+	@echo "  =================================="
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  make %-14s %s\n", $$1, $$2}'
 	@echo ""
 
 check-deps: ## Verify system libraries (PortAudio, aplay) are installed
@@ -60,65 +51,62 @@ init: check-deps ## Create venv, install PyTorch (CPU) and requirements
 	$(VENV)/bin/pip install --upgrade pip
 	$(VENV)/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
 	$(VENV)/bin/pip install -r requirements.txt
+	@if [ -f requirements-dev.txt ]; then $(VENV)/bin/pip install -r requirements-dev.txt; fi
+	@echo ""
+	@echo "  VoiceCode BBS environment initialized successfully."
+	@echo "  Run 'make voicecode' to launch."
+	@echo ""
 
-voicecode: ## Launch the BBS voice prompt workshop (Standard/Unprotected)
+update: ## Pull latest updates from Git, update dependencies, and preserve local settings
+	@if ! command -v git >/dev/null 2>&1; then \
+		echo "ERROR: git is not installed or not found in PATH."; \
+		exit 1; \
+	fi; \
+	if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		echo "ERROR: Current directory is not a git repository."; \
+		exit 1; \
+	fi; \
+	echo "Updating VoiceCode BBS..."; \
+	BRANCH=$$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main"); \
+	REMOTE=$$(git config "branch.$$BRANCH.remote" 2>/dev/null || echo "origin"); \
+	echo "Fetching latest changes from $$REMOTE/$$BRANCH..."; \
+	git fetch "$$REMOTE" "$$BRANCH" || exit 1; \
+	STASHED=0; \
+	if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "Stashing local uncommitted changes..."; \
+		git stash push -m "voicecode-auto-update-$$(date +%s)"; \
+		STASHED=1; \
+	fi; \
+	echo "Pulling updates from Git (local settings and prompts are preserved)..."; \
+	git pull --ff-only "$$REMOTE" "$$BRANCH" || git pull "$$REMOTE" "$$BRANCH" || exit 1; \
+	if [ "$$STASHED" -eq 1 ]; then \
+		echo "Restoring local changes..."; \
+		git stash pop || echo "NOTE: Local changes restored. Check 'git stash list' if there were conflicts."; \
+	fi; \
+	if [ -d "$(VENV)" ]; then \
+		echo "Updating Python dependencies in $(VENV)..."; \
+		$(VENV)/bin/pip install --upgrade pip; \
+		$(VENV)/bin/pip install -r requirements.txt; \
+		if [ -f requirements-dev.txt ]; then $(VENV)/bin/pip install -r requirements-dev.txt; fi; \
+	else \
+		echo "Virtual environment not found. Creating one..."; \
+		$(MAKE) init; \
+	fi; \
+	echo ""; \
+	if [ -f "$(VENV)/bin/python" ]; then \
+		$(VENV)/bin/python -c "from version import __version__; print('  ✓ Successfully updated VoiceCode BBS to v' + __version__)"; \
+	else \
+		echo "  ✓ Successfully updated VoiceCode BBS from Git."; \
+	fi; \
+	echo ""
+
+voicecode: ## Launch the BBS voice prompt workshop
 	. $(VENV)/bin/activate && python voicecode_bbs.py
 
-voicecode-sandbox: ## Launch the BBS voice prompt workshop (Secure Sandbox)
-	../sandbox-launch.sh
+test: ## Run the test suite
+	. $(VENV)/bin/activate && PYTHONPATH=. python -m pytest -q
 
-init-sub: ## Add secure launch shortcuts and help text to the parent Makefile
-	@SUBDIR=$$(basename "$$PWD"); \
-	PARENT="$$(cd .. && pwd)"; \
-	TAB=$$(printf '\t'); \
-	if [ -f "$$PARENT/Makefile" ]; then \
-		if grep -q '^voicecode-sandbox:' "$$PARENT/Makefile"; then \
-			echo "  Target 'voicecode-sandbox' already exists in $$PARENT/Makefile -- skipping."; \
-		else \
-			echo "" >> "$$PARENT/Makefile"; \
-			echo "VENV := venv" >> "$$PARENT/Makefile"; \
-			echo "" >> "$$PARENT/Makefile"; \
-			echo "voicecode: ## Launch VoiceCode BBS (Standard/Unprotected)" >> "$$PARENT/Makefile"; \
-			echo "$${TAB}. $${SUBDIR}/\$$(VENV)/bin/activate && python $${SUBDIR}/voicecode_bbs.py" >> "$$PARENT/Makefile"; \
-			echo "" >> "$$PARENT/Makefile"; \
-			echo "voicecode-sandbox: ## Launch VoiceCode BBS (Secure Sandbox)" >> "$$PARENT/Makefile"; \
-			echo "$${TAB}./sandbox-launch.sh" >> "$$PARENT/Makefile"; \
-			echo "  Added secure launch targets to $$PARENT/Makefile"; \
-		fi; \
-	else \
-		echo '.DEFAULT_GOAL := help' > "$$PARENT/Makefile"; \
-		echo 'VENV := venv' >> "$$PARENT/Makefile"; \
-		echo '' >> "$$PARENT/Makefile"; \
-		echo 'help: ## Show this help message' >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"  VoiceCode BBS - Execution & Security\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"  ====================================\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"  voicecode-sandbox  : [RECOMMENDED] Launches the BBS in a secure Bubblewrap sandbox.\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"                       Hides your HOME directory (~/.ssh, etc.) from agents.\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"                       Use this when running agents in --yolo mode.\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"  voicecode          : [UNPROTECTED] Launches the BBS with full system access.\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"                       Agents can read/write any file your user can access.\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"  Support & Utilities\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"  -------------------\"\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@grep -E '^[a-zA-Z_-]+:.*?## .*$$$$' \$$(MAKEFILE_LIST) | grep -vE '^(voicecode|help)' | sort | awk 'BEGIN {FS = \":.*?## \"}; {printf \"  %%-18s %%s\\\\n\", $$$$1, $$$$2}'\n" >> "$$PARENT/Makefile"; \
-		printf "$${TAB}@echo \"\"\n" >> "$$PARENT/Makefile"; \
-		echo '' >> "$$PARENT/Makefile"; \
-		echo "voicecode: ## Launch VoiceCode BBS (Standard/Unprotected)" >> "$$PARENT/Makefile"; \
-		echo "$${TAB}. $${SUBDIR}/\$$(VENV)/bin/activate && python $${SUBDIR}/voicecode_bbs.py" >> "$$PARENT/Makefile"; \
-		echo '' >> "$$PARENT/Makefile"; \
-		echo "voicecode-sandbox: ## Launch VoiceCode BBS (Secure Sandbox)" >> "$$PARENT/Makefile"; \
-		echo "$${TAB}./sandbox-launch.sh" >> "$$PARENT/Makefile"; \
-		echo '' >> "$$PARENT/Makefile"; \
-		echo '.PHONY: help voicecode voicecode-sandbox' >> "$$PARENT/Makefile"; \
-		echo "  Created $$PARENT/Makefile with secure launch targets and help text"; \
-	fi
+clean: ## Delete the venv and build caches (re-run 'make init' to recreate)
+	rm -rf $(VENV) .pytest_cache build dist *.egg-info
 
-test: ## Run the smoke test suite
-	. $(VENV)/bin/activate && python -m pytest -q
-
-clean: ## Delete the venv (re-run 'make init' to recreate)
-	rm -rf $(VENV)
-
-.PHONY: help check-deps init init-sub voicecode voicecode-sandbox test clean
+.PHONY: help check-deps init update voicecode test clean

@@ -54,6 +54,10 @@ class TestExtractTtsSummary:
                 "detection.\n[/TTS_SUMMARY]\n")
         assert extract_tts_summary(text) == "I explained the marker detection."
 
+    def test_case_insensitive(self):
+        text = "Done.\n\n[tts_summary]\nLowercase summary.\n[/tts_summary]"
+        assert extract_tts_summary(text) == "Lowercase summary."
+
     def test_none_safe(self):
         assert extract_tts_summary("") == ""
 

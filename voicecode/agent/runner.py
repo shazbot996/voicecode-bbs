@@ -75,16 +75,20 @@ class RunnerHelper:
 
         app._tts_detect_buf += text
 
+        open_tag = '[TTS_SUMMARY]'
+        close_tag = '[/TTS_SUMMARY]'
+
         while app._tts_detect_buf:
+            upper_buf = app._tts_detect_buf.upper()
             if not app._tts_in_summary:
-                idx = app._tts_detect_buf.find('[TTS_SUMMARY]')
+                idx = upper_buf.find(open_tag)
                 if idx == -1:
                     # Only hold back chars if a '[' exists in the tail that
                     # could be the start of a partially-received tag.  This
                     # avoids buffering 13 chars on every chunk, which caused
                     # visible mid-word freezes during streaming.
                     bracket = app._tts_detect_buf.rfind('[')
-                    if bracket != -1 and bracket >= len(app._tts_detect_buf) - 13:
+                    if bracket != -1 and bracket >= len(app._tts_detect_buf) - len(open_tag):
                         safe = bracket
                     else:
                         safe = len(app._tts_detect_buf)
@@ -97,15 +101,15 @@ class RunnerHelper:
                     for ch in app._tts_detect_buf[:idx]:
                         app.ui_queue.put(("typewriter_char", ch))
                     # Skip the tag itself, emit color change
-                    app._tts_detect_buf = app._tts_detect_buf[idx + 13:]
+                    app._tts_detect_buf = app._tts_detect_buf[idx + len(open_tag):]
                     app._tts_in_summary = True
                     app._tts_summary_emitted = True
                     app.ui_queue.put(("typewriter_color", CP_TTS))
             else:
-                idx = app._tts_detect_buf.find('[/TTS_SUMMARY]')
+                idx = upper_buf.find(close_tag)
                 if idx == -1:
                     bracket = app._tts_detect_buf.rfind('[')
-                    if bracket != -1 and bracket >= len(app._tts_detect_buf) - 14:
+                    if bracket != -1 and bracket >= len(app._tts_detect_buf) - len(close_tag):
                         safe = bracket
                     else:
                         safe = len(app._tts_detect_buf)
@@ -118,7 +122,7 @@ class RunnerHelper:
                     for ch in app._tts_detect_buf[:idx]:
                         app.ui_queue.put(("typewriter_char", ch))
                     # Skip the closing tag, reset color
-                    app._tts_detect_buf = app._tts_detect_buf[idx + 14:]
+                    app._tts_detect_buf = app._tts_detect_buf[idx + len(close_tag):]
                     app._tts_in_summary = False
                     app.ui_queue.put(("typewriter_color", None))
 
@@ -207,6 +211,12 @@ class RunnerHelper:
     def run_agent(self):
         """Run AI agent in background, streaming verbose output."""
         app = self.app
+
+        # Reset TTS state for fresh execution
+        app._tts_detect_buf = ""
+        app._tts_in_summary = False
+        app._tts_summary_emitted = False
+        app._typewriter_line_color = None
 
         # Let the download animation play for ~3 seconds (cancellable)
         if app._agent_cancel.wait(3.0):
@@ -467,6 +477,10 @@ class RunnerHelper:
         app.typewriter_queue.clear()
         app._typewriter_budget = 0.0
         app._typewriter_last_ts = 0.0
+        app._tts_detect_buf = ""
+        app._tts_in_summary = False
+        app._tts_summary_emitted = False
+        app._typewriter_line_color = None
         if proc:
             def _reap():
                 try:

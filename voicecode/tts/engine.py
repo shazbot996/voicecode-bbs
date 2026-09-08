@@ -31,7 +31,7 @@ def extract_tts_summary(text: str) -> str:
     if not text:
         return ""
     matches = re.findall(r'\[TTS_SUMMARY\]\s*(.*?)\s*\[/TTS_SUMMARY\]', text,
-                         re.DOTALL)
+                         re.DOTALL | re.IGNORECASE)
     for candidate in reversed(matches):
         if candidate.strip():
             return candidate.strip()

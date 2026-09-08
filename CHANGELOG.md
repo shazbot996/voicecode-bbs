@@ -5,6 +5,17 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.3.0] - 2026-09-08
+
+### Added
+- **AGENTS.md root context publish agent** — Added `AgentsAgent` and prompt template (`voicecode/publish/prompts/AGENTS.md`) to initialize and maintain unified multi-model `AGENTS.md` context files at project root
+- **Root destination workflow in publish overlay** — Integrated `AGENTS` publish agent into `PublishOverlay` with fixed root destination handling (`./AGENTS.md`) and intelligent input detection for refined prompts or raw voice dictation fragments
+- **Claude Code context compatibility stub** — Configured prompt instructions to ensure companion `CLAUDE.md` is maintained as a clean one-line `@AGENTS.md` import stub
+- **Self-update make target** — Added `make update` to pull the latest release from Git and update Python dependencies in the virtualenv while preserving local configuration (`settings/`, `.env`, `prompts/`, `docs/`)
+
+### Removed
+- **Dead Makefile targets** — Cleaned up stale `voicecode-sandbox` (which referenced a non-existent external launch script) and `init-sub` targets from `Makefile`
+
 ## [4.2.3] - 2026-09-02
 
 ### Added

@@ -109,3 +109,53 @@ class TestRefineWithLlm:
              patch("subprocess.run", return_value=mock_result):
             refine_with_llm(["frag"], None, status_callback=callback, provider=provider)
         callback.assert_called_once()
+
+    def test_strips_tts_summary_from_output(self, tmp_path):
+        template = self._mock_template(tmp_path)
+        provider = ClaudeProvider()
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "Refined prompt text\n\n"
+            "[TTS_SUMMARY]\n"
+            "I have refined your prompt to do the requested task.\n"
+            "[/TTS_SUMMARY]"
+        )
+        with patch("voicecode.agent.refine.REFINE_PROMPT_PATH", template), \
+             patch("subprocess.run", return_value=mock_result):
+            result = refine_with_llm(["frag"], None, provider=provider)
+        assert result == "Refined prompt text"
+        assert "[TTS_SUMMARY]" not in result
+
+    def test_strips_tts_summary_from_current_prompt(self, tmp_path):
+        template = self._mock_template(tmp_path)
+        provider = ClaudeProvider()
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Updated prompt"
+        with patch("voicecode.agent.refine.REFINE_PROMPT_PATH", template), \
+             patch("subprocess.run", return_value=mock_result) as mock_run:
+            current = "Original prompt\n[TTS_SUMMARY]\nOld summary\n[/TTS_SUMMARY]"
+            result = refine_with_llm(["frag"], current, provider=provider)
+        assert result == "Updated prompt"
+        call_args = mock_run.call_args
+        prompt_text = call_args[0][0][-1]
+        assert "[TTS_SUMMARY]" not in prompt_text
+        assert "Original prompt" in prompt_text
+
+
+class TestStripTtsSummary:
+    def test_strips_complete_tag(self):
+        from voicecode.agent.refine import strip_tts_summary
+        text = "Hello world\n\n[TTS_SUMMARY]\nThis is a summary.\n[/TTS_SUMMARY]"
+        assert strip_tts_summary(text) == "Hello world"
+
+    def test_strips_case_insensitive_and_unclosed(self):
+        from voicecode.agent.refine import strip_tts_summary
+        text = "Hello world\n\n[tts_summary]\nUnclosed summary text"
+        assert strip_tts_summary(text) == "Hello world"
+
+    def test_preserves_clean_text(self):
+        from voicecode.agent.refine import strip_tts_summary
+        assert strip_tts_summary("Simple prompt") == "Simple prompt"
+        assert strip_tts_summary("") == ""

@@ -113,11 +113,12 @@ structured documents.
 
 ### Step 1: Choose Document Type
 
-Select from the 9 publish agents, each backed by a `PublishAgent` subclass
+Select from the 10 publish agents, each backed by a `PublishAgent` subclass
 with its own prompt template in `publish/prompts/`:
 
 | Agent | Type | Description |
 |-------|------|-------------|
+| **AgentsAgent** | AGENTS | Root project context — multi-model AI agent instructions and orientation |
 | **AdrAgent** | ADR | Architecture Decision Records — capture decisions with context, alternatives, consequences |
 | **ArchAgent** | ARCH | Architecture documents — comprehensive codebase analysis |
 | **PlanAgent** | PLAN | Implementation plans — milestones, task breakdown, dependencies |
@@ -133,9 +134,9 @@ with its own prompt template in `publish/prompts/`:
 For ADR, ARCH, PLAN, and SPEC, you pick a destination folder under `docs/`
 (context/, decisions/, plans/, specs/).
 
-Five agents have **fixed destinations** and skip this step:
+Six agents have **fixed destinations** and skip this step:
 - GLOSSARY, CONSTRAINTS, CONVENTIONS, SCHEMA → `docs/context/`
-- README → project root
+- README, AGENTS → project root
 
 The publish overlay shows a reference tree on the left with the folder
 structure and agent descriptions, making it easy to understand where documents

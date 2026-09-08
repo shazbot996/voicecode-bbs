@@ -12,6 +12,7 @@ from voicecode.ui.colors import (
 
 # Document types with a publishing agent implemented
 IMPLEMENTED_TYPES = [
+    "AGENTS",
     "ADR",
     "ARCH",
     "PLAN",
@@ -27,6 +28,10 @@ ALL_DOC_TYPES = IMPLEMENTED_TYPES
 
 # Short agent descriptions for the info panel (shown when agent is highlighted)
 AGENT_INFO = {
+    "AGENTS": {
+        "title": "AGENTS Agent — Root Project Context",
+        "description": "Initializes and maintains AGENTS.md at the project root as the single shared context file for multi-model AI coding agents (Claude, Antigravity). Analyzes codebase structure, architecture, tech stack, conventions, and workflows. Also ensures CLAUDE.md is configured as a one-line @AGENTS.md import stub.",
+    },
     "ADR": {
         "title": "ADR Agent — Architecture Decision Records",
         "description": "Captures a single significant technical decision: the context that prompted it, alternatives considered, the choice made, and its consequences. Use ADRs for hard-to-reverse decisions like choosing a framework, adopting a pattern, or establishing a convention. Each ADR is numbered sequentially (0001, 0002, ...) and lives in decisions/.",
@@ -66,6 +71,7 @@ AGENT_INFO = {
 }
 
 DOC_TYPE_DESCRIPTIONS = {
+    "AGENTS": "Root project context file — single maintained orientation file for AI coding agents (Claude, Antigravity). Covers architecture, tech stack, conventions, and key commands. File: AGENTS.md",
     "ARCH": "High-level system architecture overview — components, boundaries, data flow, and deployment topology. The single document an unfamiliar engineer reads first. File: docs/context/ARCH.md",
     "PLAN": "Time-boxed implementation plan for a feature or initiative — scope, milestones, task breakdown, and dependencies. Lives in plans/active/ while in progress. File: docs/plans/active/<name>.md",
     "SPEC": "Detailed feature specification — requirements, API contracts, edge cases, and acceptance criteria. The authoritative reference designers and reviewers check against. File: docs/specs/active/<name>.md",
@@ -114,6 +120,7 @@ def get_publish_agent(doc_type: str):
     """Return a publishing agent instance for the given doc type, or None."""
     if not _AGENT_REGISTRY:
         # Lazy import to avoid circular deps
+        from voicecode.publish.agents import AgentsAgent
         from voicecode.publish.adr import AdrAgent
         from voicecode.publish.arch import ArchAgent
         from voicecode.publish.plan import PlanAgent
@@ -123,6 +130,7 @@ def get_publish_agent(doc_type: str):
         from voicecode.publish.conventions import ConventionsAgent
         from voicecode.publish.schema import SchemaAgent
         from voicecode.publish.readme import ReadmeAgent
+        _AGENT_REGISTRY["AGENTS"] = AgentsAgent()
         _AGENT_REGISTRY["ADR"] = AdrAgent()
         _AGENT_REGISTRY["ARCH"] = ArchAgent()
         _AGENT_REGISTRY["PLAN"] = PlanAgent()
@@ -247,15 +255,15 @@ class PublishOverlay:
                 app.set_status(f"{name} agent not yet implemented.")
                 return
             app.publish_selected_type = name
-            if name in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README"):
-                # Fixed-destination agents always target context/
+            if name in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README", "AGENTS"):
+                # Fixed-destination agents always target context/ or root
                 app.publish_step = 1
-                app.publish_cursor = 0  # context/ is index 0
+                app.publish_cursor = 0  # context/ or root is index 0
             else:
                 app.publish_step = 1
                 app.publish_cursor = 0
         else:
-            if app.publish_selected_type == "README":
+            if app.publish_selected_type in ("README", "AGENTS"):
                 app.publish_selected_folder = ""
             elif app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA"):
                 app.publish_selected_folder = "context/"
@@ -271,7 +279,7 @@ class PublishOverlay:
             # Allow -1 to select the "Edit Refine Agent Prompt" line
             app.publish_cursor = max(-1, min(count - 1, app.publish_cursor + direction))
         else:
-            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README"):
+            if app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README", "AGENTS"):
                 return  # fixed destination, no cursor movement
             count = len(DEST_FOLDERS)
             app.publish_cursor = max(0, min(count - 1, app.publish_cursor + direction))
@@ -348,7 +356,12 @@ class PublishOverlay:
             return
 
         prompt_text = agent.build_prompt(scope, dest_folder)
-        dest_label = f"docs/{dest_folder}" if dest_folder else "README.md"
+        if dest_folder:
+            dest_label = f"docs/{dest_folder}"
+        elif doc_type == "AGENTS":
+            dest_label = "AGENTS.md"
+        else:
+            dest_label = "README.md"
         label = f"[PUBLISH {doc_type} → {dest_label}]"
 
         execute_agent_prompt(app, prompt_text, label, agent.run_mode)
@@ -531,7 +544,7 @@ class PublishOverlay:
             self._draw_type_selector(app, right_x, right_w, sel_y, box_y + box_h,
                                      purple, bright, sel_attr, disabled_attr, dim, body)
         else:
-            is_fixed_dest = app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README")
+            is_fixed_dest = app.publish_selected_type in ("GLOSSARY", "CONSTRAINTS", "CONVENTIONS", "SCHEMA", "README", "AGENTS")
             sel_title = f"Destination for {app.publish_selected_type}"
             try:
                 app.stdscr.addnstr(sel_y, right_x, sel_title, right_w, purple)
@@ -546,9 +559,9 @@ class PublishOverlay:
 
             if is_fixed_dest:
                 # Fixed-destination agent — show path, don't allow changing
-                if app.publish_selected_type == "README":
+                if app.publish_selected_type in ("README", "AGENTS"):
                     fixed_label = "▸ ./  (project root, fixed)"
-                    note = "This document is always at README.md in the project root"
+                    note = f"This document is always at {app.publish_selected_type}.md in the project root"
                 else:
                     fixed_label = "▸ context/  (fixed)"
                     note = f"This document is always at docs/context/{app.publish_selected_type}.md"

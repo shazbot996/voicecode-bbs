@@ -29,6 +29,7 @@ ROLE_TO_PAIR: dict[str, int] = {
     "ctx_yellow": 13,
     "ctx_red": 14,
     "selection": 15,
+    "tts": 18,
     "sect_red": 19,
     "submenu": 20,
     "settings_title": 21,
