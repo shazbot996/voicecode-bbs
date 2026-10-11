@@ -5,6 +5,14 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.3.2] - 2026-10-11
+
+### Fixed
+- **Claude result events crashing the success check** — The runner assumed every `result` payload was a dict and called `.get("status")` on it; Claude's `result` is the response string, so the check now only inspects `status` when the payload is a dict (Antigravity) and falls back to the `type == "result"` / `is_error` test otherwise
+
+### Changed
+- **Ignore Windows `Zone.Identifier` files** — Added `*Zone.Identifier*` patterns to `.gitignore` so alternate-data-stream sidecar files copied in from Windows under WSL are not picked up
+
 ## [4.3.1] - 2026-09-08
 
 ### Added

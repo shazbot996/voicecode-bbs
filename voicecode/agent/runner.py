@@ -404,7 +404,9 @@ class RunnerHelper:
                 if result_check is not None:
                     result_text = result_check
                     # If this is a successful result event, clear any intermediate error message
-                    if (event.get("result") or {}).get("status") == "SUCCESS" or (
+                    # (Antigravity's "result" is a dict; Claude's is the response string.)
+                    res = event.get("result")
+                    if (isinstance(res, dict) and res.get("status") == "SUCCESS") or (
                         event.get("type") == "result" and not event.get("is_error")
                     ):
                         last_error_message = ""
