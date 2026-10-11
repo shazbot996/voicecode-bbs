@@ -5,8 +5,8 @@ import time
 import numpy as np
 import sounddevice as sd
 
-from voicecode.constants import SAMPLE_RATE, CHANNELS, BLOCK_SIZE
-from voicecode.audio.utils import check_audio_input_device, resolve_input_device
+from voicecode.constants import SAMPLE_RATE
+from voicecode.audio.utils import find_input_device, open_input_stream
 from voicecode.stt.whisper import transcribe, transcribe_with_timestamps
 from voicecode.ui.colors import *
 
@@ -17,11 +17,10 @@ class RecordingHelper:
 
     def start_recording(self):
         app = self.app
-        # Pre-flight: resolve the configured input device (None = system default
-        # — also the fallback when the saved device has been unplugged) and
+        # Pre-flight: resolve the configured input device (falling back to the
+        # system default when none is saved or it has been unplugged) and
         # check it can capture.
-        device_idx = resolve_input_device(app.input_device_name)
-        dev_err = check_audio_input_device(device=device_idx)
+        device_idx, dev_err = find_input_device(app.input_device_name)
         if dev_err:
             app.set_status(f"Mic error: {dev_err}", CP_RECORDING)
             return
@@ -42,11 +41,8 @@ class RecordingHelper:
         app.set_status("██ RECORDING — press SPACE to stop ██", CP_RECORDING)
 
         try:
-            app._audio_stream = sd.InputStream(
-                samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="int16",
-                blocksize=BLOCK_SIZE, callback=self.audio_callback,
-                device=device_idx)
-            app._audio_stream.start()
+            app._audio_stream = open_input_stream(
+                device_idx, self.audio_callback)
         except (sd.PortAudioError, OSError) as e:
             app.recording = False
             app.set_status(f"Audio device error: {e}", CP_RECORDING)
@@ -57,7 +53,7 @@ class RecordingHelper:
             target=self.live_transcribe_loop, daemon=True)
         app._live_transcribe_thread.start()
 
-    def audio_callback(self, indata, frames, time_info, status):
+    def audio_callback(self, samples, status):
         app = self.app
         if status:
             # Device error (e.g. input overflow, device disconnected)
@@ -65,8 +61,7 @@ class RecordingHelper:
                                f"Audio: {status}",
                                CP_RECORDING))
         with app.audio_lock:
-            # ALSA hw devices deliver native int16 PCM; normalize to float32 [-1.0, 1.0] for VAD/Whisper
-            app.audio_frames.append((indata[:, 0].astype(np.float32) / 32768.0).copy())
+            app.audio_frames.append(samples)
 
     def live_transcribe_loop(self):
         """Periodically transcribe accumulated audio while recording."""
@@ -196,28 +191,24 @@ class RecordingHelper:
     def echo_test(self):
         """Record 1 second of audio and play it back immediately."""
         app = self.app
-        device_idx = resolve_input_device(app.input_device_name)
-        dev_err = check_audio_input_device(device=device_idx)
+        device_idx, dev_err = find_input_device(app.input_device_name)
         if dev_err:
             app.set_status(f"Echo test failed: {dev_err}", CP_RECORDING)
             return
         app.set_status("Echo test: recording 1 second...", CP_RECORDING)
-        threading.Thread(target=self.do_echo_test, daemon=True).start()
+        threading.Thread(target=self.do_echo_test, args=(device_idx,),
+                         daemon=True).start()
 
-    def do_echo_test(self):
+    def do_echo_test(self, device_idx):
         app = self.app
         frames = []
-        device_idx = resolve_input_device(app.input_device_name)
 
-        def callback(indata, frame_count, time_info, status):
-            frames.append((indata[:, 0].astype(np.float32) / 32768.0).copy())
+        def callback(samples, status):
+            frames.append(samples)
 
         # Record 1 second
         try:
-            stream = sd.InputStream(
-                samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="int16",
-                blocksize=BLOCK_SIZE, callback=callback, device=device_idx)
-            stream.start()
+            stream = open_input_stream(device_idx, callback)
         except (sd.PortAudioError, OSError) as e:
             app.ui_queue.put(("status",
                                f"Echo test: mic open failed — {e}",

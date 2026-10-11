@@ -5,6 +5,20 @@ All notable changes to VoiceCode BBS are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/) starting at v4.1.0.
 
+## [4.3.3] - 2026-10-11
+
+### Added
+- **`make init-sub`** — Adds a `voicecode` target to the parent folder's Makefile (creating one if needed) so the app can be launched from the root of a repo it is embedded in
+
+### Fixed
+- **"Error querying device -1" when no default mic exists** — Input device resolution no longer queries a missing system default; it falls back to the first capture device, and when none exists reports the platform-specific cause (e.g. WSLg audio bridge disabled on WSL2)
+- **Mics that reject 16 kHz mono** — Capture now falls back to the device's native sample rate and channel count and converts to 16 kHz mono in Python, for raw ALSA hardware and 44.1/48 kHz or stereo-only USB mics
+- **Hot-plugged mics not detected** — The device list is re-scanned when no input device is found, so a mic connected after launch works without restarting
+- **Lost `PULSE_SERVER` on WSL2** — Points at the WSLg PulseAudio socket when the variable is missing from the environment
+
+### Changed
+- **Silero VAD loads from the installed package** — Uses `silero_vad.load_silero_vad()` instead of `torch.hub`, whose cache is an unpinned repo snapshot that imports torchaudio
+
 ## [4.3.2] - 2026-10-11
 
 ### Fixed

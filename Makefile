@@ -103,10 +103,36 @@ update: ## Pull latest updates from Git, update dependencies, and preserve local
 voicecode: ## Launch the BBS voice prompt workshop
 	. $(VENV)/bin/activate && python voicecode_bbs.py
 
+init-sub: ## Add a 'make voicecode' shortcut to the parent Makefile
+	@SUBDIR=$$(basename "$$PWD"); \
+	PARENT="$$(cd .. && pwd)"; \
+	TAB=$$(printf '\t'); \
+	if [ -f "$$PARENT/Makefile" ]; then \
+		if grep -q '^voicecode:' "$$PARENT/Makefile"; then \
+			echo "  Target 'voicecode' already exists in $$PARENT/Makefile -- skipping."; \
+		else \
+			echo "" >> "$$PARENT/Makefile"; \
+			echo "voicecode: ## Launch VoiceCode BBS" >> "$$PARENT/Makefile"; \
+			echo "$${TAB}. $${SUBDIR}/$(VENV)/bin/activate && python $${SUBDIR}/voicecode_bbs.py" >> "$$PARENT/Makefile"; \
+			echo "  Added 'voicecode' target to $$PARENT/Makefile"; \
+		fi; \
+	else \
+		echo '.DEFAULT_GOAL := help' > "$$PARENT/Makefile"; \
+		echo '' >> "$$PARENT/Makefile"; \
+		echo 'help: ## Show available commands' >> "$$PARENT/Makefile"; \
+		printf '%s\n' "$${TAB}"'@grep -E '"'"'^[a-zA-Z_-]+:.*?## .*$$$$'"'"' $$(MAKEFILE_LIST) | awk '"'"'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$$$1, $$$$2}'"'"'' >> "$$PARENT/Makefile"; \
+		echo '' >> "$$PARENT/Makefile"; \
+		echo "voicecode: ## Launch VoiceCode BBS" >> "$$PARENT/Makefile"; \
+		echo "$${TAB}. $${SUBDIR}/$(VENV)/bin/activate && python $${SUBDIR}/voicecode_bbs.py" >> "$$PARENT/Makefile"; \
+		echo '' >> "$$PARENT/Makefile"; \
+		echo '.PHONY: help voicecode' >> "$$PARENT/Makefile"; \
+		echo "  Created $$PARENT/Makefile with help and voicecode targets"; \
+	fi
+
 test: ## Run the test suite
 	. $(VENV)/bin/activate && PYTHONPATH=. python -m pytest -q
 
 clean: ## Delete the venv and build caches (re-run 'make init' to recreate)
 	rm -rf $(VENV) .pytest_cache build dist *.egg-info
 
-.PHONY: help check-deps init update voicecode test clean
+.PHONY: help check-deps init init-sub update voicecode test clean

@@ -58,6 +58,15 @@ source venv/bin/activate
 python voicecode_bbs.py
 ```
 
+### Run from a parent repo
+
+This application is designed to live inside a deployment or monorepo alongside your project code. The `make init-sub` command installs a `voicecode` target into the parent folder's Makefile so you can launch from the repo root:
+
+```bash
+make init-sub   # one-time setup — adds target to ../Makefile
+make voicecode   # run from repo root
+```
+
 ### Update
 
 To update an existing installation to the latest release while preserving your local settings, shortcuts, prompt history, and documents:
@@ -184,6 +193,23 @@ Microphone (16kHz mono)
 - **faster-whisper** transcribes speech locally (no cloud API) with int8 quantization
 - **Piper TTS** provides local text-to-speech output with multiple voice options
 - Models are **lazy-loaded** on first use — startup takes ~1 second
+
+#### Microphones
+
+The mic is chosen in **Voice Settings**; "System default" follows whatever the OS routes as the default input. A saved mic that has been unplugged falls back to the default, and a mic plugged in after launch is picked up on the next recording. Capture asks for 16 kHz mono and, if the hardware refuses (raw ALSA devices, 44.1/48 kHz or stereo-only USB mics), records in the device's native format and converts.
+
+| Platform | How audio reaches the app | If no mic is found |
+|---|---|---|
+| Linux desktop | PulseAudio / PipeWire | Check the input device in your sound settings |
+| Chromebook Linux VM (Crostini) | ALSA hardware device | Enable **Settings → Linux → Allow Linux to access your microphone** |
+| WSL2 | WSLg's PulseAudio bridge to Windows | See below |
+
+**WSL2:** there is no sound hardware inside WSL — the mic is whichever input Windows has set as default, bridged by WSLg. That needs WSLg enabled (no `guiApplications=false` in `%UserProfile%\.wslconfig`; run `wsl --shutdown` after changing it), Windows microphone access allowed for desktop apps, and ALSA routed to PulseAudio:
+
+```bash
+sudo apt install libasound2-plugins
+printf 'pcm.default pulse\nctl.default pulse\n' > ~/.asoundrc
+```
 
 ### Prompt History & Response Archive
 

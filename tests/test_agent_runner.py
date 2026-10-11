@@ -215,3 +215,38 @@ def test_kill_agent_resets_tts_state():
     assert mock_app._tts_summary_emitted is False
     assert mock_app._typewriter_line_color is None
 
+
+
+def test_run_agent_speaks_summary_when_result_is_a_string():
+    """Claude's result event carries the response as a string, not a dict."""
+    import json
+    import sys
+    from unittest.mock import MagicMock, patch
+    from voicecode.agent.runner import RunnerHelper
+    from voicecode.providers.claude import ClaudeProvider
+
+    response = "All done.\n\n[TTS_SUMMARY]\nThe task finished.\n[/TTS_SUMMARY]"
+    lines = [
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": response}]}}),
+        json.dumps({"type": "result", "is_error": False, "result": response}),
+    ]
+
+    provider = ClaudeProvider()
+    mock_app = MagicMock()
+    mock_app.ai_provider = provider
+    mock_app._agent_cancel.wait.return_value = False
+    mock_app._agent_cancel.is_set.return_value = False
+    mock_app.xfer_prompt_text = "do the thing"
+    mock_app.session_id = None
+    runner = RunnerHelper(mock_app)
+
+    cmd = [sys.executable, "-c", "import sys; print(sys.argv[1])", "\n".join(lines)]
+    with patch.object(provider, "build_execute_cmd", return_value=cmd), \
+         patch.object(provider, "resolved_workspace_dir", return_value=None), \
+         patch.object(runner, "speak_summary") as mock_speak:
+        runner.run_agent()
+
+    mock_speak.assert_called_once()
+    assert mock_speak.call_args.args[0] == "The task finished."
+    assert mock_speak.call_args.kwargs["is_error"] is False
